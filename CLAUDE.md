@@ -16,12 +16,45 @@ questo progetto, leggi:
   Non introdurre librerie di terze parti (niente ncurses, niente
   framework TUI) senza discuterne esplicitamente prima — è una scelta
   di design deliberata del progetto, non una svista.
-- Un modulo per responsabilità chiara (es. `clipboard.c` è separato
-  dall'editor core) ma senza over-engineering: se una feature è piccola
-  e specifica di `tinyedit.c`, non serve un file a parte.
+- Un modulo per responsabilità chiara (es. `clipboard.c`/`utf8.c` sono
+  separati dall'editor core) ma senza over-engineering: se una feature è
+  piccola e specifica di `tinyedit.c`, non serve un file a parte.
 - Commenti solo dove il *perché* non è ovvio dal codice (vedi stile già
   usato in `tinyedit.c`/`clipboard.c`): niente commenti che ripetono cosa
   fa una riga.
+
+### Ordine di un file: include → define → tipi → globali → funzioni
+
+Ogni modulo (`.c` + `.h`) segue questa sequenza fissa, dall'alto in
+basso, senza eccezioni:
+
+1. **`#include`** — prima le feature-test macro (`_DEFAULT_SOURCE` ecc.,
+   devono restare prima di qualsiasi `#include` per contratto POSIX),
+   poi gli header locali del progetto (il proprio `.h` per primo — così
+   si verifica che sia self-contained — seguito dagli altri moduli da
+   cui dipende), poi gli header di sistema. Vedi `tinyedit.c`,
+   `clipboard.c`, `utf8.c` per l'esempio di riferimento: stesso ordine
+   in tutti e tre.
+2. **`#define`** — macro e costanti. Se una macro descrive uno stato
+   condiviso col resto del progetto (es. dimensioni di buffer, tasti),
+   va nell'header; se è puramente un dettaglio interno del `.c` (usata
+   in una sola funzione), può restare nel `.c`.
+3. **Tipi** (`enum`, `struct`, `typedef`) — **vanno nell'header**, non
+   nel `.c`, anche per un singolo translation unit come `tinyedit.c`.
+   Separare i tipi dalla logica che li usa rende il file più semplice da
+   orientarsi (vedi `tinyedit.h` per l'esempio di riferimento: contiene
+   solo macro/enum/struct, zero funzioni).
+4. **Variabili globali/`static`** — dichiarate subito dopo gli include,
+   prima di qualsiasi funzione. Raggruppate per area se sono più di
+   una-due (vedi `E`, poi lo stato di ricerca in `tinyedit.c`).
+5. **Funzioni** — nel `.c`, organizzate in sezioni commentate per area
+   funzionale (`/* ---- terminal ---- */`, `/* ---- row operations ---- */`
+   ecc., pattern già in uso).
+
+Quando aggiungi un nuovo modulo o una nuova feature a un file esistente,
+riporta la struttura a questo ordine invece di accodare in fondo — non
+serve un refactoring dedicato ogni volta, ma la prossima modifica in
+quell'area è il momento naturale per sistemarlo.
 
 ## Testare le feature da terminale (nota importante)
 

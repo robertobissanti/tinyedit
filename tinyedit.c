@@ -16,6 +16,10 @@
 #define _BSD_SOURCE
 #define _GNU_SOURCE
 
+#include "tinyedit.h"
+#include "clipboard.h"
+#include "utf8.h"
+
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -29,86 +33,17 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "clipboard.h"
-
-/* ---- config -------------------------------------------------------- */
-
-#define TE_VERSION "0.1"
-#define TE_TAB_STOP 4
-#define TE_QUIT_TIMES 2
-#define ABUF_INIT {NULL, 0}
-
-#define CTRL_KEY(k) ((k) & 0x1f)
-
-enum editorKey {
-    BACKSPACE = 127,
-    ARROW_LEFT = 1000,
-    ARROW_RIGHT,
-    ARROW_UP,
-    ARROW_DOWN,
-    DEL_KEY,
-    HOME_KEY,
-    END_KEY,
-    PAGE_UP,
-    PAGE_DOWN,
-    ALT_ARROW_LEFT,
-    ALT_ARROW_RIGHT,
-    SHIFT_ARROW_LEFT,
-    SHIFT_ARROW_RIGHT,
-    SHIFT_ARROW_UP,
-    SHIFT_ARROW_DOWN
-};
-
-/* ---- data ------------------------------------------------------------ */
-
-typedef struct erow {
-    int size;
-    int rsize;   /* size of the rendered line (tabs expanded) */
-    char *chars;
-    char *render;
-} erow;
-
-#define UNDO_MAX_DEPTH 200
-#define UNDO_COALESCE_SECS 1 /* time(NULL) is only 1s granular; see editorPushUndo() */
-
-enum undoEditType { EDIT_NONE, EDIT_INSERT, EDIT_DELETE, EDIT_OTHER };
-
-typedef struct undoSnapshot {
-    erow *row;
-    int numrows;
-    int cx, cy;
-} undoSnapshot;
-
-struct editorConfig {
-    int cx, cy;          /* cursor position in the file (chars) */
-    int rx;               /* cursor position in the rendered line */
-    int rowoff;            /* row of file we are scrolled to */
-    int coloff;            /* column of file we are scrolled to */
-    int screenrows;
-    int screencols;
-    int numrows;
-    erow *row;
-    int dirty;
-    char *filename;
-    char statusmsg[80];
-    time_t statusmsg_time;
-    struct termios orig_termios;
-    int sel_active;
-    int sel_anchor_x, sel_anchor_y;
-
-    undoSnapshot *undo_stack;
-    int undo_count;
-    undoSnapshot *redo_stack;
-    int redo_count;
-    enum undoEditType last_edit_type;
-    time_t last_edit_time;
-
-    int search_match_y, search_match_x, search_match_len; /* match_y == -1: no match */
-
-    int show_line_numbers; /* gutter with line numbers, on by default */
-};
+/* ---- globals ------------------------------------------------------------ */
 
 static struct editorConfig E;
+
+/* Set by editorFindCallback() when Ctrl-R is pressed inside the Ctrl-F
+ * search prompt, telling editorPromptCB()'s loop to return immediately
+ * so editorFind() can hand off to editorFindAndReplace(). */
+static int search_switch_to_replace;
+
+static int search_saved_cx, search_saved_cy, search_saved_rowoff, search_saved_coloff;
+static int search_dir = 1; /* 1 = forward, -1 = backward */
 
 /* ---- terminal ---------------------------------------------------------- */
 
@@ -246,13 +181,18 @@ static int getWindowSize(int *rows, int *cols) {
 
 static int editorRowCxToRx(erow *row, int cx) {
     int rx = 0;
-    for (int j = 0; j < cx; j++) {
-        /* UTF-8 continuation bytes (10xxxxxx) are part of the previous
-         * character and occupy no extra terminal column. */
-        if (((unsigned char)row->chars[j] & 0xC0) == 0x80) continue;
-        if (row->chars[j] == '\t')
+    int j = 0;
+    while (j < cx) {
+        if (row->chars[j] == '\t') {
             rx += (TE_TAB_STOP - 1) - (rx % TE_TAB_STOP);
-        rx++;
+            rx++;
+            j++;
+            continue;
+        }
+        size_t clen = utf8NextCharLen(row->chars, (size_t)j, (size_t)row->size);
+        if (clen == 0) clen = 1;
+        rx += utf8SingleCharWidth(row->chars + j, clen);
+        j += (int)clen;
     }
     return rx;
 }
@@ -492,15 +432,15 @@ static void editorDelChar(void) {
 
     erow *row = &E.row[E.cy];
     if (E.cx > 0) {
-        int del_count = 1;
-        /* Also delete any UTF-8 continuation bytes right before cx, so
-         * Backspace removes the whole multi-byte character in one go. */
-        while (del_count < E.cx &&
-               ((unsigned char)row->chars[E.cx - del_count] & 0xC0) == 0x80)
-            del_count++;
-        for (int k = 0; k < del_count; k++)
-            editorRowDelChar(row, E.cx - 1 - k);
-        E.cx -= del_count;
+        /* Delete the whole grapheme cluster before cx (base character
+         * plus any joined modifiers/marks), not just one byte or one
+         * codepoint, so Backspace removes e.g. an emoji with a
+         * skin-tone modifier in a single press. */
+        size_t del_count = utf8PrevCharLen(row->chars, (size_t)E.cx);
+        if (del_count == 0) del_count = 1;
+        for (size_t k = 0; k < del_count; k++)
+            editorRowDelChar(row, E.cx - 1 - (int)k);
+        E.cx -= (int)del_count;
     } else {
         E.cx = E.row[E.cy - 1].size;
         editorRowAppendString(&E.row[E.cy - 1], row->chars, (size_t)row->size);
@@ -541,8 +481,6 @@ static int editorReadKey(void);
  * live side effects such as incremental-search highlighting. The callback
  * is also invoked once more with key == '\r' or '\x1b' right before the
  * prompt returns, so it can do final cleanup/confirmation. */
-static int search_switch_to_replace;
-
 static char *editorPromptCB(const char *prompt, void (*callback)(char *, int)) {
     size_t bufsize = 128;
     char *buf = malloc(bufsize);
@@ -647,11 +585,6 @@ static void editorSave(void) {
 }
 
 /* ---- append buffer -------------------------------------------------------- */
-
-struct abuf {
-    char *b;
-    int len;
-};
 
 static void abAppend(struct abuf *ab, const char *s, int len) {
     char *new = realloc(ab->b, (size_t)(ab->len + len));
@@ -849,7 +782,8 @@ static void editorMoveCursor(int key) {
     switch (key) {
         case ARROW_LEFT:
             if (E.cx != 0) {
-                E.cx--;
+                size_t back = utf8PrevCharLen(row->chars, (size_t)E.cx);
+                E.cx -= (back > 0) ? (int)back : 1;
             } else if (E.cy > 0) {
                 E.cy--;
                 E.cx = E.row[E.cy].size;
@@ -857,7 +791,8 @@ static void editorMoveCursor(int key) {
             break;
         case ARROW_RIGHT:
             if (row && E.cx < row->size) {
-                E.cx++;
+                size_t fwd = utf8NextCharLen(row->chars, (size_t)E.cx, (size_t)row->size);
+                E.cx += (fwd > 0) ? (int)fwd : 1;
             } else if (row && E.cx == row->size) {
                 E.cy++;
                 E.cx = 0;
@@ -998,9 +933,6 @@ static void editorInsertText(const char *text, size_t len) {
 /* ---- search / replace ------------------------------------------------------- */
 
 static void editorFindAndReplace(const char *query);
-
-static int search_saved_cx, search_saved_cy, search_saved_rowoff, search_saved_coloff;
-static int search_dir = 1; /* 1 = forward, -1 = backward */
 
 /* Searches for `query` starting at (from_y, from_x), moving in `dir`
  * (1 forward, -1 backward), wrapping around the whole file. On success
