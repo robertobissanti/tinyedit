@@ -102,6 +102,8 @@ struct editorConfig {
     int redo_count;
     enum undoEditType last_edit_type;
     time_t last_edit_time;
+
+    int search_match_y, search_match_x, search_match_len; /* match_y == -1: no match */
 };
 
 static struct editorConfig E;
@@ -530,8 +532,16 @@ static int editorReadKey(void);
 
 /* Displays a prompt in the message bar and lets the user type a response
  * with basic line editing (Backspace, Enter, Esc to cancel). Returns a
- * malloc'd string (caller must free), or NULL if the user pressed Esc. */
-static char *editorPrompt(const char *prompt) {
+ * malloc'd string (caller must free), or NULL if the user pressed Esc.
+ *
+ * If callback is non-NULL, it is invoked after every keystroke (including
+ * the initial empty buffer) as callback(buf, key), so callers can drive
+ * live side effects such as incremental-search highlighting. The callback
+ * is also invoked once more with key == '\r' or '\x1b' right before the
+ * prompt returns, so it can do final cleanup/confirmation. */
+static int search_switch_to_replace;
+
+static char *editorPromptCB(const char *prompt, void (*callback)(char *, int)) {
     size_t bufsize = 128;
     char *buf = malloc(bufsize);
     size_t buflen = 0;
@@ -546,11 +556,13 @@ static char *editorPrompt(const char *prompt) {
             if (buflen != 0) buf[--buflen] = '\0';
         } else if (c == '\x1b') {
             editorSetStatusMessage("");
+            if (callback) callback(buf, c);
             free(buf);
             return NULL;
         } else if (c == '\r') {
             if (buflen != 0) {
                 editorSetStatusMessage("");
+                if (callback) callback(buf, c);
                 return buf;
             }
         } else if (!iscntrl(c) && c < 128) {
@@ -561,7 +573,17 @@ static char *editorPrompt(const char *prompt) {
             buf[buflen++] = (char)c;
             buf[buflen] = '\0';
         }
+
+        if (callback) callback(buf, c);
+        if (search_switch_to_replace) {
+            editorSetStatusMessage("");
+            return buf;
+        }
     }
+}
+
+static char *editorPrompt(const char *prompt) {
+    return editorPromptCB(prompt, NULL);
 }
 
 static void editorOpen(const char *filename) {
@@ -689,11 +711,18 @@ static void editorDrawRows(struct abuf *ab) {
                     row_sel_end = (filerow == sel_y1) ? sel_x1 : E.row[filerow].size;
                 }
 
+                int match_start = -1, match_end = -1;
+                if (E.search_match_y == filerow) {
+                    match_start = E.search_match_x;
+                    match_end = E.search_match_x + E.search_match_len;
+                }
+
                 int in_sel = 0;
                 for (int j = 0; j < len; j++) {
                     int filecol = E.coloff + j;
-                    int should_sel = row_sel_start >= 0 &&
-                        filecol >= row_sel_start && filecol < row_sel_end;
+                    int should_sel = (row_sel_start >= 0 &&
+                        filecol >= row_sel_start && filecol < row_sel_end) ||
+                        (match_start >= 0 && filecol >= match_start && filecol < match_end);
                     if (should_sel && !in_sel) {
                         abAppend(ab, "\x1b[7m", 4);
                         in_sel = 1;
@@ -928,6 +957,201 @@ static void editorInsertText(const char *text, size_t len) {
     }
 }
 
+/* ---- search / replace ------------------------------------------------------- */
+
+static void editorFindAndReplace(const char *query);
+
+static int search_saved_cx, search_saved_cy, search_saved_rowoff, search_saved_coloff;
+static int search_dir = 1; /* 1 = forward, -1 = backward */
+
+/* Searches for `query` starting at (from_y, from_x), moving in `dir`
+ * (1 forward, -1 backward), wrapping around the whole file. On success
+ * sets E.cy/E.cx to the match start, updates E.search_match_*, and returns
+ * 1. On failure clears E.search_match_y to -1 and returns 0. */
+static int editorFindFrom(const char *query, int from_y, int from_x, int dir) {
+    size_t qlen = strlen(query);
+    if (qlen == 0 || E.numrows == 0) {
+        E.search_match_y = -1;
+        return 0;
+    }
+
+    int y = from_y;
+    int x = from_x;
+
+    for (int steps = 0; steps <= E.numrows; steps++) {
+        erow *row = &E.row[y];
+        char *match = NULL;
+
+        if (dir == 1) {
+            if (x <= row->size) match = strstr(&row->chars[x], query);
+        } else {
+            /* Backward: scan for the last match starting at or before
+             * column x on this row. */
+            int limit = x;
+            if (limit > row->size - (int)qlen) limit = row->size - (int)qlen;
+            for (int i = 0; i <= limit; i++) {
+                if (memcmp(&row->chars[i], query, qlen) == 0)
+                    match = &row->chars[i];
+            }
+        }
+
+        if (match) {
+            int mx = (int)(match - row->chars);
+            E.cy = y;
+            E.cx = mx;
+            E.search_match_y = y;
+            E.search_match_x = mx;
+            E.search_match_len = (int)qlen;
+            return 1;
+        }
+
+        if (dir == 1) {
+            y = (y + 1) % E.numrows;
+            x = 0;
+        } else {
+            y = (y - 1 + E.numrows) % E.numrows;
+            x = E.row[y].size;
+        }
+    }
+
+    E.search_match_y = -1;
+    return 0;
+}
+
+static void editorFindCallback(char *query, int key) {
+    static int last_cy = -1, last_cx = -1;
+
+    if (key == '\r' || key == '\x1b') {
+        if (key == '\x1b') {
+            E.cx = search_saved_cx;
+            E.cy = search_saved_cy;
+            E.rowoff = search_saved_rowoff;
+            E.coloff = search_saved_coloff;
+        }
+        E.search_match_y = -1;
+        last_cy = -1;
+        last_cx = -1;
+        return;
+    }
+
+    if (key == CTRL_KEY('r')) {
+        search_switch_to_replace = 1;
+        return;
+    }
+
+    if (key == ARROW_DOWN || key == ARROW_RIGHT) {
+        search_dir = 1;
+    } else if (key == ARROW_UP || key == ARROW_LEFT) {
+        search_dir = -1;
+    } else {
+        search_dir = 1;
+        last_cy = -1;
+        last_cx = -1;
+    }
+
+    if (strlen(query) == 0) {
+        E.search_match_y = -1;
+        return;
+    }
+
+    int from_y, from_x;
+    if (last_cy == -1) {
+        from_y = search_saved_cy;
+        from_x = search_saved_cx;
+    } else if (search_dir == 1) {
+        from_y = last_cy;
+        from_x = last_cx + 1;
+    } else {
+        from_y = last_cy;
+        from_x = last_cx - 1;
+        if (from_x < 0) from_x = 0;
+    }
+
+    if (editorFindFrom(query, from_y, from_x, search_dir)) {
+        last_cy = E.cy;
+        last_cx = E.cx;
+    }
+}
+
+static void editorFind(void) {
+    search_saved_cx = E.cx;
+    search_saved_cy = E.cy;
+    search_saved_rowoff = E.rowoff;
+    search_saved_coloff = E.coloff;
+    search_dir = 1;
+
+    search_switch_to_replace = 0;
+    char *query = editorPromptCB(
+        "Search (Esc to cancel, Arrows to jump, Ctrl-R to replace): %s",
+        editorFindCallback);
+
+    if (search_switch_to_replace && query) {
+        editorFindAndReplace(query);
+    }
+
+    if (query) free(query);
+}
+
+/* Search+replace, bound to Ctrl-R while inside the Ctrl-F search prompt
+ * (rather than Ctrl-Shift-F, whose byte sequence is indistinguishable from
+ * plain Ctrl-F on most raw ttys). Prompts for a search term via the normal
+ * incremental-search callback, then for a replacement string, then walks
+ * matches one at a time offering y/n/a (yes/no/all). */
+static void editorFindAndReplace(const char *query) {
+    if (!query || query[0] == '\0') return;
+
+    char replace_prompt[96];
+    snprintf(replace_prompt, sizeof(replace_prompt), "Replace \"%.40s\" with: %%s", query);
+    search_switch_to_replace = 0;
+    char *replacement = editorPrompt(replace_prompt);
+    if (!replacement) return;
+
+    size_t qlen = strlen(query);
+    size_t rlen = strlen(replacement);
+    int all = 0;
+    int count = 0;
+
+    int y = search_saved_cy, x = search_saved_cx;
+    while (editorFindFrom(query, y, x, 1)) {
+        y = E.search_match_y;
+        x = E.search_match_x;
+
+        int do_replace = all;
+        if (!all) {
+            editorSetStatusMessage(
+                "Replace this occurrence? y/n/a(ll)/q(uit)");
+            editorRefreshScreen();
+            int c = editorReadKey();
+            if (c == 'q' || c == '\x1b') break;
+            if (c == 'a') { all = 1; do_replace = 1; }
+            else if (c == 'y') do_replace = 1;
+            else do_replace = 0;
+        }
+
+        if (do_replace) {
+            erow *row = &E.row[y];
+            for (size_t k = 0; k < qlen; k++)
+                editorRowDelChar(row, x);
+            if (rlen > 0) {
+                char *tmp = malloc(rlen + 1);
+                memcpy(tmp, replacement, rlen);
+                tmp[rlen] = '\0';
+                for (size_t k = 0; k < rlen; k++)
+                    editorRowInsertChar(row, x + (int)k, tmp[k]);
+                free(tmp);
+            }
+            count++;
+            x += (int)rlen;
+        } else {
+            x += (int)qlen;
+        }
+    }
+
+    E.search_match_y = -1;
+    free(replacement);
+    editorSetStatusMessage("Replaced %d occurrence(s).", count);
+}
+
 static void editorProcessKeypress(void) {
     static int quit_times = TE_QUIT_TIMES;
 
@@ -1011,6 +1235,10 @@ static void editorProcessKeypress(void) {
             break;
         case CTRL_KEY('y'):
             editorRedo();
+            break;
+
+        case CTRL_KEY('f'):
+            editorFind();
             break;
 
         case HOME_KEY:
@@ -1113,6 +1341,9 @@ static void initEditor(void) {
     E.sel_active = 0;
     E.sel_anchor_x = 0;
     E.sel_anchor_y = 0;
+    E.search_match_y = -1;
+    E.search_match_x = 0;
+    E.search_match_len = 0;
 
     E.undo_stack = NULL;
     E.undo_count = 0;
