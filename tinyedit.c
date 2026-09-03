@@ -68,6 +68,17 @@ typedef struct erow {
     char *render;
 } erow;
 
+#define UNDO_MAX_DEPTH 200
+#define UNDO_COALESCE_SECS 1 /* time(NULL) is only 1s granular; see editorPushUndo() */
+
+enum undoEditType { EDIT_NONE, EDIT_INSERT, EDIT_DELETE, EDIT_OTHER };
+
+typedef struct undoSnapshot {
+    erow *row;
+    int numrows;
+    int cx, cy;
+} undoSnapshot;
+
 struct editorConfig {
     int cx, cy;          /* cursor position in the file (chars) */
     int rx;               /* cursor position in the rendered line */
@@ -84,6 +95,13 @@ struct editorConfig {
     struct termios orig_termios;
     int sel_active;
     int sel_anchor_x, sel_anchor_y;
+
+    undoSnapshot *undo_stack;
+    int undo_count;
+    undoSnapshot *redo_stack;
+    int redo_count;
+    enum undoEditType last_edit_type;
+    time_t last_edit_time;
 };
 
 static struct editorConfig E;
@@ -315,15 +333,139 @@ static void editorRowDelChar(erow *row, int at) {
     E.dirty++;
 }
 
+/* ---- undo / redo ------------------------------------------------------- */
+
+static void editorSetStatusMessage(const char *fmt, ...);
+
+/* Deep-copies the current buffer (rows + cursor) into a snapshot. */
+static undoSnapshot editorMakeSnapshot(void) {
+    undoSnapshot snap;
+    snap.numrows = E.numrows;
+    snap.cx = E.cx;
+    snap.cy = E.cy;
+    snap.row = malloc(sizeof(erow) * (size_t)E.numrows);
+    for (int i = 0; i < E.numrows; i++) {
+        snap.row[i].size = E.row[i].size;
+        snap.row[i].rsize = E.row[i].rsize;
+        snap.row[i].chars = malloc((size_t)E.row[i].size + 1);
+        memcpy(snap.row[i].chars, E.row[i].chars, (size_t)E.row[i].size + 1);
+        snap.row[i].render = malloc((size_t)E.row[i].rsize + 1);
+        memcpy(snap.row[i].render, E.row[i].render, (size_t)E.row[i].rsize + 1);
+    }
+    return snap;
+}
+
+static void editorFreeSnapshot(undoSnapshot *snap) {
+    for (int i = 0; i < snap->numrows; i++) {
+        free(snap->row[i].chars);
+        free(snap->row[i].render);
+    }
+    free(snap->row);
+    snap->row = NULL;
+    snap->numrows = 0;
+}
+
+static void editorClearRedoStack(void) {
+    for (int i = 0; i < E.redo_count; i++) editorFreeSnapshot(&E.redo_stack[i]);
+    E.redo_count = 0;
+}
+
+/* Pushes a snapshot of the buffer as it was BEFORE the edit about to
+ * happen, unless this edit can be coalesced with the previous one (same
+ * type, within UNDO_COALESCE_SECS -- a rough approximation since time(NULL)
+ * only has 1s resolution, but good enough to group "typing a word" into
+ * one undo step without pulling in a finer clock). Any new edit clears
+ * the redo stack (standard undo/redo semantics). */
+static void editorPushUndo(enum undoEditType type) {
+    time_t now = time(NULL);
+    int coalesce = (type != EDIT_OTHER) &&
+        (type == E.last_edit_type) &&
+        (now - E.last_edit_time <= UNDO_COALESCE_SECS);
+
+    editorClearRedoStack();
+    E.last_edit_type = type;
+    E.last_edit_time = now;
+
+    if (coalesce) return;
+
+    if (E.undo_count == UNDO_MAX_DEPTH) {
+        editorFreeSnapshot(&E.undo_stack[0]);
+        memmove(&E.undo_stack[0], &E.undo_stack[1],
+            sizeof(undoSnapshot) * (size_t)(UNDO_MAX_DEPTH - 1));
+        E.undo_count--;
+    }
+    E.undo_stack = realloc(E.undo_stack, sizeof(undoSnapshot) * (size_t)(E.undo_count + 1));
+    E.undo_stack[E.undo_count++] = editorMakeSnapshot();
+}
+
+/* Replaces the live buffer with the given snapshot's rows/cursor. Does
+ * NOT free the snapshot itself -- caller owns that (it's about to be
+ * pushed onto the other stack, not discarded). */
+static void editorRestoreSnapshot(undoSnapshot *snap) {
+    for (int i = 0; i < E.numrows; i++) editorFreeRow(&E.row[i]);
+    free(E.row);
+
+    E.numrows = snap->numrows;
+    E.row = malloc(sizeof(erow) * (size_t)E.numrows);
+    for (int i = 0; i < E.numrows; i++) {
+        E.row[i].size = snap->row[i].size;
+        E.row[i].rsize = snap->row[i].rsize;
+        E.row[i].chars = malloc((size_t)snap->row[i].size + 1);
+        memcpy(E.row[i].chars, snap->row[i].chars, (size_t)snap->row[i].size + 1);
+        E.row[i].render = malloc((size_t)snap->row[i].rsize + 1);
+        memcpy(E.row[i].render, snap->row[i].render, (size_t)snap->row[i].rsize + 1);
+    }
+    E.cx = snap->cx;
+    E.cy = snap->cy;
+    if (E.cy > E.numrows) E.cy = E.numrows;
+    E.dirty++;
+}
+
+static void editorUndo(void) {
+    if (E.undo_count == 0) {
+        editorSetStatusMessage("Nothing to undo");
+        return;
+    }
+    undoSnapshot current = editorMakeSnapshot();
+    E.redo_stack = realloc(E.redo_stack, sizeof(undoSnapshot) * (size_t)(E.redo_count + 1));
+    E.redo_stack[E.redo_count++] = current;
+
+    undoSnapshot *top = &E.undo_stack[--E.undo_count];
+    editorRestoreSnapshot(top);
+    editorFreeSnapshot(top);
+    E.undo_stack = realloc(E.undo_stack, sizeof(undoSnapshot) * (size_t)(E.undo_count > 0 ? E.undo_count : 1));
+    E.last_edit_type = EDIT_NONE;
+    editorSetStatusMessage("Undo");
+}
+
+static void editorRedo(void) {
+    if (E.redo_count == 0) {
+        editorSetStatusMessage("Nothing to redo");
+        return;
+    }
+    undoSnapshot current = editorMakeSnapshot();
+    E.undo_stack = realloc(E.undo_stack, sizeof(undoSnapshot) * (size_t)(E.undo_count + 1));
+    E.undo_stack[E.undo_count++] = current;
+
+    undoSnapshot *top = &E.redo_stack[--E.redo_count];
+    editorRestoreSnapshot(top);
+    editorFreeSnapshot(top);
+    E.redo_stack = realloc(E.redo_stack, sizeof(undoSnapshot) * (size_t)(E.redo_count > 0 ? E.redo_count : 1));
+    E.last_edit_type = EDIT_NONE;
+    editorSetStatusMessage("Redo");
+}
+
 /* ---- editor operations --------------------------------------------------- */
 
 static void editorInsertChar(int c) {
+    editorPushUndo(EDIT_INSERT);
     if (E.cy == E.numrows) editorInsertRow(E.numrows, "", 0);
     editorRowInsertChar(&E.row[E.cy], E.cx, c);
     E.cx++;
 }
 
 static void editorInsertNewline(void) {
+    editorPushUndo(EDIT_OTHER);
     if (E.cx == 0) {
         editorInsertRow(E.cy, "", 0);
     } else {
@@ -341,6 +483,8 @@ static void editorInsertNewline(void) {
 static void editorDelChar(void) {
     if (E.cy == E.numrows) return;
     if (E.cx == 0 && E.cy == 0) return;
+
+    editorPushUndo(EDIT_DELETE);
 
     erow *row = &E.row[E.cy];
     if (E.cx > 0) {
@@ -750,6 +894,7 @@ static char *editorSerializeRange(int start_y, int start_x, int end_y, int end_x
 /* Deletes the given [start_y,start_x) .. [end_y,end_x) half-open range from
  * the buffer and leaves the cursor at start_y,start_x. */
 static void editorDeleteRange(int start_y, int start_x, int end_y, int end_x) {
+    editorPushUndo(EDIT_OTHER);
     if (start_y == end_y) {
         erow *row = &E.row[start_y];
         for (int i = 0; i < end_x - start_x; i++)
@@ -861,6 +1006,13 @@ static void editorProcessKeypress(void) {
             break;
         }
 
+        case CTRL_KEY('z'):
+            editorUndo();
+            break;
+        case CTRL_KEY('y'):
+            editorRedo();
+            break;
+
         case HOME_KEY:
             E.cx = 0;
             break;
@@ -936,6 +1088,16 @@ static void editorProcessKeypress(void) {
 
 /* ---- init ------------------------------------------------------------------- */
 
+static void editorFreeUndoRedo(void) {
+    for (int i = 0; i < E.undo_count; i++) editorFreeSnapshot(&E.undo_stack[i]);
+    free(E.undo_stack);
+    E.undo_stack = NULL;
+    E.undo_count = 0;
+    editorClearRedoStack();
+    free(E.redo_stack);
+    E.redo_stack = NULL;
+}
+
 static void initEditor(void) {
     E.cx = 0;
     E.cy = 0;
@@ -952,6 +1114,13 @@ static void initEditor(void) {
     E.sel_anchor_x = 0;
     E.sel_anchor_y = 0;
 
+    E.undo_stack = NULL;
+    E.undo_count = 0;
+    E.redo_stack = NULL;
+    E.redo_count = 0;
+    E.last_edit_type = EDIT_NONE;
+    E.last_edit_time = 0;
+
     if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
     E.screenrows -= 2; /* status bar + message bar */
 }
@@ -959,9 +1128,10 @@ static void initEditor(void) {
 int main(int argc, char **argv) {
     enableRawMode();
     initEditor();
+    atexit(editorFreeUndoRedo);
     if (argc >= 2) editorOpen(argv[1]);
 
-    editorSetStatusMessage("Ctrl-S save | Ctrl-Q quit");
+    editorSetStatusMessage("Ctrl-S save | Ctrl-Q quit | Ctrl-Z undo | Ctrl-Y redo");
 
     while (1) {
         editorRefreshScreen();
