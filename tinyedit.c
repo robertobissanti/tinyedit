@@ -104,6 +104,8 @@ struct editorConfig {
     time_t last_edit_time;
 
     int search_match_y, search_match_x, search_match_len; /* match_y == -1: no match */
+
+    int show_line_numbers; /* gutter with line numbers, on by default */
 };
 
 static struct editorConfig E;
@@ -665,6 +667,26 @@ static void abFree(struct abuf *ab) { free(ab->b); }
 
 static int editorGetSelection(int *start_y, int *start_x, int *end_y, int *end_x);
 
+/* Width of the left-hand line-number gutter, including one space of
+ * padding before the text starts. Zero when gutter is disabled. Grows
+ * with E.numrows so files with 1000+ lines still right-align cleanly. */
+static int editorGutterWidth(void) {
+    if (!E.show_line_numbers) return 0;
+    int digits = 3;
+    int n = E.numrows;
+    while (n >= 1000) {
+        digits++;
+        n /= 10;
+    }
+    return digits + 1;
+}
+
+/* Usable text area width: total screen columns minus the gutter. */
+static int editorTextCols(void) {
+    int cols = E.screencols - editorGutterWidth();
+    return cols > 0 ? cols : 0;
+}
+
 static void editorScroll(void) {
     E.rx = 0;
     if (E.cy < E.numrows)
@@ -673,22 +695,38 @@ static void editorScroll(void) {
     if (E.cy < E.rowoff) E.rowoff = E.cy;
     if (E.cy >= E.rowoff + E.screenrows) E.rowoff = E.cy - E.screenrows + 1;
     if (E.rx < E.coloff) E.coloff = E.rx;
-    if (E.rx >= E.coloff + E.screencols) E.coloff = E.rx - E.screencols + 1;
+    int textcols = editorTextCols();
+    if (E.rx >= E.coloff + textcols) E.coloff = E.rx - textcols + 1;
 }
 
 static void editorDrawRows(struct abuf *ab) {
     int sel_y0 = 0, sel_x0 = 0, sel_y1 = 0, sel_x1 = 0;
     int has_sel = editorGetSelection(&sel_y0, &sel_x0, &sel_y1, &sel_x1);
+    int gutter = editorGutterWidth();
+    int textcols = editorTextCols();
 
     for (int y = 0; y < E.screenrows; y++) {
         int filerow = y + E.rowoff;
+
+        if (gutter > 0) {
+            char numbuf[16];
+            if (filerow < E.numrows) {
+                snprintf(numbuf, sizeof(numbuf), "%*d ", gutter - 1, filerow + 1);
+            } else {
+                snprintf(numbuf, sizeof(numbuf), "%*s ", gutter - 1, "");
+            }
+            abAppend(ab, "\x1b[90m", 5);
+            abAppend(ab, numbuf, gutter);
+            abAppend(ab, "\x1b[m", 3);
+        }
+
         if (filerow >= E.numrows) {
             if (E.numrows == 0 && y == E.screenrows / 3) {
                 char welcome[80];
                 int welcomelen = snprintf(welcome, sizeof(welcome),
                     "tinyedit -- version %s", TE_VERSION);
-                if (welcomelen > E.screencols) welcomelen = E.screencols;
-                int padding = (E.screencols - welcomelen) / 2;
+                if (welcomelen > textcols) welcomelen = textcols;
+                int padding = (textcols - welcomelen) / 2;
                 if (padding) {
                     abAppend(ab, "~", 1);
                     padding--;
@@ -701,7 +739,7 @@ static void editorDrawRows(struct abuf *ab) {
         } else {
             int len = E.row[filerow].rsize - E.coloff;
             if (len < 0) len = 0;
-            if (len > E.screencols) len = E.screencols;
+            if (len > textcols) len = textcols;
 
             if (len > 0) {
                 char *line = &E.row[filerow].render[E.coloff];
@@ -786,7 +824,7 @@ static void editorRefreshScreen(void) {
 
     char buf[32];
     snprintf(buf, sizeof(buf), "\x1b[%d;%dH",
-        (E.cy - E.rowoff) + 1, (E.rx - E.coloff) + 1);
+        (E.cy - E.rowoff) + 1, (E.rx - E.coloff) + editorGutterWidth() + 1);
     abAppend(&ab, buf, (int)strlen(buf));
 
     abAppend(&ab, "\x1b[?25h", 6);
@@ -1344,6 +1382,8 @@ static void initEditor(void) {
     E.search_match_y = -1;
     E.search_match_x = 0;
     E.search_match_len = 0;
+
+    E.show_line_numbers = 1;
 
     E.undo_stack = NULL;
     E.undo_count = 0;
