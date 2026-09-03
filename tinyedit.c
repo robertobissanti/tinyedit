@@ -29,6 +29,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "clipboard.h"
+
 /* ---- config -------------------------------------------------------- */
 
 #define TE_VERSION "0.1"
@@ -714,13 +716,82 @@ static int editorGetSelection(int *start_y, int *start_x, int *end_y, int *end_x
     return 1;
 }
 
+/* Serializes the given [start_y,start_x) .. [end_y,end_x) half-open range
+ * into a malloc'd NUL-terminated buffer, joining lines with '\n'.
+ * *outlen receives the length excluding the NUL terminator. */
+static char *editorSerializeRange(int start_y, int start_x, int end_y, int end_x, size_t *outlen) {
+    size_t totlen = 0;
+    for (int y = start_y; y <= end_y; y++) {
+        int from = (y == start_y) ? start_x : 0;
+        int to = (y == end_y) ? end_x : E.row[y].size;
+        if (to > from) totlen += (size_t)(to - from);
+        if (y != end_y) totlen += 1;
+    }
+
+    char *buf = malloc(totlen + 1);
+    char *p = buf;
+    for (int y = start_y; y <= end_y; y++) {
+        int from = (y == start_y) ? start_x : 0;
+        int to = (y == end_y) ? end_x : E.row[y].size;
+        if (to > from) {
+            memcpy(p, &E.row[y].chars[from], (size_t)(to - from));
+            p += to - from;
+        }
+        if (y != end_y) {
+            *p = '\n';
+            p++;
+        }
+    }
+    *p = '\0';
+    *outlen = totlen;
+    return buf;
+}
+
+/* Deletes the given [start_y,start_x) .. [end_y,end_x) half-open range from
+ * the buffer and leaves the cursor at start_y,start_x. */
+static void editorDeleteRange(int start_y, int start_x, int end_y, int end_x) {
+    if (start_y == end_y) {
+        erow *row = &E.row[start_y];
+        for (int i = 0; i < end_x - start_x; i++)
+            editorRowDelChar(row, start_x);
+    } else {
+        erow *first = &E.row[start_y];
+        first->size = start_x;
+        first->chars[first->size] = '\0';
+
+        erow *last = &E.row[end_y];
+        editorRowAppendString(first, &last->chars[end_x], (size_t)(last->size - end_x));
+        editorUpdateRow(first);
+
+        for (int y = end_y; y > start_y; y--)
+            editorDelRow(y);
+    }
+    E.cy = start_y;
+    E.cx = start_x;
+    E.dirty++;
+}
+
+/* Inserts `text` (which may contain '\n') at the current cursor position,
+ * splitting into new rows as needed. Leaves the cursor at the end of the
+ * inserted text. */
+static void editorInsertText(const char *text, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+        if (text[i] == '\n')
+            editorInsertNewline();
+        else
+            editorInsertChar((unsigned char)text[i]);
+    }
+}
+
 static void editorProcessKeypress(void) {
     static int quit_times = TE_QUIT_TIMES;
 
     int c = editorReadKey();
 
     if (c != SHIFT_ARROW_UP && c != SHIFT_ARROW_DOWN &&
-        c != SHIFT_ARROW_LEFT && c != SHIFT_ARROW_RIGHT)
+        c != SHIFT_ARROW_LEFT && c != SHIFT_ARROW_RIGHT &&
+        c != CTRL_KEY('a') && c != CTRL_KEY('c') &&
+        c != CTRL_KEY('x') && c != CTRL_KEY('v'))
         E.sel_active = 0;
 
     switch (c) {
@@ -744,6 +815,51 @@ static void editorProcessKeypress(void) {
         case CTRL_KEY('s'):
             editorSave();
             break;
+
+        case CTRL_KEY('a'):
+            if (E.numrows > 0) {
+                E.sel_active = 1;
+                E.sel_anchor_y = 0;
+                E.sel_anchor_x = 0;
+                E.cy = E.numrows - 1;
+                E.cx = E.row[E.numrows - 1].size;
+            }
+            break;
+
+        case CTRL_KEY('c'):
+        case CTRL_KEY('x'): {
+            int sy, sx, ey, ex;
+            if (editorGetSelection(&sy, &sx, &ey, &ex)) {
+                size_t len;
+                char *text = editorSerializeRange(sy, sx, ey, ex, &len);
+                clipboardCopy(text, len);
+                if (c == CTRL_KEY('x')) {
+                    editorDeleteRange(sy, sx, ey, ex);
+                    editorSetStatusMessage("%zu bytes cut", len);
+                } else {
+                    editorSetStatusMessage("%zu bytes copied", len);
+                }
+                free(text);
+                E.sel_active = 0;
+            }
+            break;
+        }
+
+        case CTRL_KEY('v'): {
+            int sy, sx, ey, ex;
+            if (editorGetSelection(&sy, &sx, &ey, &ex)) {
+                editorDeleteRange(sy, sx, ey, ex);
+                E.sel_active = 0;
+            }
+            size_t len;
+            char *text = clipboardPaste(&len);
+            if (text) {
+                editorInsertText(text, len);
+                clipboardFree(text);
+                editorSetStatusMessage("pasted");
+            }
+            break;
+        }
 
         case HOME_KEY:
             E.cx = 0;
