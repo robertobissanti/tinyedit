@@ -34,10 +34,18 @@ Richiede solo un compilatore C99 e un sistema POSIX (macOS o Linux).
 |---|---|
 | Frecce, Home, End, PageUp/Down | Movimento cursore |
 | `Alt+←` / `Alt+→` (anche `Esc b` / `Esc f`) | Salto di parola |
+| `Shift+Frecce` | Estende/crea la selezione di testo |
 | Invio | Nuova riga |
 | Backspace / Canc | Cancella carattere (gestisce correttamente UTF-8 multi-byte) |
+| `Ctrl-A` | Seleziona tutto |
+| `Ctrl-C` / `Ctrl-X` / `Ctrl-V` | Copia / taglia / incolla (clipboard di sistema, richiede una selezione per C/X) |
+| `Ctrl-Z` | Undo |
+| `Ctrl-Y` | Redo |
+| `Ctrl-F` | Ricerca incrementale (Frecce per prossimo/precedente match, `Ctrl-R` per passare a cerca-e-sostituisci, Esc per annullare) |
 | `Ctrl-S` | Salva (chiede il nome file se non impostato) |
 | `Ctrl-Q` | Esci (chiede conferma se ci sono modifiche non salvate) |
+
+Numeri di riga (gutter) attivi di default sul lato sinistro.
 
 Supporto UTF-8 di base: caratteri multi-byte (es. `è`, `à`) vengono
 visualizzati e cancellati correttamente come singola unità.
@@ -46,11 +54,11 @@ visualizzati e cancellati correttamente come singola unità.
 
 - `tinyedit.c` — l'editor: terminale raw mode, buffer di righe, rendering,
   gestione input. Un solo file, stile kilo.
-- `clipboard.c` / `clipboard.h` — modulo indipendente per l'integrazione
-  con la clipboard di sistema (macOS `pbcopy`/`pbpaste`, Linux
-  `wl-clipboard` o `xclip`), con fallback su un buffer interno quando
-  nessun backend di sistema è disponibile. Non ancora collegato
-  all'editor.
+- `clipboard.c` / `clipboard.h` — modulo per l'integrazione con la
+  clipboard di sistema (macOS `pbcopy`/`pbpaste`, Linux `wl-clipboard` o
+  `xclip`), con fallback su un buffer interno quando nessun backend di
+  sistema è disponibile. Collegato all'editor tramite `Ctrl-C`/`Ctrl-X`/
+  `Ctrl-V`.
 - `linenoise.c` / `linenoise.h` — sorgenti originali di linenoise
   (antirez), tenuti per riferimento storico dal primo prototipo
   riga-per-riga. Non compilati nel binario attuale.

@@ -18,59 +18,53 @@ decisione, è segnalato come "DA DECIDERE".
       backspace non si disallineano più su `è`, `à`, ecc.)
 - [x] Modulo `clipboard.c`/`clipboard.h`: copia/incolla su clipboard di
       sistema (pbcopy/pbpaste su macOS, wl-clipboard o xclip su Linux),
-      fallback su buffer interno. Testato standalone, **non ancora
-      collegato a tinyedit.c**.
+      fallback su buffer interno. Collegato a `tinyedit.c` (Ctrl-C/X/V).
 
-## Da fare — core editing
+- [x] **Selezione testo con Shift+Frecce**
+  - Stato "anchor" (`E.sel_active`, `E.sel_anchor_x/y`) in `editorConfig`,
+    evidenziazione visiva nel render tramite inversione foreground/background
+    (`\x1b[7m`) sui caratteri selezionati. `editorReadKey` riconosce il
+    modificatore Shift (`;2`) sulle sequenze CSI, stesso meccanismo già
+    usato per Alt (`;3`).
 
-- [ ] **Undo / Redo** (`Ctrl-Z` / redo — tasto da decidere: `Ctrl-Y` è lo
-      standard Windows/Linux, `Ctrl-Shift-Z` lo standard macOS/Vim-plugin;
-      DA DECIDERE quale usare, o supportare entrambi)
-  - Approccio più semplice: stack di snapshot dell'intero buffer prima di
-    ogni modifica "atomica" (inserimento/cancellazione carattere,
-    riga, incolla). Poco efficiente in memoria su file grandi ma semplice
-    da ragionare; alternativa più complessa è un diff/patch stack.
+- [x] **Ctrl-A: seleziona tutto**
 
-- [ ] **Selezione testo con Shift+Frecce**
-  - Richiede: stato "anchor" (punto di inizio selezione) in `editorConfig`,
-    evidenziazione visiva nel render (probabilmente invertendo
-    foreground/background sui caratteri selezionati), estensione di
-    `editorMoveCursor`/`editorMoveCursorWord` per aggiornare la selezione
-    quando Shift è premuto.
-  - Nota tecnica: serve rilevare Shift+Freccia separatamente dalla
-    freccia semplice — verificare quale sequenza manda il terminale
-    dell'utente (probabilmente CSI con modificatore `;2`, stesso
-    meccanismo già gestito per Alt che usa `;3` — va esteso il parser di
-    `editorReadKey` per riconoscere anche il modificatore Shift).
+- [x] **Ctrl-C / Ctrl-X / Ctrl-V** (copia / taglia / incolla)
+  - Collegano il modulo `clipboard.c` alla selezione testo tramite
+    `editorGetSelection`/`editorSerializeRange`/`editorDeleteRange`.
+  - Ctrl-C copia il testo selezionato, Ctrl-X copia e cancella, Ctrl-V
+    sostituisce l'eventuale selezione e inserisce il contenuto della
+    clipboard (gestendo inserimento multi-riga via `editorInsertText`).
+    Deciso: senza selezione attiva, Ctrl-C/X non fanno nulla (niente
+    fallback "riga intera" stile VS Code).
 
-- [ ] **Ctrl-A: seleziona tutto**
-  - Banale una volta che esiste lo stato di selezione sopra.
+- [x] **Undo / Redo** (`Ctrl-Z` per undo, `Ctrl-Y` per redo — scelto lo
+      standard Windows/Linux; `Ctrl-Shift-Z` non implementato)
+  - Stack di snapshot dell'intero buffer prima di ogni modifica atomica,
+    con coalescenza delle modifiche dello stesso tipo entro 1 secondo
+    (`editorPushUndo`) così digitare una parola conta come un solo passo
+    di undo. Profondità massima `UNDO_MAX_DEPTH` (200).
 
-- [ ] **Ctrl-C / Ctrl-X / Ctrl-V** (copia / taglia / incolla)
-  - Collega il modulo `clipboard.c` già pronto alla selezione testo.
-  - Ctrl-C: copia il testo selezionato (o l'intera riga corrente se non
-    c'è selezione — comportamento stile VS Code; DA DECIDERE se questo
-    fallback è desiderato o se senza selezione Ctrl-C non fa nulla).
-  - Ctrl-X: come sopra ma cancella anche il testo dal buffer.
-  - Ctrl-V: inserisce il contenuto della clipboard alla posizione del
-    cursore, gestendo correttamente inserimento multi-riga.
+- [x] **Ricerca incrementale (`Ctrl-F`)**
+  - Prompt di ricerca (`editorPromptCB`, estensione di `editorPrompt` con
+    callback per side-effect ad ogni keystroke), evidenziazione live del
+    match. Frecce per prossimo/precedente match, wrap-around su tutto il
+    file.
 
-- [ ] **Ricerca incrementale (`Ctrl-F`)**
-  - Prompt di ricerca (riusa `editorPrompt` già esistente, esteso per
-    aggiornare l'evidenziazione a ogni carattere digitato).
-  - Frecce Su/Giù o Ctrl-F/Ctrl-Shift-F ripetuto per prossimo/precedente
-    match.
+- [x] **Cerca e sostituisci (`Ctrl-R` dentro il prompt di ricerca)**
+  - Deciso: bind su `Ctrl-R` all'interno del prompt Ctrl-F invece di
+    `Ctrl-Shift-F`, la cui sequenza è indistinguibile da Ctrl-F sulla
+    maggior parte dei terminali raw. Prompt per il testo di sostituzione,
+    poi conferma per-occorrenza y/n/a(ll)/q(uit).
 
-- [ ] **Cerca e sostituisci (`Ctrl-Shift-F`)**
-  - Come sopra più un secondo prompt per il testo di sostituzione, e
-    conferma per-occorrenza o "sostituisci tutto".
+- [x] **Numeri di riga (gutter)**
+  - Colonna a sinistra con il numero riga, larghezza dinamica
+    (`editorGutterWidth`) che cresce con `E.numrows`; conteggiata nei
+    `E.screencols` disponibili per il testo (`editorTextCols`). Attivo di
+    default (`E.show_line_numbers`); non ancora esposto a runtime — in
+    attesa del file di configurazione sotto.
 
 ## Da fare — interfaccia
-
-- [ ] **Numeri di riga (gutter)**
-  - Colonna a sinistra con il numero riga; deve essere conteggiata in
-    `E.screencols` disponibili per il testo (attualmente tutto lo
-    schermo è testo). Attivabile/disattivabile da config.
 
 - [ ] **File di configurazione** (es. `~/.tinyeditrc` o
       `~/.config/tinyedit/config`)
