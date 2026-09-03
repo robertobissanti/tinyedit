@@ -50,7 +50,11 @@ enum editorKey {
     PAGE_UP,
     PAGE_DOWN,
     ALT_ARROW_LEFT,
-    ALT_ARROW_RIGHT
+    ALT_ARROW_RIGHT,
+    SHIFT_ARROW_LEFT,
+    SHIFT_ARROW_RIGHT,
+    SHIFT_ARROW_UP,
+    SHIFT_ARROW_DOWN
 };
 
 /* ---- data ------------------------------------------------------------ */
@@ -76,6 +80,8 @@ struct editorConfig {
     char statusmsg[80];
     time_t statusmsg_time;
     struct termios orig_termios;
+    int sel_active;
+    int sel_anchor_x, sel_anchor_y;
 };
 
 static struct editorConfig E;
@@ -148,11 +154,18 @@ static int editorReadKey(void) {
                     if (read(STDIN_FILENO, &mod, 1) != 1) return '\x1b';
                     if (read(STDIN_FILENO, &letter, 1) != 1) return '\x1b';
                     int is_alt = (mod == '3');
+                    int is_shift = (mod == '2');
                     switch (letter) {
-                        case 'A': return ARROW_UP;
-                        case 'B': return ARROW_DOWN;
-                        case 'C': return is_alt ? ALT_ARROW_RIGHT : ARROW_RIGHT;
-                        case 'D': return is_alt ? ALT_ARROW_LEFT : ARROW_LEFT;
+                        case 'A': return is_shift ? SHIFT_ARROW_UP : ARROW_UP;
+                        case 'B': return is_shift ? SHIFT_ARROW_DOWN : ARROW_DOWN;
+                        case 'C':
+                            if (is_alt) return ALT_ARROW_RIGHT;
+                            if (is_shift) return SHIFT_ARROW_RIGHT;
+                            return ARROW_RIGHT;
+                        case 'D':
+                            if (is_alt) return ALT_ARROW_LEFT;
+                            if (is_shift) return SHIFT_ARROW_LEFT;
+                            return ARROW_LEFT;
                         case 'H': return HOME_KEY;
                         case 'F': return END_KEY;
                     }
@@ -482,6 +495,8 @@ static void abFree(struct abuf *ab) { free(ab->b); }
 
 /* ---- output ---------------------------------------------------------------- */
 
+static int editorGetSelection(int *start_y, int *start_x, int *end_y, int *end_x);
+
 static void editorScroll(void) {
     E.rx = 0;
     if (E.cy < E.numrows)
@@ -494,6 +509,9 @@ static void editorScroll(void) {
 }
 
 static void editorDrawRows(struct abuf *ab) {
+    int sel_y0 = 0, sel_x0 = 0, sel_y1 = 0, sel_x1 = 0;
+    int has_sel = editorGetSelection(&sel_y0, &sel_x0, &sel_y1, &sel_x1);
+
     for (int y = 0; y < E.screenrows; y++) {
         int filerow = y + E.rowoff;
         if (filerow >= E.numrows) {
@@ -516,8 +534,31 @@ static void editorDrawRows(struct abuf *ab) {
             int len = E.row[filerow].rsize - E.coloff;
             if (len < 0) len = 0;
             if (len > E.screencols) len = E.screencols;
-            if (len > 0)
-                abAppend(ab, &E.row[filerow].render[E.coloff], len);
+
+            if (len > 0) {
+                char *line = &E.row[filerow].render[E.coloff];
+                int row_sel_start = -1, row_sel_end = -1;
+                if (has_sel && filerow >= sel_y0 && filerow <= sel_y1) {
+                    row_sel_start = (filerow == sel_y0) ? sel_x0 : 0;
+                    row_sel_end = (filerow == sel_y1) ? sel_x1 : E.row[filerow].size;
+                }
+
+                int in_sel = 0;
+                for (int j = 0; j < len; j++) {
+                    int filecol = E.coloff + j;
+                    int should_sel = row_sel_start >= 0 &&
+                        filecol >= row_sel_start && filecol < row_sel_end;
+                    if (should_sel && !in_sel) {
+                        abAppend(ab, "\x1b[7m", 4);
+                        in_sel = 1;
+                    } else if (!should_sel && in_sel) {
+                        abAppend(ab, "\x1b[m", 3);
+                        in_sel = 0;
+                    }
+                    abAppend(ab, &line[j], 1);
+                }
+                if (in_sel) abAppend(ab, "\x1b[m", 3);
+            }
         }
 
         abAppend(ab, "\x1b[K", 3);
@@ -654,10 +695,33 @@ static void editorMoveCursorWord(int forward) {
     }
 }
 
+/* Normalizes the selection anchor vs the current cursor position into an
+ * ordered [start, end) range. Returns 0 and leaves outputs untouched if
+ * there is no active selection. */
+static int editorGetSelection(int *start_y, int *start_x, int *end_y, int *end_x) {
+    if (!E.sel_active) return 0;
+
+    int ay = E.sel_anchor_y, ax = E.sel_anchor_x;
+    int cy = E.cy, cx = E.cx;
+
+    if (ay < cy || (ay == cy && ax <= cx)) {
+        *start_y = ay; *start_x = ax;
+        *end_y = cy; *end_x = cx;
+    } else {
+        *start_y = cy; *start_x = cx;
+        *end_y = ay; *end_x = ax;
+    }
+    return 1;
+}
+
 static void editorProcessKeypress(void) {
     static int quit_times = TE_QUIT_TIMES;
 
     int c = editorReadKey();
+
+    if (c != SHIFT_ARROW_UP && c != SHIFT_ARROW_DOWN &&
+        c != SHIFT_ARROW_LEFT && c != SHIFT_ARROW_RIGHT)
+        E.sel_active = 0;
 
     switch (c) {
         case '\r':
@@ -713,8 +777,27 @@ static void editorProcessKeypress(void) {
         case ARROW_DOWN:
         case ARROW_LEFT:
         case ARROW_RIGHT:
+            E.sel_active = 0;
             editorMoveCursor(c);
             break;
+
+        case SHIFT_ARROW_UP:
+        case SHIFT_ARROW_DOWN:
+        case SHIFT_ARROW_LEFT:
+        case SHIFT_ARROW_RIGHT: {
+            if (!E.sel_active) {
+                E.sel_active = 1;
+                E.sel_anchor_x = E.cx;
+                E.sel_anchor_y = E.cy;
+            }
+            int plain = (c == SHIFT_ARROW_UP) ? ARROW_UP :
+                        (c == SHIFT_ARROW_DOWN) ? ARROW_DOWN :
+                        (c == SHIFT_ARROW_LEFT) ? ARROW_LEFT : ARROW_RIGHT;
+            editorMoveCursor(plain);
+            if (E.sel_anchor_x == E.cx && E.sel_anchor_y == E.cy)
+                E.sel_active = 0;
+            break;
+        }
 
         case ALT_ARROW_LEFT:
             editorMoveCursorWord(0);
@@ -749,6 +832,9 @@ static void initEditor(void) {
     E.filename = NULL;
     E.statusmsg[0] = '\0';
     E.statusmsg_time = 0;
+    E.sel_active = 0;
+    E.sel_anchor_x = 0;
+    E.sel_anchor_y = 0;
 
     if (getWindowSize(&E.screenrows, &E.screencols) == -1) die("getWindowSize");
     E.screenrows -= 2; /* status bar + message bar */
