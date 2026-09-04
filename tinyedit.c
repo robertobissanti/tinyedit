@@ -3977,8 +3977,17 @@ static void editorProcessKeypress(void) {
         case BACKSPACE:
         case CTRL_KEY('h'):
         case DEL_KEY:
-            if (c == DEL_KEY) editorMoveCursor(ARROW_RIGHT);
-            editorDelChar();
+            /* With a selection, both keys delete the whole range rather
+             * than one character, matching Ctrl-V/paste (which already
+             * replaced the selection) and every other editor. had_sel is
+             * the copy captured before the selection-clearing block above,
+             * since neither key is whitelisted there. */
+            if (had_sel) {
+                editorDeleteRange(had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1);
+            } else {
+                if (c == DEL_KEY) editorMoveCursor(ARROW_RIGHT);
+                editorDelChar();
+            }
             break;
 
         case PAGE_UP:

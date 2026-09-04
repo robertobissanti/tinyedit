@@ -6,6 +6,7 @@ tinyedit
 dev/
 *.dSYM/
 testLatex.tex
+testEscape.md
 __pycache__/
 CLAUDE.md
 .DS_Store

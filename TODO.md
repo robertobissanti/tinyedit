@@ -1607,6 +1607,33 @@ partenza da cui il log sarà accurato in avanti.
   - Aggiunto test PTY che riproduce esattamente la conversione di due sequenze
     `\\n` in a-capo, salva il file e ne verifica i byte risultanti.
 
+- [x] **Bug: Backspace/Canc cancellavano un solo carattere invece dell'intera selezione**
+  - _Segnalato: 2026-09-04 · Corretto: 2026-09-04_
+  - Segnalato dall'utente: con del testo selezionato, `Backspace` e `Canc`
+    rimuovevano un singolo carattere lasciando intatto il resto della
+    selezione — mentre l'incolla (`Ctrl-V` e il bracketed paste) sostituiva
+    correttamente l'intera selezione, rendendo l'incoerenza evidente.
+  - **Causa**: il case `BACKSPACE`/`DEL_KEY` di `editorProcessKeypress()`
+    chiamava direttamente `editorDelChar()`, che per definizione agisce su
+    un carattere solo, senza mai interrogare lo stato di selezione — a
+    differenza del case `PASTE_START_KEY`, che chiamava `editorDeleteRange()`
+    sulla selezione prima di inserire.
+  - **Fix**: il case ora usa `had_sel`/`had_sel_*`, la copia della selezione
+    già catturata a inizio funzione *prima* del blocco che azzera
+    `E.sel_active` (nessuno dei due tasti è nella whitelist di quel blocco,
+    quindi rileggere `editorGetSelection()` dentro il case avrebbe restituito
+    "nessuna selezione"). Con una selezione attiva delega a
+    `editorDeleteRange()`, che gestisce già il caso multi-riga, posiziona il
+    cursore e crea un solo snapshot di undo; senza selezione il
+    comportamento precedente resta invariato, incluso l'`ARROW_RIGHT`
+    preliminare che distingue `Canc` da `Backspace`.
+  - Verificato via pty (`HOME` isolato, `TIOCSWINSZ` esplicito perché senza
+    dimensioni di finestra `getWindowSize()` fallisce e l'editor esce
+    subito): selezione di 5 caratteri + `Backspace` e + `Canc` lasciano
+    entrambe `" world"` da `"hello world"`; selezione multi-riga +
+    `Backspace` fonde correttamente le righe; senza selezione `Backspace`
+    continua a cancellare un solo carattere (`"hello"` → `"helo"`).
+
 ## Note tecniche aperte
 
 - [x] **Schermata Info spostata da Ctrl-I a F3**
