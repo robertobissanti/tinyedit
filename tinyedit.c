@@ -23,6 +23,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,6 +38,13 @@
 
 static struct editorConfig E;
 static struct editorSettings S;
+
+/* Set by the SIGWINCH handler when the terminal window is resized.
+ * sig_atomic_t is the only type C guarantees is safe to write from a
+ * signal handler and read from the main loop without a data race; the
+ * actual resize handling (re-reading dimensions, redrawing) happens
+ * in the main loop, not in the handler itself. */
+static volatile sig_atomic_t winsize_changed = 0;
 
 /* Set by editorFindCallback() when Ctrl-R is pressed inside the Ctrl-F
  * search prompt, telling editorPromptCB()'s loop to return immediately
@@ -75,11 +83,29 @@ static void enableRawMode(void) {
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
 }
 
+static void handleWinch(int sig) {
+    (void)sig;
+    winsize_changed = 1;
+}
+
+static void enableResizeHandling(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handleWinch;
+    sigemptyset(&sa.sa_mask);
+    /* No SA_RESTART: we want read() in editorReadKey() to return EINTR
+     * on resize so the main loop can react immediately instead of
+     * blocking until the next keypress. */
+    sigaction(SIGWINCH, &sa, NULL);
+}
+
 static int editorReadKey(void) {
     int nread;
     char c;
     while ((nread = (int)read(STDIN_FILENO, &c, 1)) != 1) {
-        if (nread == -1 && errno != EAGAIN) die("read");
+        if (nread == -1 && errno == EINTR && winsize_changed)
+            return CTRL_KEY('l'); /* no-op key: lets the main loop redraw */
+        if (nread == -1 && errno != EAGAIN && errno != EINTR) die("read");
     }
 
     if (c == '\x1b') {
@@ -760,11 +786,27 @@ static void editorDrawMessageBar(struct abuf *ab) {
 }
 
 static void editorRefreshScreen(void) {
+    int need_full_clear = 0;
+    if (winsize_changed) {
+        winsize_changed = 0;
+        int rows, cols;
+        if (getWindowSize(&rows, &cols) == 0) {
+            E.screenrows = rows - 2; /* status bar + message bar */
+            E.screencols = cols;
+        }
+        /* Shrinking the terminal can leave old rows visible past the
+         * new, smaller screenrows -- per-line \x1b[K only clears up to
+         * the end of each line we redraw, not rows outside the new
+         * viewport entirely, so a full clear is needed here. */
+        need_full_clear = 1;
+    }
+
     editorScroll();
 
     struct abuf ab = ABUF_INIT;
 
     abAppend(&ab, "\x1b[?25l", 6);
+    if (need_full_clear) abAppend(&ab, "\x1b[2J", 4);
     abAppend(&ab, "\x1b[H", 3);
 
     editorDrawRows(&ab);
@@ -1545,6 +1587,7 @@ static void initEditor(void) {
 
 int main(int argc, char **argv) {
     enableRawMode();
+    enableResizeHandling();
     initEditor();
     atexit(editorFreeUndoRedo);
     if (argc >= 2) editorOpen(argv[1]);

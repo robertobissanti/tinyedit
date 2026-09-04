@@ -112,6 +112,25 @@ decisione, è segnalato come "DA DECIDERE".
     scartando la copia locale editata, lo stato live (`S`) resta
     invariato.
 
+- [x] **Resize della finestra terminale (SIGWINCH)**
+  - Bug: `getWindowSize()` veniva chiamato una sola volta all'avvio
+    (`initEditor`), quindi ridimensionare la finestra mentre l'editor
+    era aperto lasciava `E.screenrows`/`E.screencols` bloccati al
+    valore iniziale, causando disallineamento/sovrapposizione del
+    rendering.
+  - Fix: signal handler per `SIGWINCH` (`handleWinch`, imposta solo un
+    flag `sig_atomic_t`, come richiesto per la sicurezza in un signal
+    handler — il vero ridisegno resta nel main loop). `editorReadKey`
+    non muore più su `EINTR` e ritorna un tasto no-op se causato da
+    resize, così il loop principale richiama subito
+    `editorRefreshScreen()` invece di restare bloccato in attesa del
+    prossimo tasto reale. `editorRefreshScreen()` rilegge le dimensioni
+    e forza un `\x1b[2J` (clear intero schermo) quando rileva un
+    resize, necessario perché restringere la finestra lascia righe
+    vecchie visibili oltre la nuova area che il clear per-riga non
+    coprirebbe. Verificato via pty (resize reale del pty + `SIGWINCH`
+    al processo) sia in crescita che in restringimento.
+
 ## Note tecniche aperte
 
 - Il mouse (click per posizionare il cursore) **non è nel piano attuale**:
