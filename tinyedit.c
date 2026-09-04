@@ -752,13 +752,36 @@ static void editorDrawRows(struct abuf *ab) {
     }
 }
 
+/* Counts grapheme clusters (not bytes, not raw codepoints) across the
+ * whole buffer, using the same utf8NextCharLen() boundary logic as
+ * cursor movement -- so an emoji with a skin-tone modifier counts as
+ * one character here too, consistent with how it's edited/deleted as
+ * one unit elsewhere in the editor. Newlines between rows count as one
+ * character each, matching how the file is written to disk
+ * (editorRowsToString() joins rows with '\n'). */
+static int editorCountChars(void) {
+    int count = 0;
+    for (int i = 0; i < E.numrows; i++) {
+        erow *row = &E.row[i];
+        size_t pos = 0;
+        while (pos < (size_t)row->size) {
+            size_t clen = utf8NextCharLen(row->chars, pos, (size_t)row->size);
+            if (clen == 0) clen = 1;
+            pos += clen;
+            count++;
+        }
+        if (i < E.numrows - 1) count++; /* newline joining this row to the next */
+    }
+    return count;
+}
+
 static void editorDrawStatusBar(struct abuf *ab) {
     const char *bar_color = ansiColorCode(S.color_statusbar);
     abAppend(ab, bar_color, (int)strlen(bar_color));
     abAppend(ab, "\x1b[7m", 4);
-    char status[80], rstatus[80];
-    int len = snprintf(status, sizeof(status), "%.20s - %d lines %s",
-        E.filename ? E.filename : "[No Name]", E.numrows,
+    char status[96], rstatus[80];
+    int len = snprintf(status, sizeof(status), "%.20s - %d lines, %d chars %s",
+        E.filename ? E.filename : "[No Name]", E.numrows, editorCountChars(),
         E.dirty ? "(modified)" : "");
     int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d",
         E.cy + 1, E.numrows);

@@ -57,7 +57,9 @@ Supporto UTF-8 completo (portato da
 code point, confini di grapheme cluster (emoji con modificatori, ZWJ,
 combining marks) e larghezza display reale (0/1/2 colonne) per
 cursore, backspace e rendering — non solo caratteri accentati europei
-ma anche CJK ed emoji.
+ma anche CJK ed emoji. La barra di stato mostra il conteggio caratteri
+del file contando i grapheme cluster (un'emoji con modificatore conta
+1, non i suoi byte), non i byte grezzi del buffer.
 
 ## Struttura del codice
 
