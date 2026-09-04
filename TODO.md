@@ -1575,6 +1575,38 @@ partenza da cui il log sarà accurato in avanti.
     la schermata info con tutti i campi popolati e coerenti con lo
     stato reale del file di prova.
 
+- [x] **Apertura e chiusura del file senza riavviare tinyedit (`Ctrl-O` / `Ctrl-W`)**
+  - _Inserito: 2026-09-04 · Completato: 2026-09-04_
+  - `Ctrl-W` non è più un alias di uscita: propone save/discard/cancel se
+    il documento è modificato, scarica il file corrente e lascia tinyedit
+    aperto su un buffer vuoto senza nome.
+  - `Ctrl-O` applica lo stesso controllo al documento corrente, poi chiede
+    manualmente il percorso. Un file esistente viene caricato nella stessa
+    sessione; un percorso inesistente apre un buffer vuoto già associato a
+    quel nome e crea il file al primo `Ctrl-S`, come Vim.
+  - Chiusura, apertura e `Ctrl-Q` condividono un'unica routine di conferma,
+    così un salvataggio fallito o annullato interrompe sempre l'operazione
+    senza perdere il documento. Al cambio file vengono azzerati cursore,
+    selezione, ricerca, scroll, cronologia undo/redo e stato del backup.
+  - Aggiornati la tabella dei tasti nel README e l'help interno F1. Questa
+    voce sostituisce il precedente comportamento storico `Ctrl-W = Ctrl-Q`.
+
+- [x] **Freeze di Replace all quando la sostituzione contiene il pattern cercato**
+  - _Segnalato: 2026-09-04 · Corretto: 2026-09-04_
+  - Riproduzione: ricerca regex di una sequenza letterale `\\n`, passaggio
+    a sostituzione con `Ctrl-R`, `\n` come testo sostitutivo e scelta `a`
+    (all).
+  - **Causa**: il replace riutilizzava la ricerca circolare dell'interfaccia;
+    dopo l'ultima occorrenza tornava alla prima e una sostituzione che
+    continuava a soddisfare il pattern rendeva il ciclo infinito.
+  - **Fix**: Replace all percorre ora il documento una sola volta, dall'inizio
+    alla fine. Nel testo sostitutivo regex `\n`, `\t`, `\r` e `\\` vengono
+    decodificati; una sostituzione può quindi dividere realmente una riga.
+    Anche i match regex a lunghezza zero avanzano sempre di un carattere
+    originale, e l'intera operazione crea un solo step di undo.
+  - Aggiunto test PTY che riproduce esattamente la conversione di due sequenze
+    `\\n` in a-capo, salva il file e ne verifica i byte risultanti.
+
 ## Note tecniche aperte
 
 - [x] **Schermata Info spostata da Ctrl-I a F3**

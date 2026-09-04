@@ -30,6 +30,11 @@ it possible to keep several files open in one session. Any such addition must
 earn its place, though—the program should grow without losing the simplicity
 that motivated it in the first place.
 
+![tinyedit editing a Python file with syntax highlighting](imgs/python-syntax-highlighting.png)
+
+*Python source in tinyedit, with line numbers, soft wrapping, file statistics,
+and configurable syntax colors.*
+
 ## Features at a glance
 
 tinyedit is intentionally small, but it is meant to be comfortable enough
@@ -38,7 +43,7 @@ for real editing rather than just demonstrating how a terminal works.
 | Area | What you get |
 |---|---|
 | Editing | Familiar cursor movement, word jumps, selection, cut/copy/paste, automatic indentation, configurable pair closing, and an undo history of up to 2,000 steps (200 by default). |
-| Files | Open an existing file or start from an empty buffer, save atomically, and recover unsaved work from automatic backup files after a crash. |
+| Files | Open or switch files without restarting tinyedit, start a named file before it exists, save atomically, and recover unsaved work from automatic backups after a crash. |
 | Search | Incremental literal or POSIX regular-expression search, match navigation, and interactive search and replace. |
 | Syntax highlighting | Built-in support for C/C++, Python, Shell, JavaScript/TypeScript, Markdown, HTML/XML, and CSS. Simple C-like languages can be added with a user configuration file. |
 | UTF-8 | Cursor movement, deletion, display width, wrapping, and character counts understand combining marks, CJK text, and multi-code-point emoji. |
@@ -76,6 +81,8 @@ Needs only a C99 compiler and a POSIX system (macOS or Linux).
 ./tinyedit [file]
 ```
 
+### Keyboard shortcuts
+
 | Key | Action |
 |---|---|
 | Arrows, Home, End, PageUp/Down | Move cursor |
@@ -95,7 +102,29 @@ Needs only a C99 compiler and a POSIX system (macOS or Linux).
 | `F3` | Info screen: version, author, and stats about the current file |
 | `F2` | Settings panel (Up/Down to navigate, Enter/Space to edit, Left/Right to cycle a multiple-choice value back/forward, `Ctrl-D` resets to defaults, `Ctrl-S` saves and exits, Esc exits — asks for confirmation if there are unsaved changes) |
 | `Ctrl-S` | Save (asks for a filename if none is set) |
-| `Ctrl-Q` / `Ctrl-W` | Quit (if there are unsaved changes, asks y/n/Esc: save-and-quit / quit without saving / cancel) |
+| `Ctrl-O` | Open another file by entering its path; offers to save the current file first. A missing path becomes a new file on first save. |
+| `Ctrl-W` | Close the current file without quitting tinyedit; offers to save first and leaves an empty buffer. |
+| `Ctrl-Q` | Quit (if there are unsaved changes, asks y/n/Esc: save-and-quit / quit without saving / cancel) |
+
+### Opening and closing files
+
+tinyedit keeps one active document at a time, but changing files does not
+require restarting the program. `Ctrl-W` closes the current document and
+returns to an empty unnamed buffer. `Ctrl-O` asks for a path and replaces the
+current document with that file. Before either operation, unsaved changes get
+the same save/discard/cancel check used by `Ctrl-Q`; cancelling or failing to
+save leaves the current document untouched. If the path entered for `Ctrl-O`
+does not exist, tinyedit opens an empty buffer under that name and creates the
+file when it is first saved.
+
+### File information
+
+![tinyedit file information screen](imgs/file-info-screen.png)
+
+*The `F3` screen summarizes the program version and the current file without
+leaving the editor.*
+
+### Fast terminal paste
 
 Pasting text directly into the terminal (Cmd+V or right-click, not
 just the editor's own `Ctrl-V` which reads the system clipboard) is
@@ -110,6 +139,8 @@ every modern terminal has it, including Ghostty, iTerm2, and
 Terminal.app; if you're running inside `tmux`/`screen` and paste still
 feels slow, check that it's passed through there too.
 
+### Mouse support
+
 Mouse support (`mouse_enabled`, F2 panel, **off by default**) lets you
 click to place the cursor, drag with the left button to select text,
 and scroll with the wheel. It's opt-in because, once enabled, it takes
@@ -118,6 +149,8 @@ over the terminal's own native selection (e.g. Cmd+C/Cmd+V on Ghostty)
 itself for as long as the setting stays on. The change takes effect
 immediately: toggling it in `F2` and pressing `Ctrl-S` applies it
 right away, no restart needed.
+
+### Settings and appearance
 
 Line numbers (gutter), tab width, the redo key, interface colors,
 soft-wrap, the top bar, auto-indent, auto-close pairs, tabs-as-spaces,
@@ -130,11 +163,20 @@ tinyedit never requires touching an existing `~/.tinyeditrc`: keys
 that aren't in the file (because they were introduced by a newer
 version) simply stay at their default until set explicitly.
 
+![tinyedit settings panel](imgs/settings-panel.png)
+
+*The built-in `F2` panel exposes the same options stored in `~/.tinyeditrc`,
+including undo depth, wrapping, backup, colors, and mouse support.*
+
+### Indentation and tabs
+
 With `auto_indent` on (default), Enter copies the leading
 whitespace of the line you're moving away from, so continuing to type
 keeps the same indentation level without retyping it by hand. With
 `insert_spaces_for_tab` on (default), the Tab key inserts `tab_stop`
 spaces instead of a literal tab character.
+
+### Automatic pair closing
 
 With `auto_close_pairs` on (default), typing `(`, `{`, `[`, `"`, `'`,
 `` ` ``, or `$` inserts the matching closing character automatically
@@ -157,6 +199,8 @@ not only as this pair's closer. The triple-backtick Markdown code
 fence (`` ``` ``) gets no special handling, by deliberate choice — VS
 Code tried exactly that and users found it more annoying than
 helpful.
+
+### Invisible characters and colors
 
 With `show_invisibles` on (off by default), spaces and tabs render as
 dedicated glyphs (`.` for space, `>` for tab) and every line ending
@@ -182,6 +226,8 @@ When the settings list doesn't fit the screen, a column on the left
 (like the line-number gutter) shows `^` on the first visible entry if
 there are more above, and `v` on the last one if there are more below.
 
+### Soft wrapping and navigation
+
 Lines too long for the screen width always wrap (soft-wrap is always
 on, there's no horizontal scrolling), breaking on a space where
 possible. `soft_wrap` (`0` by default, meaning no extra limit beyond
@@ -194,6 +240,8 @@ default (`home_end_visual_line = true`, VS Code/Sublime style); set to
 `false` (vim style) they always go to the start/end of the whole
 *logical* line, regardless of how many visual rows it wraps into.
 
+### Top and status bars
+
 The optional top bar (`show_top_bar`) shows the filename/path and
 unsaved-changes state as a persistent title, useful on long files
 where you lose track of position while scrolling. When it's on, the
@@ -203,6 +251,8 @@ instead. The unsaved-changes indicator is always visible in the
 bottom bar either way. The bottom bar also shows the cursor's actual
 column, on the right (`line/total: C column`) next to the line number.
 
+### UTF-8 text
+
 Full UTF-8 support (ported from
 [linenoise](https://github.com/antirez/linenoise)): code point
 decoding, grapheme cluster boundaries (emoji with modifiers, ZWJ,
@@ -211,6 +261,8 @@ cursor, backspace, and rendering — not just European accented
 characters but CJK and emoji too. The status bar's character count is
 grapheme clusters, not raw bytes (a modified emoji counts as 1
 character, not however many bytes it takes in the buffer).
+
+### Syntax highlighting
 
 With `syntax_highlight` on (default), files get highlighted based on
 their extension: keywords/types, strings, comments (line and
@@ -233,6 +285,13 @@ headings, `` `inline code` ``, multi-line code fences, italic
 `*...*`/`_..._`, bold `**...**`/`__..._`), HTML/XML (`.html` `.htm`
 `.xml` — tags, attributes, `<!-- -->` comments), and CSS (`.css` —
 properties, values, comments).
+
+![Markdown editing and syntax highlighting in tinyedit](imgs/markdown-editing.png)
+
+*Editing this README demonstrates Markdown highlighting, line numbers, word
+wrapping, and the persistent top and status bars.*
+
+### Extending syntax highlighting
 
 To add a "C-like" language (keywords + strings + comments, e.g.
 Matlab, Go, Rust, Java) without recompiling, drop a file at
@@ -274,6 +333,14 @@ keyword_prefix_chars = \
 math_mode = true
 ```
 
+<p align="center">
+  <img src="imgs/latex-syntax-highlighting.png" alt="LaTeX command syntax highlighting in tinyedit" width="49%">
+  <img src="imgs/latex-math-highlighting.png" alt="LaTeX mathematics syntax highlighting in tinyedit" width="49%">
+</p>
+
+*A user-defined LaTeX syntax configuration highlights commands and mathematical
+expressions without adding a compiled-in language or an external dependency.*
+
 Every `.conf` file in `~/.tinyedit/syntax/` gets loaded at startup
 (silently skipped if malformed, same tolerance as `~/.tinyeditrc`); a
 user file can redefine an extension already covered natively, and it
@@ -288,6 +355,8 @@ covers roughly 30 common extensions; to add more or override a name,
 add `filetype.<extension> = <Name>` lines to `~/.tinyeditrc` (e.g.
 `filetype.m = Matlab/Octave`).
 
+### Search and replace
+
 Inside the search prompt (`Ctrl-F`), `Ctrl-G` toggles whether the
 search string is interpreted as a POSIX extended regular expression
 (`<regex.h>` from libc, zero external dependencies) instead of a
@@ -296,6 +365,13 @@ current mode, updated the instant Ctrl-G is pressed. The mode isn't a
 persistent setting: it resets to literal on every new search
 (`Ctrl-F`). Switching to search-and-replace (`Ctrl-R`) keeps whatever
 mode was chosen, shown there too.
+
+In regex mode, replacement text understands `\n` (new line), `\t` (tab),
+`\r` (carriage return), and `\\` (a literal backslash). This makes it
+possible, for example, to search for the visible two-character sequence
+`\\n` with the regex `\\\\n` and replace it with real line breaks by
+entering `\n` in the replacement prompt. Other backslash sequences are
+preserved literally.
 
 The search/replace prompt adapts to available width in three stages,
 always leaving room for the text being typed: it starts by spelling

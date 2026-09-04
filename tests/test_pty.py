@@ -115,6 +115,92 @@ def test_very_long_wrapped_line(home):
         raise AssertionError("content beyond the former 512-wrap-segment limit is unreachable")
 
 
+def test_regex_replace_all_newline_finishes(home):
+    """Regex \\n replacement must split rows and terminate after one pass."""
+    target = pathlib.Path(home) / "replace.txt"
+    target.write_bytes(b"tiny\\nedit\\nend\n")
+    process, master = spawn_editor([str(target)], home)
+    read_available(master)
+
+    os.write(master, b"\x06")       # Ctrl-F
+    read_until(master, b"Search")
+    os.write(master, b"\x07")       # Ctrl-G: regex mode
+    os.write(master, b"\\\\n")     # regex matching a literal backslash+n
+    os.write(master, b"\x12")       # Ctrl-R
+    read_until(master, b"Replace")
+    os.write(master, b"\\n\r")      # replacement escape: actual newline
+    read_until(master, b"Replace this occurrence?")
+    os.write(master, b"a")           # replace all
+
+    output = read_until(master, b"Replaced 2 occurrence(s).")
+    os.write(master, b"\x13")        # Ctrl-S
+    read_until(master, b"bytes written to disk")
+    finish(process, master)
+    if b"Replaced 2 occurrence(s)." not in output:
+        raise AssertionError("regex newline replace-all did not finish")
+    if target.read_bytes() != b"tiny\nedit\nend\n":
+        raise AssertionError("regex replacement \\n was not decoded as a line break")
+
+
+def test_ctrl_w_saves_and_closes_only_file(home):
+    target = pathlib.Path(home) / "close-current.txt"
+    target.write_bytes(b"old\n")
+    process, master = spawn_editor([str(target)], home)
+    read_available(master)
+
+    os.write(master, b"X\x17")      # edit, then Ctrl-W
+    read_until(master, b"Save changes before closing?")
+    os.write(master, b"y")
+    output = read_until(master, b"File closed.")
+    if b"File closed." not in output or process.poll() is not None:
+        finish(process, master)
+        raise AssertionError("Ctrl-W exited tinyedit instead of closing the file")
+
+    finish(process, master)
+    if target.read_bytes() != b"Xold\n":
+        raise AssertionError("Ctrl-W did not save the modified current file")
+
+
+def test_ctrl_o_discards_then_creates_named_file(home):
+    current = pathlib.Path(home) / "current.txt"
+    target = pathlib.Path(home) / "created-by-open.txt"
+    existing = pathlib.Path(home) / "existing.txt"
+    current.write_bytes(b"keep\n")
+    existing.write_bytes(b"loaded existing file\n")
+    process, master = spawn_editor([str(current)], home)
+    read_available(master)
+
+    os.write(master, b"X\x0f")      # edit, then Ctrl-O
+    read_until(master, b"Save changes before opening another file?")
+    os.write(master, b"n")          # deliberately discard current edit
+    read_until(master, b"Open file:")
+    os.write(master, os.fsencode(target) + b"\r")
+    marker = os.fsencode(target.name)
+    output = read_until(master, marker)
+    if marker not in output:
+        finish(process, master)
+        raise AssertionError(
+            f"Ctrl-O did not open a missing path as a new file; output tail={output[-500:]!r}"
+        )
+
+    os.write(master, b"created\x13")
+    read_until(master, b"bytes written to disk")
+
+    os.write(master, b"\x0f")       # Ctrl-O again from a clean document
+    read_until(master, b"Open file:")
+    os.write(master, os.fsencode(existing) + b"\r")
+    output = read_until(master, b"loaded existing file")
+    if b"loaded existing file" not in output:
+        finish(process, master)
+        raise AssertionError("Ctrl-O did not load an existing file")
+
+    finish(process, master)
+    if current.read_bytes() != b"keep\n":
+        raise AssertionError("Ctrl-O saved changes after the user chose discard")
+    if target.read_bytes() != b"created\n":
+        raise AssertionError("Ctrl-O did not create the named file on save")
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="tinyedit-tests-") as tmp:
         home = pathlib.Path(tmp)
@@ -122,6 +208,9 @@ def main():
         test_f3(b"\x1b[13~", "CSI", home)
         test_ghostty_ctrl_i_is_drained(home)
         test_very_long_wrapped_line(home)
+        test_regex_replace_all_newline_finishes(home)
+        test_ctrl_w_saves_and_closes_only_file(home)
+        test_ctrl_o_discards_then_creates_named_file(home)
     print("pty tests: ok")
 
 

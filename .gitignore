@@ -8,3 +8,4 @@ dev/
 testLatex.tex
 __pycache__/
 CLAUDE.md
+.DS_Store

@@ -822,8 +822,9 @@ static void editorInsertChar(int32_t c) {
     E.cx++;
 }
 
-static void editorInsertNewline(void) {
-    editorPushUndo(EDIT_OTHER);
+/* Splits the current row without creating an undo snapshot. Callers that
+ * expose this as one user action must push exactly one snapshot themselves. */
+static void editorInsertNewlineRaw(void) {
     if (E.cx == 0) {
         editorInsertRow(E.cy, "", 0);
     } else {
@@ -836,6 +837,11 @@ static void editorInsertNewline(void) {
     }
     E.cy++;
     E.cx = 0;
+}
+
+static void editorInsertNewline(void) {
+    editorPushUndo(EDIT_OTHER);
+    editorInsertNewlineRaw();
 }
 
 /* Enter as typed by the user (as opposed to a newline embedded in
@@ -917,6 +923,7 @@ static void editorSetStatusMessageSticky(const char *fmt, ...);
 static void editorRefreshScreen(void);
 static int32_t editorReadKey(void);
 static int32_t editorReadMultiByteKey(uint8_t lead, char *out);
+static void editorFreeUndoRedo(void);
 static void abAppend(struct abuf *ab, const char *s, int32_t len);
 static void abFree(struct abuf *ab);
 
@@ -1282,43 +1289,111 @@ static void editorSave(void) {
     editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno));
 }
 
-/* Quits the editor, used by both Ctrl-Q and Ctrl-W (see
- * editorProcessKeypress() -- Ctrl-W is a straight alias for now,
- * meant to later become "close this file" if multi-file/buffer
- * support is ever added, distinct from "quit the program"; today
- * there's only one file, so the two coincide). If the buffer has
- * unsaved changes, asks y/n/Esc (save-then-quit / quit without saving
- * / cancel) instead of just quitting outright. */
-static void editorQuit(void) {
-    if (E.dirty) {
-        editorSetStatusMessage("Save changes before quitting? (y/n/Esc to cancel)");
-        editorRefreshScreen();
-        int32_t c = editorReadKey();
-        if (c == '\x1b') {
-            editorSetStatusMessage("");
-            return;
-        }
-        if (c == 'y' || c == 'Y') {
-            editorSave();
-            if (E.dirty) {
-                /* Save failed (or was aborted, e.g. empty filename) --
-                 * editorSave() already left an explanatory message in
-                 * the status bar. Don't quit with unsaved changes. */
-                return;
-            }
-        } else if (c != 'n' && c != 'N') {
-            /* Any other key: treat like Esc, don't guess. */
-            editorSetStatusMessage("");
-            return;
-        }
+/* Shared save/discard/cancel gate for every operation that would leave the
+ * current document (quit, close, or open another file). Returns 1 only when
+ * it is safe to proceed; a failed/cancelled save leaves the document open. */
+static uint8_t editorConfirmDocumentChange(const char *action) {
+    if (!E.dirty) return 1;
+
+    editorSetStatusMessage("Save changes before %s? (y/n/Esc to cancel)", action);
+    editorRefreshScreen();
+    int32_t c = editorReadKey();
+    if (c == 'y' || c == 'Y') {
+        editorSave();
+        return !E.dirty;
+    }
+    if (c == 'n' || c == 'N') return 1;
+
+    editorSetStatusMessage("");
+    return 0;
+}
+
+/* Releases every piece of state owned by the current document while keeping
+ * terminal dimensions and user settings intact. The next document starts
+ * with independent cursor, selection, search, backup, and undo state. */
+static void editorResetDocument(void) {
+    if (E.filename) backupRemove(E.filename);
+    editorClearRows();
+    free(E.filename);
+    E.filename = NULL;
+    editorFreeUndoRedo();
+
+    E.cx = 0;
+    E.cy = 0;
+    E.rx = 0;
+    E.rowoff = 0;
+    E.coloff = 0;
+    E.free_scroll = 0;
+    E.dirty = 0;
+    E.sel_active = 0;
+    E.sel_anchor_x = 0;
+    E.sel_anchor_y = 0;
+    E.sel_pinned = 0;
+    E.search_match_y = -1;
+    E.search_match_x = 0;
+    E.search_match_len = 0;
+    E.last_backup_time = 0;
+    E.last_edit_type = EDIT_NONE;
+    E.last_edit_time = 0;
+}
+
+/* Ctrl-W closes only the current document. tinyedit remains alive with a
+ * fresh unnamed buffer, ready for typing or Ctrl-O. */
+static void editorCloseFile(void) {
+    if (!editorConfirmDocumentChange("closing")) return;
+    editorResetDocument();
+    editorSetStatusMessageSticky("File closed. Ctrl-O open | Ctrl-Q quit | F1 help");
+}
+
+/* Ctrl-O switches the single active document. The current document remains
+ * in place if save confirmation or path entry is cancelled, or if an existing
+ * target cannot be read. ENOENT is intentional: like Vim, this opens a named
+ * empty buffer and the file is created on the first successful save. */
+static void editorOpenFile(void) {
+    if (!editorConfirmDocumentChange("opening another file")) return;
+
+    char *name = editorPrompt("Open file: %s (Esc to cancel)");
+    if (!name) {
+        editorSetStatusMessage("Open cancelled.");
+        return;
     }
 
-    /* Reaching here means either the buffer was already clean, the
-     * user chose 'y' (editorSave() above already removed the backup
-     * on success), or the user chose 'n' (explicitly discarding
-     * changes) -- in the 'n' case the backup would otherwise survive
-     * and wrongly look like crash evidence next time this file is
-     * opened, so drop it too. */
+    struct stat st;
+    uint8_t exists = stat(name, &st) == 0;
+    if (exists && S_ISDIR(st.st_mode)) {
+        editorSetStatusMessage("Can't open a directory.");
+        free(name);
+        return;
+    }
+    if (exists) {
+        FILE *probe = fopen(name, "r");
+        if (!probe) {
+            editorSetStatusMessage("Can't open file: %s", strerror(errno));
+            free(name);
+            return;
+        }
+        fclose(probe);
+    } else if (errno != ENOENT) {
+        editorSetStatusMessage("Can't open path: %s", strerror(errno));
+        free(name);
+        return;
+    }
+
+    editorResetDocument();
+    editorOpen(name);
+    free(name);
+    editorOfferBackupRecovery();
+    if (!E.dirty) {
+        if (exists) editorSetStatusMessage("Opened %s", E.filename);
+        else editorSetStatusMessage("New file: %s", E.filename);
+    }
+}
+
+static void editorQuit(void) {
+    if (!editorConfirmDocumentChange("quitting")) return;
+
+    /* A discarded dirty buffer must not leave a recovery file that would
+     * look like evidence of a crash the next time this path is opened. */
     if (E.filename) backupRemove(E.filename);
 
     write(STDOUT_FILENO, "\x1b[2J", 4);
@@ -2328,6 +2403,36 @@ static void editorInsertText(const char *text, size_t len) {
 
 static void editorFindAndReplace(const char *query);
 
+/* In regex replacement text, translate the familiar control-character
+ * escapes that can be typed into the single-line prompt. Unknown escapes
+ * remain untouched, so a path or a future backreference-like sequence is
+ * never silently damaged. The decoded form can contain real newlines and
+ * is therefore returned with an explicit byte length. */
+static char *editorDecodeRegexReplacement(const char *raw, size_t *out_len) {
+    size_t raw_len = strlen(raw);
+    char *decoded = malloc(raw_len + 1);
+    size_t dst = 0;
+
+    for (size_t src = 0; src < raw_len; src++) {
+        if (raw[src] == '\\' && src + 1 < raw_len) {
+            char next = raw[src + 1];
+            if (next == 'n' || next == 't' || next == 'r' || next == '\\') {
+                src++;
+                if (next == 'n') decoded[dst++] = '\n';
+                else if (next == 't') decoded[dst++] = '\t';
+                else if (next == 'r') decoded[dst++] = '\r';
+                else decoded[dst++] = '\\';
+                continue;
+            }
+        }
+        decoded[dst++] = raw[src];
+    }
+
+    decoded[dst] = '\0';
+    *out_len = dst;
+    return decoded;
+}
+
 /* Finds the LAST regex match on `row` that starts at or before column
  * `limit_x` (inclusive), storing its start offset/length in *out_x/
  * *out_len. Returns 1 if any match qualifies, 0 otherwise. There is no
@@ -2387,7 +2492,12 @@ static uint8_t editorRegexFindLastOnRow(const regex_t *re, erow *row, int32_t li
  * error dialog. On success sets E.cy/E.cx to the match start, updates
  * E.search_match_*, and returns 1. On failure clears E.search_match_y
  * to -1 and returns 0. */
-static uint8_t editorFindFrom(const char *query, int32_t from_y, int32_t from_x, int32_t dir) {
+/* Finds a match from the requested position. Interactive search passes
+ * wrap=1 so repeated arrows cycle through the document; replace passes
+ * wrap=0 so a replacement that still matches the query cannot send the
+ * traversal back to the beginning forever. */
+static uint8_t editorFindFrom(const char *query, int32_t from_y, int32_t from_x,
+    int32_t dir, uint8_t wrap) {
     size_t qlen = strlen(query);
     if (qlen == 0 || E.numrows == 0) {
         E.search_match_y = -1;
@@ -2453,9 +2563,11 @@ static uint8_t editorFindFrom(const char *query, int32_t from_y, int32_t from_x,
         }
 
         if (dir == 1) {
+            if (!wrap && y == E.numrows - 1) break;
             y = (y + 1) % E.numrows;
             x = 0;
         } else {
+            if (!wrap && y == 0) break;
             y = (y - 1 + E.numrows) % E.numrows;
             x = E.row[y].size;
         }
@@ -2502,7 +2614,7 @@ static void editorFindCallback(char *query, int32_t key) {
         last_len = 0;
         if (strlen(query) > 0) {
             int32_t from_y = search_saved_cy, from_x = search_saved_cx;
-            if (editorFindFrom(query, from_y, from_x, search_dir)) {
+            if (editorFindFrom(query, from_y, from_x, search_dir, 1)) {
                 last_cy = E.cy;
                 last_cx = E.cx;
                 last_len = E.search_match_len;
@@ -2569,7 +2681,7 @@ static void editorFindCallback(char *query, int32_t key) {
         from_x = E.row[from_y].size;
     }
 
-    if (editorFindFrom(query, from_y, from_x, search_dir)) {
+    if (editorFindFrom(query, from_y, from_x, search_dir, 1)) {
         last_cy = E.cy;
         last_cx = E.cx;
         last_len = E.search_match_len;
@@ -2624,8 +2736,8 @@ static void editorFindAndReplace(const char *query) {
      * prompt that led here (see editorFindFrom(): it reads the same
      * global, and nothing resets it between Ctrl-R and this function)
      * -- shown here too so the mode isn't invisible during replace,
-     * where whether "\1" backreferences or literal text get matched
-     * makes a real difference to what gets replaced.
+     * where escape sequences such as "\n" have replacement semantics
+     * instead of being inserted literally.
      *
      * Long form echoes the query being replaced (up to 40 chars);
      * short form drops it (still visible highlighted in the buffer
@@ -2640,15 +2752,26 @@ static void editorFindAndReplace(const char *query) {
     snprintf(replace_prompt_short, sizeof(replace_prompt_short), "Replace %s with: %%s",
         search_regex_mode ? "[regex]" : "[literal]");
     search_switch_to_replace = 0;
-    char *replacement = editorPromptCB(replace_prompt_long, replace_prompt_short, NULL, NULL);
-    if (!replacement) return;
+    char *replacement_input = editorPromptCB(replace_prompt_long, replace_prompt_short, NULL, NULL);
+    if (!replacement_input) return;
 
-    size_t rlen = strlen(replacement);
+    size_t rlen;
+    char *replacement;
+    if (search_regex_mode) {
+        replacement = editorDecodeRegexReplacement(replacement_input, &rlen);
+        free(replacement_input);
+    } else {
+        replacement = replacement_input;
+        rlen = strlen(replacement);
+    }
     uint8_t all = 0;
     int32_t count = 0;
 
-    int32_t y = search_saved_cy, x = search_saved_cx;
-    while (editorFindFrom(query, y, x, 1)) {
+    /* Replace traverses the file once, from start to finish. Reusing the
+     * circular navigation search here used to loop forever whenever the
+     * replacement still matched `query` (including a no-op replacement). */
+    int32_t y = 0, x = 0;
+    while (editorFindFrom(query, y, x, 1, 0)) {
         y = E.search_match_y;
         x = E.search_match_x;
         /* Actual matched length -- NOT strlen(query). In literal mode
@@ -2673,29 +2796,41 @@ static void editorFindAndReplace(const char *query) {
         }
 
         if (do_replace) {
+            if (count == 0) editorPushUndo(EDIT_OTHER);
             erow *row = &E.row[y];
             for (int32_t k = 0; k < mlen; k++)
                 editorRowDelChar(row, x);
-            if (rlen > 0) {
-                char *tmp = malloc(rlen + 1);
-                memcpy(tmp, replacement, rlen);
-                tmp[rlen] = '\0';
-                for (size_t k = 0; k < rlen; k++)
-                    editorRowInsertChar(row, x + (int32_t)k, tmp[k]);
-                free(tmp);
+            E.cy = y;
+            E.cx = x;
+            for (size_t k = 0; k < rlen; k++) {
+                if (replacement[k] == '\n') {
+                    editorInsertNewlineRaw();
+                } else {
+                    if (E.cy == E.numrows) editorInsertRow(E.numrows, "", 0);
+                    editorRowInsertChar(&E.row[E.cy], E.cx, (unsigned char)replacement[k]);
+                    E.cx++;
+                }
             }
             count++;
-            x += (int32_t)rlen;
+            y = E.cy;
+            x = E.cx;
         } else {
             x += mlen;
         }
-        /* Guard against an infinite loop on a zero-length match (e.g.
-         * regex "a*" matching zero "a"s at some position) combined
-         * with a zero-length replacement -- without forcing at least
-         * 1 byte of progress, the next editorFindFrom() call would
-         * find the exact same empty match at the exact same position
-         * forever. */
-        if (x == E.search_match_x && mlen == 0 && rlen == 0) x++;
+        /* A zero-length regex match must always consume one original
+         * character before the next search. This applies whether the
+         * occurrence was replaced, skipped, or replaced with non-empty
+         * text; at end-of-row, size+1 makes the non-wrapping finder move
+         * to the next row instead of repeatedly growing the same edge. */
+        if (mlen == 0) {
+            erow *row = &E.row[y];
+            if (x < row->size) {
+                size_t advance = utf8NextCharLen(row->chars, (size_t)x, (size_t)row->size);
+                x += (int32_t)(advance > 0 ? advance : 1);
+            } else {
+                x = row->size + 1;
+            }
+        }
     }
 
     E.search_match_y = -1;
@@ -2776,7 +2911,9 @@ static const struct helpEntry helpEntries[] = {
     { "Ctrl-R (inside search)", "Switch to search & replace" },
     { NULL, "File & editor" },
     { "Ctrl-S", "Save" },
-    { "Ctrl-Q / Ctrl-W", "Quit (offers to save first if unsaved)" },
+    { "Ctrl-O", "Open another file (offers to save current file first)" },
+    { "Ctrl-W", "Close current file without quitting" },
+    { "Ctrl-Q", "Quit (offers to save first if unsaved)" },
     { "F2", "Settings panel (Ctrl-D inside it resets to defaults)" },
     { "F1", "This help screen" },
     { "F3", "Info screen: version, author, current file stats" },
@@ -3531,9 +3668,16 @@ static void editorProcessKeypress(void) {
             break;
 
         case CTRL_KEY('q'):
-        case CTRL_KEY('w'):
             editorQuit();
             return;
+
+        case CTRL_KEY('w'):
+            editorCloseFile();
+            break;
+
+        case CTRL_KEY('o'):
+            editorOpenFile();
+            break;
 
         case CTRL_KEY('s'):
             editorSave();
@@ -4000,9 +4144,9 @@ int main(int argc, char **argv) {
     const char *term_program = getenv("TERM_PROGRAM");
     if (term_program && strcmp(term_program, "Apple_Terminal") == 0) {
         editorSetStatusMessageSticky(
-            "Terminal.app: use Ctrl-T to select (Shift+Arrow unsupported here) | F1 help");
+            "Terminal.app: Ctrl-T select | Ctrl-O open | Ctrl-Q quit | F1 help");
     } else {
-        editorSetStatusMessageSticky("Ctrl-S save | Ctrl-Q quit | F1 help");
+        editorSetStatusMessageSticky("Ctrl-S save | Ctrl-O open | Ctrl-Q quit | F1 help");
     }
 
     /* After the startup hint so a successful recovery's own sticky
