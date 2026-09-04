@@ -43,6 +43,7 @@ Richiede solo un compilatore C99 e un sistema POSIX (macOS o Linux).
 | `Ctrl-Z` | Undo |
 | `Ctrl-Y` | Redo |
 | `Ctrl-F` | Ricerca incrementale (Frecce per prossimo/precedente match, `Ctrl-R` per passare a cerca-e-sostituisci, Esc per annullare) |
+| `F1` | Schermata di aiuto con tutte le scorciatoie (qualunque tasto chiude) |
 | `F2` | Pannello impostazioni (Frecce per navigare, Invio/Spazio per editare, `Ctrl-S` salva, Esc annulla) |
 | `Ctrl-S` | Salva (chiede il nome file se non impostato) |
 | `Ctrl-Q` | Esci (chiede conferma se ci sono modifiche non salvate) |

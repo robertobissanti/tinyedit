@@ -48,6 +48,7 @@ enum editorKey {
     SHIFT_ARROW_DOWN,
     SHIFT_PAGE_UP,
     SHIFT_PAGE_DOWN,
+    F1_KEY,
     F2_KEY
 };
 
@@ -86,6 +87,11 @@ struct editorConfig {
     char *filename;
     char statusmsg[80];
     time_t statusmsg_time;
+    /* When set, the message bar shows statusmsg indefinitely instead
+     * of clearing it after the usual 5s timeout -- used for the
+     * startup shortcut hint, which should stay until the user does
+     * something that produces a real status update (e.g. saving). */
+    int statusmsg_sticky;
     struct termios orig_termios;
 
     int sel_active;

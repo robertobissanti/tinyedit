@@ -149,6 +149,31 @@ decisione, è segnalato come "DA DECIDERE".
     `settingsSave()` (F2, Ctrl-S) preserva questa sezione anche se il
     pannello F2 non la edita ancora direttamente.
 
+- [x] **Fix: messaggio di aiuto iniziale scompariva dopo 5s** e **`F1` help screen**
+  - Bug: `editorDrawMessageBar()` nascondeva qualunque messaggio di
+    stato dopo 5 secondi dal timeout `E.statusmsg_time`, pensato per
+    conferme transitorie ("Settings saved", "Undo") ma applicato anche
+    al messaggio di aiuto persistente all'avvio — spariva al primo
+    redraw dopo il timeout, dando l'impressione di sparire "al primo
+    tasto premuto".
+  - Fix: nuovo flag `E.statusmsg_sticky` e `editorSetStatusMessageSticky()`
+    accanto a `editorSetStatusMessage()` esistente — i messaggi sticky
+    restano finché non sostituiti da un altro messaggio (sticky o no),
+    ignorando il timeout. Usato per il messaggio di startup.
+  - **`F1`**: nuova schermata `editorHelpScreen()`, contenuto statico
+    (`helpEntries[]`, organizzato per categoria: movimento, editing,
+    selezione/clipboard, ricerca, file/editor) con tutte le scorciatoie
+    implementate finora. Scroll con frecce/PageUp/Down se il contenuto
+    supera l'altezza schermo, qualunque tasto chiude (nessuno stato da
+    salvare, a differenza di F2).
+  - **Deciso**: `Ctrl-H` scartato per l'help perché è già mappato a
+    Backspace — non per limite di un terminale specifico (come i casi
+    Alt/Shift/F2 già documentati sopra), ma perché `Ctrl-H = 0x08` è la
+    definizione aritmetica universale del carattere di controllo
+    (`CTRL_KEY('h')`), identica su ogni piattaforma/terminale per
+    costruzione. `F1` (byte `ESC O P`, SS3, verificato identico su
+    Ghostty e Terminal.app) non ha questo conflitto.
+
 ## Note tecniche aperte
 
 - Il mouse (click per posizionare il cursore) **non è nel piano attuale**:

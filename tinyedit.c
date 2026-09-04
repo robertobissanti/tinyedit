@@ -180,6 +180,7 @@ static int editorReadKey(void) {
             switch (seq[1]) {
                 case 'H': return HOME_KEY;
                 case 'F': return END_KEY;
+                case 'P': return F1_KEY; /* SS3 F1, ESC O P -- verified on Ghostty and Terminal.app */
                 case 'Q': return F2_KEY; /* SS3 F2, e.g. ESC O Q on Ghostty */
             }
         }
@@ -826,7 +827,7 @@ static void editorDrawMessageBar(struct abuf *ab) {
     abAppend(ab, "\x1b[K", 3);
     int msglen = (int)strlen(E.statusmsg);
     if (msglen > E.screencols) msglen = E.screencols;
-    if (msglen && time(NULL) - E.statusmsg_time < 5)
+    if (msglen && (E.statusmsg_sticky || time(NULL) - E.statusmsg_time < 5))
         abAppend(ab, E.statusmsg, msglen);
 }
 
@@ -875,6 +876,21 @@ static void editorSetStatusMessage(const char *fmt, ...) {
     vsnprintf(E.statusmsg, sizeof(E.statusmsg), fmt, ap);
     va_end(ap);
     E.statusmsg_time = time(NULL);
+    E.statusmsg_sticky = 0;
+}
+
+/* Like editorSetStatusMessage(), but the message stays in the message
+ * bar until replaced by another call to either function -- no 5s
+ * timeout. Used for the startup shortcut hint, which should remain
+ * visible until the user does something that produces a real status
+ * update, not vanish on its own after a few seconds. */
+static void editorSetStatusMessageSticky(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(E.statusmsg, sizeof(E.statusmsg), fmt, ap);
+    va_end(ap);
+    E.statusmsg_time = time(NULL);
+    E.statusmsg_sticky = 1;
 }
 
 /* ---- input ------------------------------------------------------------------ */
@@ -1262,6 +1278,98 @@ static void editorSettingsDrawRow(struct abuf *ab, int idx, int selected,
  * to ~/.tinyeditrc and makes it live. Reuses the same raw-mode input
  * loop style as the rest of the editor (editorReadKey + a per-frame
  * abuf redraw) rather than pulling in any new input machinery. */
+/* Static keybinding reference shown by F1. One entry per line; NULL
+ * marks a section header (rendered bold/inverse instead of key+desc).
+ * Kept as a flat array rather than scattered doc-comments so this is
+ * the one place to update when a keybinding changes -- easy to miss
+ * a case in editorProcessKeypress() otherwise. */
+struct helpEntry { const char *key; const char *desc; };
+static const struct helpEntry helpEntries[] = {
+    { NULL, "Movement" },
+    { "Arrows, Home, End, PageUp/Down", "Move cursor" },
+    { "Alt+Left/Right (or Esc b / Esc f)", "Jump by word" },
+    { NULL, "Editing" },
+    { "Enter", "New line" },
+    { "Backspace / Delete", "Delete character (UTF-8 aware)" },
+    { "Ctrl-Z / Ctrl-Y", "Undo / redo" },
+    { NULL, "Selection & clipboard" },
+    { "Shift+Arrows, Shift+PageUp/Down", "Extend selection" },
+    { "Ctrl-T", "Toggle selection mode (works on every terminal)" },
+    { "Ctrl-A", "Select all" },
+    { "Ctrl-C / Ctrl-X / Ctrl-V", "Copy / cut / paste (system clipboard)" },
+    { NULL, "Search" },
+    { "Ctrl-F", "Incremental search" },
+    { "Ctrl-R (inside search)", "Switch to search & replace" },
+    { NULL, "File & editor" },
+    { "Ctrl-S", "Save" },
+    { "Ctrl-Q", "Quit (asks twice if unsaved)" },
+    { "F2", "Settings panel" },
+    { "F1", "This help screen" },
+};
+static const int helpEntryCount = (int)(sizeof(helpEntries) / sizeof(helpEntries[0]));
+
+/* Full-screen static help overlay (F1). No editable state, so unlike
+ * editorSettingsScreen() this doesn't need a local copy or Ctrl-S --
+ * any key closes it. Scrolls with Up/Down/PageUp/PageDown if the
+ * keybinding list is taller than the terminal. */
+static void editorHelpScreen(void) {
+    int scroll = 0;
+
+    while (1) {
+        struct abuf ab = ABUF_INIT;
+        abAppend(&ab, "\x1b[?25l\x1b[H", 9);
+        int rows_used = 0;
+
+        abAppend(&ab, "\x1b[7m tinyedit -- keybindings (any key to close) \x1b[m\x1b[K\r\n\x1b[K\r\n", 47);
+        rows_used += 2;
+
+        for (int i = scroll; i < helpEntryCount && rows_used < E.screenrows; i++) {
+            if (helpEntries[i].key == NULL) {
+                abAppend(&ab, "\x1b[1m  ", 5);
+                abAppend(&ab, helpEntries[i].desc, (int)strlen(helpEntries[i].desc));
+                abAppend(&ab, "\x1b[m\x1b[K\r\n", 8);
+            } else {
+                char line[128];
+                int len = snprintf(line, sizeof(line), "    %-38s %s",
+                    helpEntries[i].key, helpEntries[i].desc);
+                if (len < 0) len = 0;
+                if ((size_t)len >= sizeof(line)) len = (int)sizeof(line) - 1;
+                abAppend(&ab, line, len);
+                abAppend(&ab, "\x1b[K\r\n", 5);
+            }
+            rows_used++;
+        }
+
+        int total_rows = E.screenrows + 2;
+        for (; rows_used < total_rows - 1; rows_used++)
+            abAppend(&ab, "\x1b[K\r\n", 5);
+        if (rows_used < total_rows)
+            abAppend(&ab, "\x1b[K", 3);
+
+        abAppend(&ab, "\x1b[H\x1b[?25h", 9);
+        write(STDOUT_FILENO, ab.b, (size_t)ab.len);
+        abFree(&ab);
+
+        int c = editorReadKey();
+        int max_scroll = helpEntryCount - (E.screenrows - 2);
+        if (max_scroll < 0) max_scroll = 0;
+
+        if (c == ARROW_DOWN) {
+            if (scroll < max_scroll) scroll++;
+        } else if (c == ARROW_UP) {
+            if (scroll > 0) scroll--;
+        } else if (c == PAGE_DOWN) {
+            scroll += E.screenrows;
+            if (scroll > max_scroll) scroll = max_scroll;
+        } else if (c == PAGE_UP) {
+            scroll -= E.screenrows;
+            if (scroll < 0) scroll = 0;
+        } else {
+            return; /* any other key closes the help screen */
+        }
+    }
+}
+
 static void editorSettingsScreen(void) {
     struct editorSettings edited = S;
     int cursor = 0;
@@ -1467,6 +1575,10 @@ static void editorProcessKeypress(void) {
             editorFind();
             break;
 
+        case F1_KEY:
+            editorHelpScreen();
+            break;
+
         case F2_KEY:
             editorSettingsScreen();
             break;
@@ -1609,6 +1721,7 @@ static void initEditor(void) {
     E.filename = NULL;
     E.statusmsg[0] = '\0';
     E.statusmsg_time = 0;
+    E.statusmsg_sticky = 0;
     E.sel_active = 0;
     E.sel_anchor_x = 0;
     E.sel_anchor_y = 0;
@@ -1644,10 +1757,10 @@ int main(int argc, char **argv) {
      * instead of leaving them to wonder why Shift+Arrow is unresponsive. */
     const char *term_program = getenv("TERM_PROGRAM");
     if (term_program && strcmp(term_program, "Apple_Terminal") == 0) {
-        editorSetStatusMessage(
-            "Terminal.app: use Ctrl-T to select (Shift+Arrow unsupported here) | F2 settings");
+        editorSetStatusMessageSticky(
+            "Terminal.app: use Ctrl-T to select (Shift+Arrow unsupported here) | F1 help");
     } else {
-        editorSetStatusMessage("Ctrl-S save | Ctrl-Q quit | Ctrl-Z undo | F2 settings");
+        editorSetStatusMessageSticky("Ctrl-S save | Ctrl-Q quit | F1 help");
     }
 
     while (1) {
