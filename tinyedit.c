@@ -1174,18 +1174,24 @@ static void editorSettingsScreen(void) {
     while (1) {
         struct abuf ab = ABUF_INIT;
         abAppend(&ab, "\x1b[?25l\x1b[H", 9);
+        int rows_used = 0;
 
         abAppend(&ab, "\x1b[7m Settings \x1b[m\x1b[K\r\n\r\n", 24);
+        rows_used += 2;
 
-        for (int i = 0; i < settingDescriptorCount; i++)
+        for (int i = 0; i < settingDescriptorCount; i++) {
             editorSettingsDrawRow(&ab, i, i == cursor, &edited);
+            rows_used++;
+        }
 
-        abAppend(&ab, "\r\n", 2);
+        abAppend(&ab, "\x1b[K\r\n", 5);
+        rows_used++;
         if (edited.redo_key == REDO_KEY_CTRL_SHIFT_Z) {
             const char *note =
                 "  Note: Ctrl-Shift-Z may not reach the editor on every "
                 "terminal; Ctrl-Y always works as a fallback.\x1b[K\r\n";
             abAppend(&ab, note, (int)strlen(note));
+            rows_used++;
         }
 
         char help[96];
@@ -1193,9 +1199,16 @@ static void editorSettingsScreen(void) {
             "  %s", msg[0] ? msg :
             "Up/Down select, Enter/Space edit, Ctrl-S save, Esc cancel");
         abAppend(&ab, help, hlen);
-        abAppend(&ab, "\x1b[K", 3);
+        abAppend(&ab, "\x1b[K\r\n", 5);
+        rows_used++;
 
-        abAppend(&ab, "\x1b[?25h", 6);
+        /* Clear every remaining screen row so stale buffer content from
+         * the previous editorRefreshScreen() frame doesn't show through
+         * underneath the panel. */
+        for (; rows_used < E.screenrows + 2; rows_used++)
+            abAppend(&ab, "\x1b[K\r\n", 5);
+
+        abAppend(&ab, "\x1b[H\x1b[?25h", 9);
         write(STDOUT_FILENO, ab.b, (size_t)ab.len);
         abFree(&ab);
 
