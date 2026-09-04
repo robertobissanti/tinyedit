@@ -107,15 +107,24 @@ static int editorReadKey(void) {
                         case '8': return END_KEY;
                     }
                 } else if (seq[2] == ';') {
-                    /* Modified arrow/nav key: ESC [ 1 ; <mod> <letter>
-                     * e.g. Alt+Up = ESC [ 1 ; 3 A. We only need the
-                     * modifier digit and the final letter. */
-                    char mod, letter;
+                    /* Modified nav key. Two layouts share this prefix:
+                     *   ESC [ 1 ; <mod> <letter>   e.g. Alt+Up = ESC[1;3A
+                     *   ESC [ 5 ; <mod> ~          Shift+PageUp = ESC[5;2~
+                     *   ESC [ 6 ; <mod> ~          Shift+PageDown = ESC[6;2~
+                     * seq[1] tells us which: '1' terminates with a
+                     * letter, '5'/'6' terminate with '~'. */
+                    char mod, term;
                     if (read(STDIN_FILENO, &mod, 1) != 1) return '\x1b';
-                    if (read(STDIN_FILENO, &letter, 1) != 1) return '\x1b';
+                    if (read(STDIN_FILENO, &term, 1) != 1) return '\x1b';
                     int is_alt = (mod == '3');
                     int is_shift = (mod == '2');
-                    switch (letter) {
+
+                    if (seq[1] == '5' && term == '~')
+                        return is_shift ? SHIFT_PAGE_UP : PAGE_UP;
+                    if (seq[1] == '6' && term == '~')
+                        return is_shift ? SHIFT_PAGE_DOWN : PAGE_DOWN;
+
+                    switch (term) {
                         case 'A': return is_shift ? SHIFT_ARROW_UP : ARROW_UP;
                         case 'B': return is_shift ? SHIFT_ARROW_DOWN : ARROW_DOWN;
                         case 'C':
@@ -1277,10 +1286,11 @@ static void editorProcessKeypress(void) {
     int c = editorReadKey();
 
     int is_plain_arrow = (c == ARROW_UP || c == ARROW_DOWN ||
-        c == ARROW_LEFT || c == ARROW_RIGHT);
+        c == ARROW_LEFT || c == ARROW_RIGHT || c == PAGE_UP || c == PAGE_DOWN);
 
     if (c != SHIFT_ARROW_UP && c != SHIFT_ARROW_DOWN &&
         c != SHIFT_ARROW_LEFT && c != SHIFT_ARROW_RIGHT &&
+        c != SHIFT_PAGE_UP && c != SHIFT_PAGE_DOWN &&
         c != CTRL_KEY('a') && c != CTRL_KEY('c') &&
         c != CTRL_KEY('x') && c != CTRL_KEY('v') &&
         c != CTRL_KEY('t') &&
@@ -1405,8 +1415,19 @@ static void editorProcessKeypress(void) {
             break;
 
         case PAGE_UP:
-        case PAGE_DOWN: {
-            if (c == PAGE_UP) {
+        case PAGE_DOWN:
+        case SHIFT_PAGE_UP:
+        case SHIFT_PAGE_DOWN: {
+            int is_up = (c == PAGE_UP || c == SHIFT_PAGE_UP);
+            int extending = (c == SHIFT_PAGE_UP || c == SHIFT_PAGE_DOWN || E.sel_pinned);
+
+            if (extending && !E.sel_active) {
+                E.sel_active = 1;
+                E.sel_anchor_x = E.cx;
+                E.sel_anchor_y = E.cy;
+            }
+
+            if (is_up) {
                 E.cy = E.rowoff;
             } else {
                 E.cy = E.rowoff + E.screenrows - 1;
@@ -1414,7 +1435,10 @@ static void editorProcessKeypress(void) {
             }
             int times = E.screenrows;
             while (times--)
-                editorMoveCursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
+                editorMoveCursor(is_up ? ARROW_UP : ARROW_DOWN);
+
+            if (extending && E.sel_anchor_x == E.cx && E.sel_anchor_y == E.cy)
+                E.sel_active = 0;
             break;
         }
 

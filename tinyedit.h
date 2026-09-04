@@ -46,6 +46,8 @@ enum editorKey {
     SHIFT_ARROW_RIGHT,
     SHIFT_ARROW_UP,
     SHIFT_ARROW_DOWN,
+    SHIFT_PAGE_UP,
+    SHIFT_PAGE_DOWN,
     F2_KEY
 };
 

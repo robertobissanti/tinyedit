@@ -37,6 +37,18 @@ decisione, è segnalato come "DA DECIDERE".
     Shift. `main()` rileva `$TERM_PROGRAM == "Apple_Terminal"` e mostra
     un messaggio di stato che indirizza a Ctrl-T invece di lasciare
     l'utente a chiedersi perché Shift+Frecce non risponde.
+  - `Esc` disattiva anche `sel_pinned`, non solo la selezione visibile
+    del momento — altrimenti la freccia successiva avrebbe silenziosamente
+    avviato una nuova selezione con la modalità ancora "invisibilmente" attiva.
+
+- [x] **Selezione con PageUp/PageDown**
+  - Stesso pattern di Shift+Frecce: `Shift+PageUp`/`Shift+PageDown`
+    riconosciuti da `editorReadKey` (`ESC[5;2~`/`ESC[6;2~`, formato CSI
+    standard xterm — verificato su Ghostty). **Anche qui Terminal.app non
+    manda alcun modificatore** (`ESC[5~`/`ESC[6~`, identico al tasto
+    semplice, verificato con key logger), quindi la via universale resta
+    `Ctrl-T` + PageUp/PageDown semplice, che riusa lo stesso `sel_pinned`
+    già implementato per le frecce.
 
 - [x] **Ctrl-A: seleziona tutto**
 
