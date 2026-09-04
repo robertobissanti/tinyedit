@@ -61,25 +61,33 @@ decisione, è segnalato come "DA DECIDERE".
   - Colonna a sinistra con il numero riga, larghezza dinamica
     (`editorGutterWidth`) che cresce con `E.numrows`; conteggiata nei
     `E.screencols` disponibili per il testo (`editorTextCols`). Attivo di
-    default (`E.show_line_numbers`); non ancora esposto a runtime — in
-    attesa del file di configurazione sotto.
+    default, ora configurabile tramite il file di impostazioni sotto.
 
-## Da fare — interfaccia
+- [x] **File di configurazione** (`~/.tinyeditrc`, formato INI-style
+      `chiave = valore`)
+  - Modulo `settings.c`/`settings.h`: `struct editorSettings` +
+    `settingDescriptors[]` (tabella statica che pilota sia il parser
+    file sia lo schermo F2, così aggiungere un'opzione è una riga nella
+    tabella). Opzioni: `show_line_numbers`, `tab_stop`, `redo_key`,
+    `undo_max_depth`, `color_gutter`, `color_selection`,
+    `color_statusbar`. `settingsLoad()` tollerante (righe
+    sconosciute/malformate ignorate silenziosamente, chiavi mancanti
+    restano ai default).
+  - Deciso: `redo_key = ctrl-shift-z` è solo informativo — `Ctrl-Y`
+    resta sempre attivo come redo perché Ctrl-Shift-Z è spesso
+    indistinguibile da Ctrl-Z su tty raw; lo schermo F2 mostra una nota
+    esplicita quando quell'opzione è selezionata invece di far finta
+    che sia garantita.
 
-- [ ] **File di configurazione** (es. `~/.tinyeditrc` o
-      `~/.config/tinyedit/config`)
-  - Opzioni minime: numeri di riga on/off, tab width, tasto di redo.
-  - DA DECIDERE: formato del file (INI-style semplice coerente con lo
-    stile "zero dipendenze" del progetto, piuttosto che introdurre un
-    parser JSON/YAML).
-
-- [ ] **TUI a widget per le impostazioni**
-  - Schermata dedicata (tasto da assegnare, es. `Ctrl-,`) con lista
-    opzioni navigabile a frecce e editabile inline, che legge/scrive il
-    file di configurazione sopra.
-  - Dipende dal file di config essendo già definito nella sua forma
-    finale (struttura dati delle opzioni condivisa tra parser file e
-    editor TUI).
+- [x] **TUI a widget per le impostazioni**
+  - `editorSettingsScreen()` in `tinyedit.c`, aperta con **F2** (byte
+    `ESC O Q`, verificato sul terminale dell'utente prima di
+    implementare). Frecce su/giù per navigare, Invio/Spazio per
+    editare (toggle diretto per bool, ciclo per enum, mini-prompt
+    numerico con range clampato per int via `editorPrompt`). Ctrl-S
+    salva su `~/.tinyeditrc` e rende attive le modifiche; Esc annulla
+    scartando la copia locale editata, lo stato live (`S`) resta
+    invariato.
 
 ## Note tecniche aperte
 

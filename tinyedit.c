@@ -36,6 +36,7 @@
 /* ---- globals ------------------------------------------------------------ */
 
 static struct editorConfig E;
+static struct editorSettings S;
 
 /* Set by editorFindCallback() when Ctrl-R is pressed inside the Ctrl-F
  * search prompt, telling editorPromptCB()'s loop to return immediately
@@ -144,6 +145,7 @@ static int editorReadKey(void) {
             switch (seq[1]) {
                 case 'H': return HOME_KEY;
                 case 'F': return END_KEY;
+                case 'Q': return F2_KEY; /* SS3 F2, e.g. ESC O Q on Ghostty */
             }
         }
         return '\x1b';
@@ -184,7 +186,7 @@ static int editorRowCxToRx(erow *row, int cx) {
     int j = 0;
     while (j < cx) {
         if (row->chars[j] == '\t') {
-            rx += (TE_TAB_STOP - 1) - (rx % TE_TAB_STOP);
+            rx += (S.tab_stop - 1) - (rx % S.tab_stop);
             rx++;
             j++;
             continue;
@@ -203,13 +205,13 @@ static void editorUpdateRow(erow *row) {
         if (row->chars[j] == '\t') tabs++;
 
     free(row->render);
-    row->render = malloc((size_t)(row->size + tabs * (TE_TAB_STOP - 1) + 1));
+    row->render = malloc((size_t)(row->size + tabs * (S.tab_stop - 1) + 1));
 
     int idx = 0;
     for (int j = 0; j < row->size; j++) {
         if (row->chars[j] == '\t') {
             row->render[idx++] = ' ';
-            while (idx % TE_TAB_STOP != 0) row->render[idx++] = ' ';
+            while (idx % S.tab_stop != 0) row->render[idx++] = ' ';
         } else {
             row->render[idx++] = row->chars[j];
         }
@@ -332,10 +334,10 @@ static void editorPushUndo(enum undoEditType type) {
 
     if (coalesce) return;
 
-    if (E.undo_count == UNDO_MAX_DEPTH) {
+    if (E.undo_count >= S.undo_max_depth) {
         editorFreeSnapshot(&E.undo_stack[0]);
         memmove(&E.undo_stack[0], &E.undo_stack[1],
-            sizeof(undoSnapshot) * (size_t)(UNDO_MAX_DEPTH - 1));
+            sizeof(undoSnapshot) * (size_t)(E.undo_count - 1));
         E.undo_count--;
     }
     E.undo_stack = realloc(E.undo_stack, sizeof(undoSnapshot) * (size_t)(E.undo_count + 1));
@@ -604,7 +606,7 @@ static int editorGetSelection(int *start_y, int *start_x, int *end_y, int *end_x
  * padding before the text starts. Zero when gutter is disabled. Grows
  * with E.numrows so files with 1000+ lines still right-align cleanly. */
 static int editorGutterWidth(void) {
-    if (!E.show_line_numbers) return 0;
+    if (!S.show_line_numbers) return 0;
     int digits = 3;
     int n = E.numrows;
     while (n >= 1000) {
@@ -648,7 +650,8 @@ static void editorDrawRows(struct abuf *ab) {
             } else {
                 snprintf(numbuf, sizeof(numbuf), "%*s ", gutter - 1, "");
             }
-            abAppend(ab, "\x1b[90m", 5);
+            const char *gutter_color = ansiColorCode(S.color_gutter);
+            abAppend(ab, gutter_color, (int)strlen(gutter_color));
             abAppend(ab, numbuf, gutter);
             abAppend(ab, "\x1b[m", 3);
         }
@@ -695,6 +698,8 @@ static void editorDrawRows(struct abuf *ab) {
                         filecol >= row_sel_start && filecol < row_sel_end) ||
                         (match_start >= 0 && filecol >= match_start && filecol < match_end);
                     if (should_sel && !in_sel) {
+                        const char *sel_color = ansiColorCode(S.color_selection);
+                        abAppend(ab, sel_color, (int)strlen(sel_color));
                         abAppend(ab, "\x1b[7m", 4);
                         in_sel = 1;
                     } else if (!should_sel && in_sel) {
@@ -713,6 +718,8 @@ static void editorDrawRows(struct abuf *ab) {
 }
 
 static void editorDrawStatusBar(struct abuf *ab) {
+    const char *bar_color = ansiColorCode(S.color_statusbar);
+    abAppend(ab, bar_color, (int)strlen(bar_color));
     abAppend(ab, "\x1b[7m", 4);
     char status[80], rstatus[80];
     int len = snprintf(status, sizeof(status), "%.20s - %d lines %s",
@@ -1122,6 +1129,129 @@ static void editorFindAndReplace(const char *query) {
     editorSetStatusMessage("Replaced %d occurrence(s).", count);
 }
 
+/* ---- settings screen (F2) --------------------------------------------------- */
+
+static int *settingsScreenSlot(struct editorSettings *s, const struct settingDescriptor *d) {
+    return (int *)((char *)s + d->offset);
+}
+
+static void editorSettingsDrawRow(struct abuf *ab, int idx, int selected,
+    const struct editorSettings *edited) {
+    const struct settingDescriptor *d = &settingDescriptors[idx];
+    const int *slot = (const int *)((const char *)edited + d->offset);
+
+    char line[96];
+    char valuebuf[48];
+
+    if (d->type == SETTING_BOOL) {
+        snprintf(valuebuf, sizeof(valuebuf), "%s", *slot ? "on" : "off");
+    } else if (d->type == SETTING_INT) {
+        snprintf(valuebuf, sizeof(valuebuf), "%d", *slot);
+    } else {
+        snprintf(valuebuf, sizeof(valuebuf), "%s", d->enum_names[*slot]);
+    }
+
+    int len = snprintf(line, sizeof(line), "  %-22s %s", d->label, valuebuf);
+    if (len < 0) len = 0;
+    if ((size_t)len >= sizeof(line)) len = (int)sizeof(line) - 1;
+
+    if (selected) abAppend(ab, "\x1b[7m", 4);
+    abAppend(ab, line, len);
+    if (selected) abAppend(ab, "\x1b[m", 3);
+    abAppend(ab, "\x1b[K\r\n", 5);
+}
+
+/* Full-screen settings overlay (F2). Edits a local copy of the live
+ * settings so Esc can discard changes cleanly; Ctrl-S writes the copy
+ * to ~/.tinyeditrc and makes it live. Reuses the same raw-mode input
+ * loop style as the rest of the editor (editorReadKey + a per-frame
+ * abuf redraw) rather than pulling in any new input machinery. */
+static void editorSettingsScreen(void) {
+    struct editorSettings edited = S;
+    int cursor = 0;
+    char msg[80] = "";
+
+    while (1) {
+        struct abuf ab = ABUF_INIT;
+        abAppend(&ab, "\x1b[?25l\x1b[H", 9);
+
+        abAppend(&ab, "\x1b[7m Settings \x1b[m\x1b[K\r\n\r\n", 24);
+
+        for (int i = 0; i < settingDescriptorCount; i++)
+            editorSettingsDrawRow(&ab, i, i == cursor, &edited);
+
+        abAppend(&ab, "\r\n", 2);
+        if (edited.redo_key == REDO_KEY_CTRL_SHIFT_Z) {
+            const char *note =
+                "  Note: Ctrl-Shift-Z may not reach the editor on every "
+                "terminal; Ctrl-Y always works as a fallback.\x1b[K\r\n";
+            abAppend(&ab, note, (int)strlen(note));
+        }
+
+        char help[96];
+        int hlen = snprintf(help, sizeof(help),
+            "  %s", msg[0] ? msg :
+            "Up/Down select, Enter/Space edit, Ctrl-S save, Esc cancel");
+        abAppend(&ab, help, hlen);
+        abAppend(&ab, "\x1b[K", 3);
+
+        abAppend(&ab, "\x1b[?25h", 6);
+        write(STDOUT_FILENO, ab.b, (size_t)ab.len);
+        abFree(&ab);
+
+        msg[0] = '\0';
+
+        int c = editorReadKey();
+        const struct settingDescriptor *d = &settingDescriptors[cursor];
+        int *slot = settingsScreenSlot(&edited, d);
+
+        switch (c) {
+            case ARROW_UP:
+                cursor = (cursor > 0) ? cursor - 1 : settingDescriptorCount - 1;
+                break;
+            case ARROW_DOWN:
+                cursor = (cursor + 1) % settingDescriptorCount;
+                break;
+
+            case '\r':
+            case ' ':
+                if (d->type == SETTING_BOOL) {
+                    *slot = !*slot;
+                } else if (d->type == SETTING_ENUM) {
+                    *slot = (*slot + 1) % d->enum_count;
+                } else { /* SETTING_INT: prompt for a new value */
+                    char prompt[64];
+                    snprintf(prompt, sizeof(prompt), "%s (%d-%d): %%s",
+                        d->label, d->int_min, d->int_max);
+                    char *input = editorPrompt(prompt);
+                    if (input) {
+                        int v = atoi(input);
+                        if (v < d->int_min) v = d->int_min;
+                        if (v > d->int_max) v = d->int_max;
+                        *slot = v;
+                        free(input);
+                    }
+                }
+                break;
+
+            case CTRL_KEY('s'):
+                S = edited;
+                if (settingsSave(&S)) {
+                    editorSetStatusMessage("Settings saved to ~/.tinyeditrc");
+                } else {
+                    editorSetStatusMessage("Could not write ~/.tinyeditrc");
+                }
+                return;
+
+            case '\x1b':
+                return;
+
+            default:
+                break;
+        }
+    }
+}
+
 static void editorProcessKeypress(void) {
     static int quit_times = TE_QUIT_TIMES;
 
@@ -1204,11 +1334,20 @@ static void editorProcessKeypress(void) {
             editorUndo();
             break;
         case CTRL_KEY('y'):
+            /* Ctrl-Y always works as redo regardless of the configured
+             * redo_key: Ctrl-Shift-Z is frequently indistinguishable
+             * from plain Ctrl-Z on a raw tty (see TODO.md), so Ctrl-Y
+             * remains a reliable fallback even when the user picked
+             * ctrl-shift-z in settings. */
             editorRedo();
             break;
 
         case CTRL_KEY('f'):
             editorFind();
+            break;
+
+        case F2_KEY:
+            editorSettingsScreen();
             break;
 
         case HOME_KEY:
@@ -1315,7 +1454,7 @@ static void initEditor(void) {
     E.search_match_x = 0;
     E.search_match_len = 0;
 
-    E.show_line_numbers = 1;
+    settingsLoad(&S);
 
     E.undo_stack = NULL;
     E.undo_count = 0;
@@ -1334,7 +1473,7 @@ int main(int argc, char **argv) {
     atexit(editorFreeUndoRedo);
     if (argc >= 2) editorOpen(argv[1]);
 
-    editorSetStatusMessage("Ctrl-S save | Ctrl-Q quit | Ctrl-Z undo | Ctrl-Y redo");
+    editorSetStatusMessage("Ctrl-S save | Ctrl-Q quit | Ctrl-Z undo | F2 settings");
 
     while (1) {
         editorRefreshScreen();

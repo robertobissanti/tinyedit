@@ -13,16 +13,18 @@
 #include <termios.h>
 #include <time.h>
 
+#include "settings.h"
+
 /* ---- config -------------------------------------------------------- */
 
 #define TE_VERSION "0.1"
-#define TE_TAB_STOP 4
 #define TE_QUIT_TIMES 2
 #define ABUF_INIT {NULL, 0}
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
-#define UNDO_MAX_DEPTH 200
+/* tab_stop and undo_max_depth are now user-configurable (struct
+ * editorSettings, see settings.h) instead of fixed macros. */
 #define UNDO_COALESCE_SECS 1 /* time(NULL) is only 1s granular; see editorPushUndo() */
 
 /* ---- types ------------------------------------------------------------ */
@@ -43,7 +45,8 @@ enum editorKey {
     SHIFT_ARROW_LEFT,
     SHIFT_ARROW_RIGHT,
     SHIFT_ARROW_UP,
-    SHIFT_ARROW_DOWN
+    SHIFT_ARROW_DOWN,
+    F2_KEY
 };
 
 enum undoEditType { EDIT_NONE, EDIT_INSERT, EDIT_DELETE, EDIT_OTHER };
@@ -94,8 +97,6 @@ struct editorConfig {
     time_t last_edit_time;
 
     int search_match_y, search_match_x, search_match_len; /* match_y == -1: no match */
-
-    int show_line_numbers; /* gutter with line numbers, on by default */
 };
 
 #endif /* __TINYEDIT_H */
