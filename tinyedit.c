@@ -1204,9 +1204,15 @@ static void editorSettingsScreen(void) {
 
         /* Clear every remaining screen row so stale buffer content from
          * the previous editorRefreshScreen() frame doesn't show through
-         * underneath the panel. */
-        for (; rows_used < E.screenrows + 2; rows_used++)
+         * underneath the panel. Total rows written (2 header + options +
+         * blank/note/help + this padding) must equal the terminal height
+         * exactly -- one \r\n too many scrolls the screen and desyncs
+         * \x1b[H from the top of the visible viewport on every frame. */
+        int total_rows = E.screenrows + 2;
+        for (; rows_used < total_rows - 1; rows_used++)
             abAppend(&ab, "\x1b[K\r\n", 5);
+        if (rows_used < total_rows)
+            abAppend(&ab, "\x1b[K", 3); /* last row: no trailing newline */
 
         abAppend(&ab, "\x1b[H\x1b[?25h", 9);
         write(STDOUT_FILENO, ab.b, (size_t)ab.len);
