@@ -131,6 +131,24 @@ decisione, è segnalato come "DA DECIDERE".
     coprirebbe. Verificato via pty (resize reale del pty + `SIGWINCH`
     al processo) sia in crescita che in restringimento.
 
+- [x] **Conteggio caratteri e tipo file nella status bar**
+  - `editorCountChars()` in `tinyedit.c`: conta grapheme cluster (non
+    byte, non code point) su tutto il buffer via `utf8NextCharLen`,
+    coerente con come cursore/backspace già trattano un'emoji con
+    modificatore come 1 unità. Newline tra righe contano 1 ciascuno.
+  - **Tipo file** derivato dall'estensione, mostrato a destra vicino a
+    riga/colonna (es. `C | 1/1659`). Tabella built-in ~30 voci in
+    `settings.c` (`builtinFiletypes[]`), estendibile/sovrascrivibile da
+    utente con righe `filetype.<ext> = <Nome>` dentro `~/.tinyeditrc`
+    (stesso file, stesso formato chiave=valore — deciso esplicitamente
+    di non introdurre YAML per restare coerenti col vincolo "zero
+    dipendenze": niente parser YAML nella libc, e un parser scritto ad
+    hoc non sarebbe comunque YAML valido). Gli override sono un modulo
+    separato (`filetypeOverrides[]`) da quello dei `settingDescriptor`
+    a slot fisso, perché è una lista aperta di lunghezza variabile.
+    `settingsSave()` (F2, Ctrl-S) preserva questa sezione anche se il
+    pannello F2 non la edita ancora direttamente.
+
 ## Note tecniche aperte
 
 - Il mouse (click per posizionare il cursore) **non è nel piano attuale**:

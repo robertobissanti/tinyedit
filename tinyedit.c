@@ -775,6 +775,21 @@ static int editorCountChars(void) {
     return count;
 }
 
+/* Filetype name for the status bar, derived from E.filename's
+ * extension (e.g. "tinyedit.c" -> "C"), via the built-in table plus
+ * any ~/.tinyeditrc "filetype.<ext> = <Name>" overrides. Returns NULL
+ * if there's no filename, no extension, or the extension is unknown --
+ * callers should omit the field entirely rather than show a blank. */
+static const char *editorFiletypeLabel(void) {
+    if (!E.filename) return NULL;
+    const char *dot = strrchr(E.filename, '.');
+    /* No dot, or a dot with nothing after it (e.g. "Makefile",
+     * "foo."): no extension to look up. A leading dot with no other
+     * dot (e.g. ".gitignore") also has no meaningful extension. */
+    if (!dot || dot[1] == '\0' || dot == E.filename) return NULL;
+    return filetypeForExtension(dot + 1);
+}
+
 static void editorDrawStatusBar(struct abuf *ab) {
     const char *bar_color = ansiColorCode(S.color_statusbar);
     abAppend(ab, bar_color, (int)strlen(bar_color));
@@ -783,8 +798,15 @@ static void editorDrawStatusBar(struct abuf *ab) {
     int len = snprintf(status, sizeof(status), "%.20s - %d lines, %d chars %s",
         E.filename ? E.filename : "[No Name]", E.numrows, editorCountChars(),
         E.dirty ? "(modified)" : "");
-    int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d",
-        E.cy + 1, E.numrows);
+
+    const char *filetype = editorFiletypeLabel();
+    int rlen;
+    if (filetype)
+        rlen = snprintf(rstatus, sizeof(rstatus), "%s | %d/%d",
+            filetype, E.cy + 1, E.numrows);
+    else
+        rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d",
+            E.cy + 1, E.numrows);
     if (len > E.screencols) len = E.screencols;
     abAppend(ab, status, len);
     while (len < E.screencols) {

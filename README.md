@@ -61,6 +61,12 @@ ma anche CJK ed emoji. La barra di stato mostra il conteggio caratteri
 del file contando i grapheme cluster (un'emoji con modificatore conta
 1, non i suoi byte), non i byte grezzi del buffer.
 
+La barra di stato mostra anche il tipo di file rilevato dall'estensione
+(es. `C`, `Python`, `Markdown`) accanto alla posizione riga/colonna.
+Copre circa 30 estensioni comuni; per aggiungerne altre o sovrascrivere
+un nome, aggiungi righe `filetype.<estensione> = <Nome>` a
+`~/.tinyeditrc` (es. `filetype.m = Matlab/Octave`).
+
 ## Struttura del codice
 
 - `tinyedit.c` / `tinyedit.h` — l'editor: terminale raw mode, buffer di

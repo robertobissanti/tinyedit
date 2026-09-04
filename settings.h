@@ -67,6 +67,22 @@ struct settingDescriptor {
 extern const struct settingDescriptor settingDescriptors[];
 extern const int settingDescriptorCount;
 
+/* Maps a file extension to a human-readable language/filetype name for
+ * the status bar (e.g. "c" -> "C", "py" -> "Python"). Falls back to a
+ * built-in static table (~30 common languages); entries in
+ * ~/.tinyeditrc as "filetype.<ext> = <Name>" override or extend it.
+ * User overrides are loaded once by settingsLoad() and preserved by
+ * settingsSave() even though the F2 screen doesn't edit them directly
+ * yet -- this state lives inside settings.c, callers don't need to
+ * pass it around. */
+
+/* Returns the filetype name for `ext` (without the leading dot, e.g.
+ * "c" not ".c"), or NULL if unknown. Checks user overrides first, then
+ * falls back to the built-in table. Returned pointer is either a
+ * static string or owned by the module's override table -- do not
+ * free, valid until the next settingsLoad() call. */
+const char *filetypeForExtension(const char *ext);
+
 /* Fills *out with hardcoded defaults. Always succeeds. */
 void settingsDefaults(struct editorSettings *out);
 

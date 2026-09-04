@@ -13,6 +13,55 @@ static const char *const colorNames[] = {
     "gray", "blue", "green", "yellow", "cyan", "magenta", "red", "white", NULL
 };
 
+/* Built-in extension -> filetype name table, shown in the status bar.
+ * Not exhaustive (see github/linguist for a much larger reference) --
+ * just the languages/formats a typical user is likely to hit. Extended
+ * or overridden per-user via "filetype.<ext> = <Name>" lines in
+ * ~/.tinyeditrc (see filetypeOverrides below). */
+struct filetypeEntry {
+    const char *ext;
+    const char *name;
+};
+
+static const struct filetypeEntry builtinFiletypes[] = {
+    { "c", "C" }, { "h", "C" },
+    { "cpp", "C++" }, { "cc", "C++" }, { "cxx", "C++" }, { "hpp", "C++" },
+    { "py", "Python" },
+    { "js", "JavaScript" }, { "jsx", "JavaScript" },
+    { "ts", "TypeScript" }, { "tsx", "TypeScript" },
+    { "go", "Go" },
+    { "rs", "Rust" },
+    { "java", "Java" },
+    { "rb", "Ruby" },
+    { "php", "PHP" },
+    { "m", "Matlab/Octave" },
+    { "sh", "Shell" }, { "bash", "Shell" }, { "zsh", "Shell" },
+    { "md", "Markdown" }, { "markdown", "Markdown" },
+    { "html", "HTML" }, { "htm", "HTML" },
+    { "css", "CSS" },
+    { "json", "JSON" },
+    { "yml", "YAML" }, { "yaml", "YAML" },
+    { "xml", "XML" },
+    { "sql", "SQL" },
+    { "lua", "Lua" },
+    { "pl", "Perl" },
+    { "swift", "Swift" },
+    { "kt", "Kotlin" },
+    { "toml", "TOML" },
+    { "ini", "INI" },
+};
+static const int builtinFiletypeCount =
+    (int)(sizeof(builtinFiletypes) / sizeof(builtinFiletypes[0]));
+
+/* User-defined overrides/additions from ~/.tinyeditrc's "filetype.*"
+ * keys, loaded once by settingsLoad() and preserved verbatim by
+ * settingsSave() (which doesn't otherwise know about them -- the F2
+ * screen doesn't edit this table yet). Owned by this module: freed
+ * only by being reset at the next settingsLoad() call, per-process
+ * this is a small, one-time allocation. */
+static struct filetypeEntry *filetypeOverrides = NULL;
+static int filetypeOverrideCount = 0;
+
 /* Descriptor table: the single source of truth for every setting's key,
  * label, type, storage location, and valid range/values. Both the
  * ~/.tinyeditrc parser and the F2 settings screen walk this table
@@ -79,8 +128,40 @@ static void trim(char *s) {
     while (len > 0 && isspace((unsigned char)s[len - 1])) s[--len] = '\0';
 }
 
+#define FILETYPE_KEY_PREFIX "filetype."
+
+static void addFiletypeOverride(const char *ext, const char *name) {
+    /* Same extension re-declared later in the file wins (matches how
+     * the descriptor-based settings above already let the last
+     * occurrence of a key win, since the loop just keeps overwriting
+     * the same slot). */
+    for (int i = 0; i < filetypeOverrideCount; i++) {
+        if (strcmp(filetypeOverrides[i].ext, ext) == 0) {
+            free((void *)filetypeOverrides[i].name);
+            filetypeOverrides[i].name = strdup(name);
+            return;
+        }
+    }
+    filetypeOverrides = realloc(filetypeOverrides,
+        sizeof(struct filetypeEntry) * (size_t)(filetypeOverrideCount + 1));
+    filetypeOverrides[filetypeOverrideCount].ext = strdup(ext);
+    filetypeOverrides[filetypeOverrideCount].name = strdup(name);
+    filetypeOverrideCount++;
+}
+
+static void freeFiletypeOverrides(void) {
+    for (int i = 0; i < filetypeOverrideCount; i++) {
+        free((void *)filetypeOverrides[i].ext);
+        free((void *)filetypeOverrides[i].name);
+    }
+    free(filetypeOverrides);
+    filetypeOverrides = NULL;
+    filetypeOverrideCount = 0;
+}
+
 void settingsLoad(struct editorSettings *out) {
     settingsDefaults(out);
+    freeFiletypeOverrides();
 
     char path[1024];
     if (!configPath(path, sizeof(path))) return;
@@ -101,6 +182,13 @@ void settingsLoad(struct editorSettings *out) {
         trim(key);
         trim(value);
         if (key[0] == '\0') continue;
+
+        if (strncmp(key, FILETYPE_KEY_PREFIX, strlen(FILETYPE_KEY_PREFIX)) == 0) {
+            const char *ext = key + strlen(FILETYPE_KEY_PREFIX);
+            if (ext[0] != '\0' && value[0] != '\0')
+                addFiletypeOverride(ext, value);
+            continue;
+        }
 
         for (int i = 0; i < settingDescriptorCount; i++) {
             const struct settingDescriptor *d = &settingDescriptors[i];
@@ -147,8 +235,32 @@ int settingsSave(const struct editorSettings *s) {
         }
     }
 
+    /* Preserve filetype.* overrides even though the F2 screen doesn't
+     * edit them yet -- otherwise saving settings from F2 would silently
+     * wipe out anything the user added by hand. */
+    if (filetypeOverrideCount > 0) {
+        fprintf(fp, "\n# filetype overrides (status bar language name)\n");
+        for (int i = 0; i < filetypeOverrideCount; i++)
+            fprintf(fp, "%s%s = %s\n", FILETYPE_KEY_PREFIX,
+                filetypeOverrides[i].ext, filetypeOverrides[i].name);
+    }
+
     fclose(fp);
     return 1;
+}
+
+const char *filetypeForExtension(const char *ext) {
+    if (!ext || ext[0] == '\0') return NULL;
+
+    for (int i = 0; i < filetypeOverrideCount; i++)
+        if (strcmp(filetypeOverrides[i].ext, ext) == 0)
+            return filetypeOverrides[i].name;
+
+    for (int i = 0; i < builtinFiletypeCount; i++)
+        if (strcmp(builtinFiletypes[i].ext, ext) == 0)
+            return builtinFiletypes[i].name;
+
+    return NULL;
 }
 
 const char *ansiColorCode(enum settingColor c) {
