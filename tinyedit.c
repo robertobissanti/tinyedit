@@ -1176,7 +1176,7 @@ static void editorSettingsScreen(void) {
         abAppend(&ab, "\x1b[?25l\x1b[H", 9);
         int rows_used = 0;
 
-        abAppend(&ab, "\x1b[7m Settings \x1b[m\x1b[K\r\n\r\n", 24);
+        abAppend(&ab, "\x1b[7m Settings \x1b[m\x1b[K\r\n\x1b[K\r\n", 27);
         rows_used += 2;
 
         for (int i = 0; i < settingDescriptorCount; i++) {
