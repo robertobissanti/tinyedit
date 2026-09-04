@@ -1456,7 +1456,14 @@ static void editorProcessKeypress(void) {
             break;
 
         case CTRL_KEY('l'):
+            break;
+
         case '\x1b':
+            /* Esc also turns off pinned selection mode (Ctrl-T), not
+             * just the current selection -- otherwise the next arrow
+             * press would silently start a new selection again, since
+             * sel_pinned would still be set. */
+            E.sel_pinned = 0;
             break;
 
         default:
