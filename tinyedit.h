@@ -88,6 +88,11 @@ struct editorConfig {
 
     int sel_active;
     int sel_anchor_x, sel_anchor_y;
+    /* When set (via Ctrl-T), plain arrow keys extend the selection just
+     * like Shift+Arrow does, instead of collapsing it. Universal
+     * fallback for terminals that can't report Shift+Arrow as a
+     * distinct sequence (e.g. Terminal.app on macOS -- see CLAUDE.md). */
+    int sel_pinned;
 
     undoSnapshot *undo_stack;
     int undo_count;

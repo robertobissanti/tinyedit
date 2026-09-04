@@ -1276,10 +1276,15 @@ static void editorProcessKeypress(void) {
 
     int c = editorReadKey();
 
+    int is_plain_arrow = (c == ARROW_UP || c == ARROW_DOWN ||
+        c == ARROW_LEFT || c == ARROW_RIGHT);
+
     if (c != SHIFT_ARROW_UP && c != SHIFT_ARROW_DOWN &&
         c != SHIFT_ARROW_LEFT && c != SHIFT_ARROW_RIGHT &&
         c != CTRL_KEY('a') && c != CTRL_KEY('c') &&
-        c != CTRL_KEY('x') && c != CTRL_KEY('v'))
+        c != CTRL_KEY('x') && c != CTRL_KEY('v') &&
+        c != CTRL_KEY('t') &&
+        !(E.sel_pinned && is_plain_arrow))
         E.sel_active = 0;
 
     switch (c) {
@@ -1369,6 +1374,22 @@ static void editorProcessKeypress(void) {
             editorSettingsScreen();
             break;
 
+        case CTRL_KEY('t'):
+            /* Universal selection toggle: works on every terminal, even
+             * ones (e.g. Terminal.app on macOS) that can't report
+             * Shift+Arrow as a distinct sequence from a plain arrow. */
+            E.sel_pinned = !E.sel_pinned;
+            if (E.sel_pinned) {
+                E.sel_active = 1;
+                E.sel_anchor_x = E.cx;
+                E.sel_anchor_y = E.cy;
+                editorSetStatusMessage("Selection mode ON (arrows extend, Ctrl-T to stop)");
+            } else {
+                E.sel_active = 0;
+                editorSetStatusMessage("Selection mode off");
+            }
+            break;
+
         case HOME_KEY:
             E.cx = 0;
             break;
@@ -1401,24 +1422,28 @@ static void editorProcessKeypress(void) {
         case ARROW_DOWN:
         case ARROW_LEFT:
         case ARROW_RIGHT:
-            E.sel_active = 0;
-            editorMoveCursor(c);
-            break;
-
+            if (!E.sel_pinned) E.sel_active = 0;
+            /* fall through: when sel_pinned is set, a plain arrow
+             * extends the selection exactly like Shift+Arrow does. */
         case SHIFT_ARROW_UP:
         case SHIFT_ARROW_DOWN:
         case SHIFT_ARROW_LEFT:
         case SHIFT_ARROW_RIGHT: {
-            if (!E.sel_active) {
+            int extending = (c == SHIFT_ARROW_UP || c == SHIFT_ARROW_DOWN ||
+                c == SHIFT_ARROW_LEFT || c == SHIFT_ARROW_RIGHT || E.sel_pinned);
+
+            if (extending && !E.sel_active) {
                 E.sel_active = 1;
                 E.sel_anchor_x = E.cx;
                 E.sel_anchor_y = E.cy;
             }
-            int plain = (c == SHIFT_ARROW_UP) ? ARROW_UP :
-                        (c == SHIFT_ARROW_DOWN) ? ARROW_DOWN :
-                        (c == SHIFT_ARROW_LEFT) ? ARROW_LEFT : ARROW_RIGHT;
+
+            int plain = (c == SHIFT_ARROW_UP || c == ARROW_UP) ? ARROW_UP :
+                        (c == SHIFT_ARROW_DOWN || c == ARROW_DOWN) ? ARROW_DOWN :
+                        (c == SHIFT_ARROW_LEFT || c == ARROW_LEFT) ? ARROW_LEFT : ARROW_RIGHT;
             editorMoveCursor(plain);
-            if (E.sel_anchor_x == E.cx && E.sel_anchor_y == E.cy)
+
+            if (extending && E.sel_anchor_x == E.cx && E.sel_anchor_y == E.cy)
                 E.sel_active = 0;
             break;
         }
@@ -1469,6 +1494,7 @@ static void initEditor(void) {
     E.sel_active = 0;
     E.sel_anchor_x = 0;
     E.sel_anchor_y = 0;
+    E.sel_pinned = 0;
     E.search_match_y = -1;
     E.search_match_x = 0;
     E.search_match_len = 0;
@@ -1492,7 +1518,18 @@ int main(int argc, char **argv) {
     atexit(editorFreeUndoRedo);
     if (argc >= 2) editorOpen(argv[1]);
 
-    editorSetStatusMessage("Ctrl-S save | Ctrl-Q quit | Ctrl-Z undo | F2 settings");
+    /* Terminal.app on macOS sends the same byte sequence for a plain
+     * arrow and Shift+Arrow, so text selection via Shift+Arrow silently
+     * does nothing there -- not a bug, a limitation of that terminal
+     * (see CLAUDE.md). Point users at the universal Ctrl-T fallback
+     * instead of leaving them to wonder why Shift+Arrow is unresponsive. */
+    const char *term_program = getenv("TERM_PROGRAM");
+    if (term_program && strcmp(term_program, "Apple_Terminal") == 0) {
+        editorSetStatusMessage(
+            "Terminal.app: use Ctrl-T to select (Shift+Arrow unsupported here) | F2 settings");
+    } else {
+        editorSetStatusMessage("Ctrl-S save | Ctrl-Q quit | Ctrl-Z undo | F2 settings");
+    }
 
     while (1) {
         editorRefreshScreen();

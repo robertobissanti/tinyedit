@@ -34,7 +34,8 @@ Richiede solo un compilatore C99 e un sistema POSIX (macOS o Linux).
 |---|---|
 | Frecce, Home, End, PageUp/Down | Movimento cursore |
 | `Alt+←` / `Alt+→` (anche `Esc b` / `Esc f`) | Salto di parola |
-| `Shift+Frecce` | Estende/crea la selezione di testo |
+| `Shift+Frecce` | Estende/crea la selezione di testo (non funziona su Terminal.app di macOS — usa `Ctrl-T`) |
+| `Ctrl-T` | Attiva/disattiva la modalità selezione: con la modalità attiva le frecce semplici estendono la selezione come farebbe Shift+Frecce — funziona su ogni terminale |
 | Invio | Nuova riga |
 | Backspace / Canc | Cancella carattere (gestisce correttamente UTF-8 multi-byte) |
 | `Ctrl-A` | Seleziona tutto |

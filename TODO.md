@@ -26,6 +26,17 @@ decisione, è segnalato come "DA DECIDERE".
     (`\x1b[7m`) sui caratteri selezionati. `editorReadKey` riconosce il
     modificatore Shift (`;2`) sulle sequenze CSI, stesso meccanismo già
     usato per Alt (`;3`).
+  - **Limite noto**: Terminal.app su macOS manda lo stesso identico byte
+    per freccia semplice e Shift+freccia (verificato con un key logger
+    dedicato), quindi Shift+Frecce non funziona lì — non è un bug
+    dell'editor, il terminale perde l'informazione prima di mandarla.
+  - **Fix universale — `Ctrl-T`**: attiva/disattiva `E.sel_pinned`, che fa
+    sì che le frecce semplici (senza Shift) estendano la selezione
+    esattamente come Shift+Frecce, riusando lo stesso stato/logica.
+    Funziona su ogni terminale perché non dipende dal rilevamento di
+    Shift. `main()` rileva `$TERM_PROGRAM == "Apple_Terminal"` e mostra
+    un messaggio di stato che indirizza a Ctrl-T invece di lasciare
+    l'utente a chiedersi perché Shift+Frecce non risponde.
 
 - [x] **Ctrl-A: seleziona tutto**
 
