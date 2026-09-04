@@ -1,0 +1,9 @@
+:root {
+    --colore-caffè: #c0ffee;
+}
+
+.scheda::before {
+    content: "quote escaped: \"ok\"";
+    color: var(--colore-caffè);
+    /* commento multilinea */
+}

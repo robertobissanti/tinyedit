@@ -14,12 +14,11 @@
 
 /* UTF-8 byte length from the leading byte. See the four standard
  * patterns: 0xxxxxxx (1), 110xxxxx (2), 1110xxxx (3), 11110xxx (4). */
-int utf8ByteLen(char c) {
-    unsigned char uc = (unsigned char)c;
-    if ((uc & 0x80) == 0)    return 1;   /* 0xxxxxxx: ASCII */
-    if ((uc & 0xE0) == 0xC0) return 2;   /* 110xxxxx: 2-byte seq */
-    if ((uc & 0xF0) == 0xE0) return 3;   /* 1110xxxx: 3-byte seq */
-    if ((uc & 0xF8) == 0xF0) return 4;   /* 11110xxx: 4-byte seq */
+int32_t utf8ByteLen(uint8_t c) {
+    if ((c & 0x80) == 0)    return 1;   /* 0xxxxxxx: ASCII */
+    if ((c & 0xE0) == 0xC0) return 2;   /* 110xxxxx: 2-byte seq */
+    if ((c & 0xF0) == 0xE0) return 3;   /* 1110xxxx: 3-byte seq */
+    if ((c & 0xF8) == 0xF0) return 4;   /* 11110xxx: 4-byte seq */
     return 1; /* Fallback for invalid encoding, treat as single byte. */
 }
 
@@ -54,27 +53,27 @@ uint32_t utf8DecodeChar(const char *s, size_t *len) {
 }
 
 /* Variation selector (emoji style modifiers). */
-static int isVariationSelector(uint32_t cp) {
+static uint8_t isVariationSelector(uint32_t cp) {
     return cp == 0xFE0E || cp == 0xFE0F;  /* Text/emoji style */
 }
 
 /* Skin tone modifier. */
-static int isSkinToneModifier(uint32_t cp) {
+static uint8_t isSkinToneModifier(uint32_t cp) {
     return cp >= 0x1F3FB && cp <= 0x1F3FF;
 }
 
 /* Zero Width Joiner. */
-static int isZWJ(uint32_t cp) {
+static uint8_t isZWJ(uint32_t cp) {
     return cp == 0x200D;
 }
 
 /* Regional Indicator (for flag emoji). */
-static int isRegionalIndicator(uint32_t cp) {
+static uint8_t isRegionalIndicator(uint32_t cp) {
     return cp >= 0x1F1E6 && cp <= 0x1F1FF;
 }
 
 /* Combining mark or other zero-width character. */
-static int isCombiningMark(uint32_t cp) {
+static uint8_t isCombiningMark(uint32_t cp) {
     return (cp >= 0x0300 && cp <= 0x036F) ||   /* Combining Diacriticals */
            (cp >= 0x1AB0 && cp <= 0x1AFF) ||   /* Combining Diacriticals Extended */
            (cp >= 0x1DC0 && cp <= 0x1DFF) ||   /* Combining Diacriticals Supplement */
@@ -83,7 +82,7 @@ static int isCombiningMark(uint32_t cp) {
 }
 
 /* Extends the previous character (doesn't start a new grapheme). */
-static int isGraphemeExtend(uint32_t cp) {
+static uint8_t isGraphemeExtend(uint32_t cp) {
     return isVariationSelector(cp) || isSkinToneModifier(cp) ||
            isZWJ(cp) || isCombiningMark(cp);
 }
@@ -148,7 +147,6 @@ size_t utf8PrevCharLen(const char *buf, size_t pos) {
              * flags are always pairs, so only join if we're at an even boundary.
              * For simplicity, just join one pair. */
             total += prevlen;
-            curpos -= prevlen;
             break;
         } else {
             /* No more extending; we've found the start of the cluster. */
@@ -171,7 +169,7 @@ size_t utf8NextCharLen(const char *buf, size_t pos, size_t len) {
     total += cplen;
     curpos += cplen;
 
-    int isRI = isRegionalIndicator(cp);
+    uint8_t isRI = isRegionalIndicator(cp);
 
     /* Consume any extending characters that follow. */
     while (curpos < len) {
@@ -183,7 +181,7 @@ size_t utf8NextCharLen(const char *buf, size_t pos, size_t len) {
             total += nextlen;
             curpos += nextlen;
             /* Get the character after ZWJ. */
-            nextcp = utf8DecodeChar(buf + curpos, &nextlen);
+            utf8DecodeChar(buf + curpos, &nextlen);
             total += nextlen;
             curpos += nextlen;
             continue;  /* Check for more extending after the joined char. */
@@ -206,7 +204,7 @@ size_t utf8NextCharLen(const char *buf, size_t pos, size_t len) {
     return total;
 }
 
-int utf8CharWidth(uint32_t cp) {
+int32_t utf8CharWidth(uint32_t cp) {
     /* Control characters and combining marks: zero width. */
     if (cp < 32 || (cp >= 0x7F && cp < 0xA0)) return 0;
     if (isCombiningMark(cp)) return 0;
@@ -274,7 +272,7 @@ static size_t ansiEscapeLen(const char *s, size_t len) {
 size_t utf8StrWidth(const char *s, size_t len) {
     size_t width = 0;
     size_t i = 0;
-    int after_zwj = 0;  /* Track if previous char was ZWJ */
+    uint8_t after_zwj = 0;  /* Track if previous char was ZWJ */
 
     while (i < len) {
         size_t clen;
@@ -310,7 +308,7 @@ size_t utf8StrWidth(const char *s, size_t len) {
     return width;
 }
 
-int utf8SingleCharWidth(const char *s, size_t len) {
+int32_t utf8SingleCharWidth(const char *s, size_t len) {
     if (len == 0) return 0;
     size_t clen;
     uint32_t cp = utf8DecodeChar(s, &clen);

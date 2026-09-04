@@ -12,6 +12,62 @@ questo progetto, leggi:
 
 ## Stile del codice
 
+- **Tipi a dimensione esplicita, uniformi per concetto** (obbligatorio,
+  vale per ogni nuovo codice C in questo progetto, non solo per il
+  refactoring che l'ha introdotto):
+  - Ogni indice/lunghezza/dimensione della famiglia "posizione nel
+    file o nello schermo" (cursore, numero di righe, larghezza/altezza
+    schermo, offset di scroll, lunghezze di `erow`, colonne di wrap
+    ecc.) è **`int32_t`**, con segno — mai `int` semplice. Il segno è
+    necessario perché il codice usa sentinelle `-1` (es.
+    `search_match_y`) e confronta/sottrae indici e size direttamente
+    senza cast; un unico tipo evita cast signed/unsigned sparsi.
+  - Ogni flag booleano (0/1) è **`uint8_t`**, mai `int`.
+  - Byte grezzi letti da terminale o buffer UTF-8 (`editorReadKey` e
+    affini) sono **`uint8_t`**; i codepoint Unicode decodificati sono
+    **`uint32_t`** (vedi `utf8.h`).
+  - Lunghezze/offset di byte passati a `malloc`/`memcpy`/`strlen` e
+    funzioni POSIX restano **`size_t`** (non forzare a `int32_t`: sono
+    per contratto non negative e servono a interagire con l'API di
+    libreria, non con gli indici dell'editor).
+  - **Eccezione documentata**: `struct editorSettings` (`settings.h`)
+    ha *tutti* i campi a `int32_t`, inclusi i booleani come
+    `show_line_numbers`/`show_top_bar` — non `uint8_t` come il resto
+    del progetto. È un vincolo tecnico: `settingSlot()`/
+    `settingsScreenSlot()` accedono ai campi genericamente via
+    `offsetof` castato a `int32_t*`, e questo richiede che ogni campo
+    occupi la stessa dimensione. Non "correggere" questi campi a
+    `uint8_t` senza riscrivere anche l'accessor generico.
+  - Le firme imposte da API esterne (`int main(int argc, char **argv)`,
+    `void handleWinch(int sig)` per `sigaction`, file descriptor `int`
+    da `open()`) restano al tipo richiesto dal linguaggio/POSIX, non
+    vanno convertite.
+  - **Priorità sulle regole in conflitto**: questa regola non deve MAI
+    produrre più cast di quanti ce ne fossero senza di essa. Se rendere
+    due valori dello stesso tipo "family" (es. un indice e la size con
+    cui si confronta) richiederebbe introdurre un cast che prima non
+    serviva, la coerenza di tipo perde e si tiene il tipo che elimina
+    il cast — l'obiettivo di fondo è ridurre cast e uso di
+    memoria/cache/registri, non applicare l'etichetta "int32_t" ovunque
+    a prescindere. In pratica: prima verificare se un cast sopravvive
+    al cambio di tipo o ne nasce uno nuovo, e se sì, riconsiderare il
+    tipo scelto per quella variabile.
+- **Manipolazione di caratteri/testo: sempre tramite le funzioni
+  portate da linenoise in `utf8.c`/`utf8.h`** (`utf8ByteLen`,
+  `utf8DecodeChar`, `utf8PrevCharLen`, `utf8NextCharLen`,
+  `utf8CharWidth`, `utf8StrWidth`, `utf8SingleCharWidth`), mai indicizzando
+  `row->chars`/`row->render` byte per byte a mano o assumendo che un
+  byte corrisponda a un carattere/colonna. **Motivo**: `render` e
+  `chars` contengono UTF-8 raw — un carattere può occupare 1-4 byte ma
+  1-2 colonne di schermo (vedi il bug del wrap corretto in
+  `TODO.md`: `editorRowSegments()` calcolava `seg_start[]` come offset
+  byte ma veniva confrontato con `rx`, una colonna, e i due divergono
+  su qualunque riga con caratteri non-ASCII prima di un punto di
+  wrap). Quando serve sia l'offset byte (per indicizzare/copiare
+  `render`/`chars`) sia la colonna equivalente (per confronti con
+  `E.rx`/`E.cx` "visivi"), calcolarli **entrambi** esplicitamente
+  camminando col passo (`clen`) restituito da `utf8NextCharLen`/
+  `utf8PrevCharLen`, mai assumendo che coincidano.
 - **Zero dipendenze esterne** oltre alla libreria standard POSIX/C99.
   Non introdurre librerie di terze parti (niente ncurses, niente
   framework TUI) senza discuterne esplicitamente prima — è una scelta

@@ -16,7 +16,7 @@
 #include <stdint.h>
 
 /* Byte length of the UTF-8 sequence starting with byte `c` (1-4). */
-int utf8ByteLen(char c);
+int32_t utf8ByteLen(uint8_t c);
 
 /* Decodes the UTF-8 sequence at `s` into a Unicode codepoint, writing its
  * byte length to *len. Assumes valid UTF-8; falls back to 1 byte / raw
@@ -39,7 +39,7 @@ size_t utf8NextCharLen(const char *buf, size_t pos, size_t len);
  * 0 for control/zero-width/combining characters, 2 for wide characters
  * (CJK, fullwidth forms, most emoji), 1 otherwise. Not a full wcwidth()
  * implementation, but a practical heuristic. */
-int utf8CharWidth(uint32_t cp);
+int32_t utf8CharWidth(uint32_t cp);
 
 /* Terminal display width of a UTF-8 string of `len` bytes, honoring
  * grapheme clusters (a character right after a ZWJ contributes 0
@@ -49,6 +49,6 @@ size_t utf8StrWidth(const char *s, size_t len);
 
 /* Display width of a single UTF-8 character at `s` (of byte length
  * `len`, e.g. from utf8NextCharLen). */
-int utf8SingleCharWidth(const char *s, size_t len);
+int32_t utf8SingleCharWidth(const char *s, size_t len);
 
 #endif /* __TE_UTF8_H */

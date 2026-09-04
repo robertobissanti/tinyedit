@@ -4,6 +4,9 @@
 
 #include "clipboard.h"
 
+#include <errno.h>
+#include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,14 +39,30 @@ static char *internalPaste(size_t *outlen) {
 
 static ClipboardBackend backend = CLIPBOARD_BACKEND_UNKNOWN;
 
-/* Returns 1 if `cmd` is found on $PATH (checked via `command -v`, POSIX
- * shell builtin, so this works even for shell built-ins/aliases-free
- * lookups without depending on a specific `which` binary being present). */
-static int commandExists(const char *cmd) {
-    char probe[256];
-    snprintf(probe, sizeof(probe), "command -v %s >/dev/null 2>&1", cmd);
-    int rc = system(probe);
-    return rc == 0;
+/* Returns 1 if `cmd` names an executable found on PATH. Clipboard
+ * backends are real executables, never aliases or shell built-ins. */
+static uint8_t commandExists(const char *cmd) {
+    if (strchr(cmd, '/')) return access(cmd, X_OK) == 0;
+
+    const char *path = getenv("PATH");
+    if (!path || !*path) path = "/usr/bin:/bin";
+    const char *segment = path;
+    for (;;) {
+        const char *colon = strchr(segment, ':');
+        size_t dirlen = colon ? (size_t)(colon - segment) : strlen(segment);
+        const char *dir = dirlen ? segment : ".";
+        size_t actual_dirlen = dirlen ? dirlen : 1;
+        size_t needed = actual_dirlen + 1 + strlen(cmd) + 1;
+        char *candidate = malloc(needed);
+        if (!candidate) return 0;
+        snprintf(candidate, needed, "%.*s/%s", (int)actual_dirlen, dir, cmd);
+        uint8_t found = access(candidate, X_OK) == 0;
+        free(candidate);
+        if (found) return 1;
+        if (!colon) break;
+        segment = colon + 1;
+    }
+    return 0;
 }
 
 static ClipboardBackend detectBackend(void) {
@@ -93,52 +112,115 @@ const char *clipboardBackendName(void) {
 
 /* ---- subprocess helpers ---------------------------------------------------- */
 
-static const char *copyCommandFor(ClipboardBackend b) {
+static void execCopyCommand(ClipboardBackend b) {
     switch (b) {
-        case CLIPBOARD_BACKEND_PBCOPY:      return "pbcopy";
-        case CLIPBOARD_BACKEND_WLCLIPBOARD: return "wl-copy";
-        case CLIPBOARD_BACKEND_XCLIP:       return "xclip -selection clipboard -in";
-        default: return NULL;
+        case CLIPBOARD_BACKEND_PBCOPY: {
+            char *const argv[] = { "pbcopy", NULL };
+            execvp(argv[0], argv);
+            break;
+        }
+        case CLIPBOARD_BACKEND_WLCLIPBOARD: {
+            char *const argv[] = { "wl-copy", NULL };
+            execvp(argv[0], argv);
+            break;
+        }
+        case CLIPBOARD_BACKEND_XCLIP: {
+            char *const argv[] = { "xclip", "-selection", "clipboard", "-in", NULL };
+            execvp(argv[0], argv);
+            break;
+        }
+        default: break;
     }
+    _exit(127);
 }
 
-static const char *pasteCommandFor(ClipboardBackend b) {
+static void execPasteCommand(ClipboardBackend b) {
     switch (b) {
-        case CLIPBOARD_BACKEND_PBCOPY:      return "pbpaste";
-        case CLIPBOARD_BACKEND_WLCLIPBOARD: return "wl-paste --no-newline";
-        case CLIPBOARD_BACKEND_XCLIP:       return "xclip -selection clipboard -out";
-        default: return NULL;
+        case CLIPBOARD_BACKEND_PBCOPY: {
+            char *const argv[] = { "pbpaste", NULL };
+            execvp(argv[0], argv);
+            break;
+        }
+        case CLIPBOARD_BACKEND_WLCLIPBOARD: {
+            char *const argv[] = { "wl-paste", "--no-newline", NULL };
+            execvp(argv[0], argv);
+            break;
+        }
+        case CLIPBOARD_BACKEND_XCLIP: {
+            char *const argv[] = { "xclip", "-selection", "clipboard", "-out", NULL };
+            execvp(argv[0], argv);
+            break;
+        }
+        default: break;
     }
+    _exit(127);
 }
 
-static int runCopyCommand(const char *cmd, const char *data, size_t len) {
-    FILE *pipe = popen(cmd, "w");
-    if (!pipe) return 0;
-    size_t written = fwrite(data, 1, len, pipe);
-    int rc = pclose(pipe);
-    return written == len && rc != -1 && WIFEXITED(rc) && WEXITSTATUS(rc) == 0;
+static int32_t waitForChild(pid_t pid) {
+    int status;
+    while (waitpid(pid, &status, 0) == -1) {
+        if (errno != EINTR) return -1;
+    }
+    return status;
 }
 
-static char *runPasteCommand(const char *cmd, size_t *outlen) {
-    FILE *pipe = popen(cmd, "r");
-    if (!pipe) return NULL;
+static uint8_t runCopyCommand(ClipboardBackend b, const char *data, size_t len) {
+    int fds[2];
+    if (pipe(fds) == -1) return 0;
+    pid_t pid = fork();
+    if (pid == -1) { close(fds[0]); close(fds[1]); return 0; }
+    if (pid == 0) {
+        close(fds[1]);
+        if (dup2(fds[0], STDIN_FILENO) == -1) _exit(127);
+        close(fds[0]);
+        execCopyCommand(b);
+    }
+
+    close(fds[0]);
+    void (*old_sigpipe)(int) = signal(SIGPIPE, SIG_IGN);
+    size_t written = 0;
+    while (written < len) {
+        ssize_t n = write(fds[1], data + written, len - written);
+        if (n > 0) written += (size_t)n;
+        else if (n == -1 && errno == EINTR) continue;
+        else break;
+    }
+    close(fds[1]);
+    signal(SIGPIPE, old_sigpipe);
+    int32_t status = waitForChild(pid);
+    return written == len && status != -1 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static char *runPasteCommand(ClipboardBackend b, size_t *outlen) {
+    int fds[2];
+    if (pipe(fds) == -1) return NULL;
+    pid_t pid = fork();
+    if (pid == -1) { close(fds[0]); close(fds[1]); return NULL; }
+    if (pid == 0) {
+        close(fds[0]);
+        if (dup2(fds[1], STDOUT_FILENO) == -1) _exit(127);
+        close(fds[1]);
+        execPasteCommand(b);
+    }
+    close(fds[1]);
 
     size_t cap = 4096, len = 0;
     char *buf = malloc(cap);
-    if (!buf) { pclose(pipe); return NULL; }
+    if (!buf) { close(fds[0]); waitForChild(pid); return NULL; }
 
-    size_t n;
-    while ((n = fread(buf + len, 1, cap - len, pipe)) > 0) {
-        len += n;
+    ssize_t n;
+    while ((n = read(fds[0], buf + len, cap - len)) > 0) {
+        len += (size_t)n;
         if (len == cap) {
             cap *= 2;
             char *grown = realloc(buf, cap);
-            if (!grown) { free(buf); pclose(pipe); return NULL; }
+            if (!grown) { free(buf); close(fds[0]); waitForChild(pid); return NULL; }
             buf = grown;
         }
     }
-    int rc = pclose(pipe);
-    if (rc == -1 || !WIFEXITED(rc) || WEXITSTATUS(rc) != 0) {
+    close(fds[0]);
+    int32_t status = waitForChild(pid);
+    if (n == -1 || status == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         free(buf);
         return NULL;
     }
@@ -150,15 +232,14 @@ static char *runPasteCommand(const char *cmd, size_t *outlen) {
 
 /* ---- public API -------------------------------------------------------------- */
 
-int clipboardCopy(const char *data, size_t len) {
+uint8_t clipboardCopy(const char *data, size_t len) {
     ClipboardBackend b = clipboardBackend();
-    const char *cmd = copyCommandFor(b);
-    if (!cmd) {
+    if (b == CLIPBOARD_BACKEND_INTERNAL) {
         internalCopy(data, len);
         return 1;
     }
 
-    if (runCopyCommand(cmd, data, len)) return 1;
+    if (runCopyCommand(b, data, len)) return 1;
 
     /* External backend failed at runtime (e.g. no display connection even
      * though the binary exists) -- fall back to the internal buffer so
@@ -169,10 +250,9 @@ int clipboardCopy(const char *data, size_t len) {
 
 char *clipboardPaste(size_t *outlen) {
     ClipboardBackend b = clipboardBackend();
-    const char *cmd = pasteCommandFor(b);
-    if (!cmd) return internalPaste(outlen);
+    if (b == CLIPBOARD_BACKEND_INTERNAL) return internalPaste(outlen);
 
-    char *result = runPasteCommand(cmd, outlen);
+    char *result = runPasteCommand(b, outlen);
     if (result) return result;
 
     return internalPaste(outlen);

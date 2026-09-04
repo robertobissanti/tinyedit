@@ -4,12 +4,24 @@
  * so the type definitions are separated from the logic that uses them,
  * per project convention (see CLAUDE.md: includes -> defines -> types ->
  * globals -> functions, with types living in the header).
+ *
+ * Type convention (applies project-wide, not just this file): every
+ * row/column index, buffer length, and screen dimension is int32_t --
+ * one consistent signed type for the whole "position in the file/
+ * screen" family, so indices and sizes compare and subtract directly
+ * without signed/unsigned casts (the code relies on -1 sentinels, e.g.
+ * search_match_y, and on mixed index/size comparisons like
+ * E.cx > row->size, both of which need a signed type throughout).
+ * Pure on/off flags are uint8_t. Raw bytes off the wire (terminal
+ * input, UTF-8 code units) are uint8_t; decoded Unicode codepoints are
+ * uint32_t (see utf8.h).
  */
 
 #ifndef __TINYEDIT_H
 #define __TINYEDIT_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <termios.h>
 #include <time.h>
 
@@ -17,9 +29,10 @@
 
 /* ---- config -------------------------------------------------------- */
 
-#define TE_VERSION "0.1"
-#define TE_QUIT_TIMES 2
+#define TE_VERSION "0.2"
 #define ABUF_INIT {NULL, 0}
+#define INVISIBLE_SPACE_GLYPH '.'
+#define INVISIBLE_TAB_GLYPH '>'
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
@@ -49,67 +62,163 @@ enum editorKey {
     SHIFT_PAGE_UP,
     SHIFT_PAGE_DOWN,
     F1_KEY,
-    F2_KEY
+    F2_KEY,
+    F3_KEY,
+    /* Bracketed paste start (ESC[200~, see editorReadKey()) -- signals
+     * the caller to switch to editorReadPastedText() instead of
+     * treating subsequent bytes as individual keystrokes. See
+     * tinyedit.c's paste handling for why this exists: without
+     * bracketed paste, pasted text arrives byte-by-byte through the
+     * normal keystroke path, which is slow (one undo-snapshot/full
+     * redraw per character) AND wrong (auto-close-pair logic reacts to
+     * every '(', '\'', '`' etc. in the pasted text as if the user had
+     * typed it, leaving spurious closing characters behind). */
+    PASTE_START_KEY,
+    /* SGR mouse report (ESC[<Cb;Cx;Cy(M|m), see editorReadKey()) --
+     * signals the caller that a mouse event was decoded into the
+     * mouseEventButton/mouseEventCol/mouseEventRow/mouseEventPress
+     * globals (see tinyedit.c), to be read immediately (before the
+     * next editorReadKey() call, which may overwrite them). */
+    MOUSE_EVENT_KEY
 };
 
 enum undoEditType { EDIT_NONE, EDIT_INSERT, EDIT_DELETE, EDIT_OTHER };
 
 typedef struct erow {
-    int size;
-    int rsize;   /* size of the rendered line (tabs expanded) */
+    int32_t size;
+    int32_t rsize;  /* size of the rendered line (tabs expanded) */
     char *chars;
     char *render;
+    /* One enum syntaxHighlight byte per render[] column, recomputed by
+     * syntaxHighlightRow() (see syntax.h) whenever the row's text
+     * changes. NULL/rsize-0 rows (or when S.syntax_highlight is off)
+     * leave this NULL -- editorDrawRowSegment() falls back to the
+     * default text color in that case, it does not require hl to be
+     * populated. */
+    uint8_t *hl;
+    /* Whether this row ends inside an unclosed block comment, carried
+     * into the next row's syntaxHighlightRow() call as its
+     * prev_open_comment argument -- see syntax.h. */
+    uint8_t hl_open_comment;
+    /* Whether this row ends inside an unclosed multi-line LaTeX
+     * "\[...\]" display-math span (see syntaxTryHighlightMathMultiline()
+     * in syntax.c) -- a separate bit from hl_open_comment rather than
+     * reusing it, since a language could in principle have both a block
+     * comment AND math_mode active at once (LaTeX itself doesn't, but
+     * nothing enforces that the two states can't coexist for some
+     * future language), and conflating them would silently misrender
+     * whichever one lost the race. */
+    uint8_t hl_open_math;
+    /* Cached soft-wrap segmentation. Byte and display-column offsets
+     * are kept separately because UTF-8 makes them diverge. Rebuilt
+     * when render changes or the effective wrap width changes. */
+    int32_t *seg_start;
+    int32_t *seg_start_rx;
+    int32_t seg_count;
+    int32_t seg_wrapcols;
 } erow;
 
+typedef struct undoRow {
+    int32_t size;
+    int32_t rsize;
+    char *chars;
+    char *render;
+} undoRow;
+
 typedef struct undoSnapshot {
-    erow *row;
-    int numrows;
-    int cx, cy;
+    undoRow *row;
+    int32_t numrows;
+    int32_t cx, cy;
 } undoSnapshot;
+
+struct helpEntry {
+    const char *key;
+    const char *desc;
+};
+
+struct autoClosePair {
+    char open;
+    char close;
+};
+
+struct autoCloseMultiByte {
+    const char open[4];
+    int32_t open_len;
+    const char close[4];
+    int32_t close_len;
+};
 
 /* Generic growable byte buffer used to batch a full screen redraw into
  * one write(), instead of issuing many small writes per frame. */
 struct abuf {
     char *b;
-    int len;
+    int32_t len;
 };
 
 struct editorConfig {
-    int cx, cy;             /* cursor position in the file (chars) */
-    int rx;                 /* cursor position in the rendered line */
-    int rowoff;              /* row of file we are scrolled to */
-    int coloff;              /* column of file we are scrolled to */
-    int screenrows;
-    int screencols;
-    int numrows;
+    int32_t cx, cy;           /* cursor position in the file (chars) */
+    int32_t rx;                /* cursor position in the rendered line */
+    int32_t rowoff;             /* row of file we are scrolled to */
+    int32_t coloff;             /* column of file we are scrolled to */
+    /* Set by the mouse wheel (see MOUSE_EVENT_KEY handling in
+     * tinyedit.c) to tell editorScroll() to skip its usual "keep the
+     * cursor on screen" re-centering for exactly one redraw -- the
+     * wheel scrolls the view without moving the cursor, and without
+     * this flag editorScroll() would otherwise immediately snap
+     * E.rowoff back to hug the (stationary) cursor. Cleared inside
+     * editorScroll() itself right after being consulted, so any
+     * subsequent real cursor movement (arrow keys, click, typing, ...)
+     * goes through the normal follow-the-cursor path on its very next
+     * redraw -- this is a one-shot override, not a persistent mode. */
+    uint8_t free_scroll;
+    int32_t screenrows;
+    int32_t screencols;
+    int32_t numrows;
     erow *row;
-    int dirty;
+    uint8_t dirty;          /* 1 if the buffer has unsaved changes */
     char *filename;
-    char statusmsg[80];
+    /* 512, not a smaller round number like 80: this has to hold a
+     * fully-formatted prompt (fixed instructions + live query text
+     * being typed, see editorPromptCB() in tinyedit.c) without
+     * vsnprintf() in editorSetStatusMessage() silently truncating the
+     * user's own input before editorDrawMessageBar()'s tail-scroll
+     * ever gets a chance to show it -- a search query longer than the
+     * buffer would otherwise appear to "stop accepting input" while
+     * still being tracked correctly underneath, since only the
+     * DISPLAY was truncated, not the actual search buffer. 512 is
+     * comfortably larger than any realistic terminal width plus any
+     * realistic query length. */
+    char statusmsg[512];
     time_t statusmsg_time;
     /* When set, the message bar shows statusmsg indefinitely instead
      * of clearing it after the usual 5s timeout -- used for the
      * startup shortcut hint, which should stay until the user does
      * something that produces a real status update (e.g. saving). */
-    int statusmsg_sticky;
+    uint8_t statusmsg_sticky;
     struct termios orig_termios;
 
-    int sel_active;
-    int sel_anchor_x, sel_anchor_y;
+    uint8_t sel_active;
+    int32_t sel_anchor_x, sel_anchor_y;
     /* When set (via Ctrl-T), plain arrow keys extend the selection just
      * like Shift+Arrow does, instead of collapsing it. Universal
      * fallback for terminals that can't report Shift+Arrow as a
      * distinct sequence (e.g. Terminal.app on macOS -- see CLAUDE.md). */
-    int sel_pinned;
+    uint8_t sel_pinned;
 
     undoSnapshot *undo_stack;
-    int undo_count;
+    int32_t undo_count;
     undoSnapshot *redo_stack;
-    int redo_count;
+    int32_t redo_count;
     enum undoEditType last_edit_type;
     time_t last_edit_time;
 
-    int search_match_y, search_match_x, search_match_len; /* match_y == -1: no match */
+    int32_t search_match_y, search_match_x, search_match_len; /* match_y == -1: no match */
+
+    /* Wall-clock time of the last crash-recovery backup write (see
+     * backup.h). Checked against S.backup_interval in the main loop
+     * to decide when the next one is due; 0 means "never written yet
+     * this session". */
+    time_t last_backup_time;
 };
 
 #endif /* __TINYEDIT_H */

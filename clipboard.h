@@ -17,6 +17,7 @@
 #define __TE_CLIPBOARD_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 /* Which external backend (if any) is being used. Exposed mostly for the
  * settings screen / status messages. */
@@ -31,7 +32,7 @@ typedef enum {
 /* Copies `len` bytes from `data` to the clipboard. Returns 1 on success,
  * 0 on failure (in which case the previous clipboard contents, if any,
  * are left untouched). */
-int clipboardCopy(const char *data, size_t len);
+uint8_t clipboardCopy(const char *data, size_t len);
 
 /* Returns a malloc'd NUL-terminated copy of the current clipboard
  * contents, or NULL if the clipboard is empty or unreadable. */

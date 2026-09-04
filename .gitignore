@@ -1,2 +1,9 @@
 tinyedit
 .tinyedit_history
+
+# Scratch/test files (manual try-out documents, debug builds) --
+# never part of the source, kept out of git entirely.
+dev/
+*.dSYM/
+testLatex.tex
+__pycache__/
