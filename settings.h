@@ -163,7 +163,7 @@ struct editorSettings {
      * terminal's own native text selection (e.g. Cmd+C/Cmd+V on
      * Ghostty) while tinyedit is running, since the terminal hands
      * mouse events to the foreground program instead of handling them
-     * itself -- an explicit opt-in, not a default, per CLAUDE.md. */
+     * itself -- therefore this remains an explicit opt-in. */
     int32_t mouse_enabled;
 };
 

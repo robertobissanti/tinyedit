@@ -19,10 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-This project ports a small part of its UTF-8 handling (utf8.c/utf8.h) from
-linenoise (https://github.com/antirez/linenoise), and vendors linenoise.c/
-linenoise.h in full for historical reference (see README.md) -- both are
-under a separate BSD 2-Clause license, reproduced in LICENSE-THIRD-PARTY.

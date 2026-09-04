@@ -266,8 +266,8 @@ partenza da cui il log sarà accurato in avanti.
     `editorRowVideoHeight`, il render, `editorMoveCursorWrapped`,
     `HOME_KEY`/`END_KEY`, `PAGE_UP`/`PAGE_DOWN`) aggiornati per usare
     l'array giusto a seconda che debbano indicizzare byte o confrontare
-    colonne — **mai l'uno al posto dell'altro** (vedi la nuova regola
-    in `CLAUDE.md` sull'uso delle funzioni UTF-8 di `utf8.c`).
+    colonne — **mai l'uno al posto dell'altro**, usando sempre le
+    funzioni UTF-8 condivise di `utf8.c`.
 
 - [x] **Soft-wrap con mappatura del cursore**
   - _Inserito: 2026-09-04 · Completato: 2026-09-04_
@@ -354,8 +354,7 @@ partenza da cui il log sarà accurato in avanti.
     avvisare — solo `Ctrl-S` salvava. **Deciso**: `Ctrl-S` resta
     invariato (salva ed esce direttamente, nessun prompt). `Esc` ora
     confronta la copia locale editata con le impostazioni live
-    (`memcmp` sull'intera struct, omogenea a `int32_t` — vedi
-    l'eccezione documentata in `CLAUDE.md`) — se sono uguali esce
+    (`memcmp` sull'intera struct, omogenea a `int32_t`) — se sono uguali esce
     subito come prima; se ci sono modifiche non salvate mostra
     "Salvare le modifiche? y/n/Esc to cancel" nel pannello stesso
     (riusa `editorSettingsRender()`, stesso pattern già usato da
@@ -877,7 +876,7 @@ partenza da cui il log sarà accurato in avanti.
     **Deciso**: stesso formato INI-style di `~/.tinyeditrc` (`chiave =
     valore`, `#` commento) invece di YAML — evita di scrivere/vendorizzare
     un parser YAML in C puro solo per questo, che avrebbe violato il
-    vincolo "zero dipendenze esterne" (vedi `CLAUDE.md`) introducendo
+    vincolo "zero dipendenze esterne", introducendo
     comunque un parser nuovo da mantenere. Riusa lo stile di parsing già
     presente in `settings.c` (trim, split su `=`, tolleranza a righe
     malformate), non il codice stesso (dati diversi: `struct syntaxLang`
@@ -948,7 +947,7 @@ partenza da cui il log sarà accurato in avanti.
     non dedotto): attivazione/disattivazione con una combinazione
     `Ctrl-<tasto>` dentro il prompt `Ctrl-F` esistente, motore
     `<regex.h>` POSIX (`regcomp`/`regexec`, libc, zero dipendenze
-    esterne — vedi `CLAUDE.md`). Tasto scelto: **`Ctrl-G`** (mnemonico
+    esterne). Tasto scelto: **`Ctrl-G`** (mnemonico
     "grep"/pattern generico), libero da collisioni con le combinazioni
     già usate nel prompt (`Ctrl-R` per cerca-e-sostituisci, frecce per
     prossimo/precedente).
@@ -969,7 +968,7 @@ partenza da cui il log sarà accurato in avanti.
   - **Ricerca all'indietro (Frecce Su/Sinistra) con regex**: POSIX
     `<regex.h>` non ha ricerca nativa all'indietro, e l'estensione
     `REG_STARTEND` che l'avrebbe resa diretta è solo BSD/macOS, assente
-    su glibc/Linux (il progetto punta a entrambi, vedi `CLAUDE.md`).
+    su glibc/Linux (il progetto punta a entrambi).
     Nuova `editorRegexFindLastOnRow()`: rilancia `regexec()` da offset
     crescenti sulla riga e tiene l'ultimo match che inizia entro il
     limite richiesto — stessa strategia già usata dal ramo di ricerca
@@ -1287,8 +1286,8 @@ partenza da cui il log sarà accurato in avanti.
     posizionamento cursore già in `editorRefreshScreen()` — deve
     restare sincronizzata con quella, non reinventata a parte. Gestisce
     sia wrap attivo che disattivo, e cammina i caratteri con
-    `utf8NextCharLen()` (mai assumendo 1 byte = 1 colonna, vedi
-    CLAUDE.md) per centrare correttamente un click su un carattere
+    `utf8NextCharLen()` (mai assumendo 1 byte = 1 colonna) per centrare
+    correttamente un click su un carattere
     multi-byte/a doppia larghezza.
   - **`editorProcessKeypress()`**, nuovo case `MOUSE_EVENT_KEY`: press
     del bottone sinistro (Cb=0) posiziona cursore e ancora una
@@ -1546,7 +1545,7 @@ partenza da cui il log sarà accurato in avanti.
     bit, e `Tab`/`Ctrl-I` condividono da sempre lo stesso controllo
     ASCII) — build fallita con "duplicate case value" appena tentato.
     **Verificato con l'utente sul suo terminale reale** (Ghostty, non
-    assunto — vedi `CLAUDE.md`): Ctrl-I lì arriva come sequenza CSI-u
+    assunto): Ctrl-I lì arriva come sequenza CSI-u
     `ESC[5;5u`, distinta dal semplice byte 0x09 del Tab. Nota
     particolare: il campo "5" qui NON è il codepoint CSI-u standard
     (che per 'i' sarebbe 105) — Ghostty manda un valore diverso in
@@ -1559,7 +1558,7 @@ partenza da cui il log sarà accurato in avanti.
     dall'utente**: su Terminal.app di macOS, Ctrl-I digita
     effettivamente un Tab invece di aprire la schermata info — stesso
     limite già noto per Shift+Arrow su quel terminale (con fallback
-    `Ctrl-T` per la selezione, vedi `CLAUDE.md`), qui senza un
+    `Ctrl-T` per la selezione), qui senza un
     fallback equivalente possibile dato che non c'è modo di
     distinguere le due combinazioni via tastiera su quel terminale.
     Menzionato sia nella voce di F1 sia sotto.

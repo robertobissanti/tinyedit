@@ -9,6 +9,27 @@ A small full-screen terminal text editor written in plain C (kilo-style,
 after [kilo](https://github.com/antirez/kilo) by Salvatore Sanfilippo),
 with no dependencies beyond the POSIX standard library.
 
+tinyedit aims to bring the familiar ease of a desktop text editor to the
+terminal. It deliberately avoids the legacy of modes, commands, and unusual
+key combinations associated with editors such as Vim, Nano, or Emacs. Those
+programs are powerful and useful, but their interaction models can feel more
+complex than the everyday editing many people expect from a modern desktop
+application.
+
+## Why it exists
+
+I kept building tinyedit because I became convinced that a terminal editor
+could be simple enough to use every day. While implementing it, I paid close
+attention to carrying over the mouse gestures and keyboard shortcuts people
+already know from desktop text editors and word processors. The goal is not
+to invent another editing language: it is to make opening a terminal file
+feel immediately familiar.
+
+There is still plenty to implement. Multiple buffers, for example, would make
+it possible to keep several files open in one session. Any such addition must
+earn its place, though—the program should grow without losing the simplicity
+that motivated it in the first place.
+
 ## Features at a glance
 
 tinyedit is intentionally small, but it is meant to be comfortable enough
@@ -16,7 +37,7 @@ for real editing rather than just demonstrating how a terminal works.
 
 | Area | What you get |
 |---|---|
-| Editing | Familiar cursor movement, word jumps, selection, cut/copy/paste, undo and redo, automatic indentation, and configurable pair closing. |
+| Editing | Familiar cursor movement, word jumps, selection, cut/copy/paste, automatic indentation, configurable pair closing, and an undo history of up to 2,000 steps (200 by default). |
 | Files | Open an existing file or start from an empty buffer, save atomically, and recover unsaved work from automatic backup files after a crash. |
 | Search | Incremental literal or POSIX regular-expression search, match navigation, and interactive search and replace. |
 | Syntax highlighting | Built-in support for C/C++, Python, Shell, JavaScript/TypeScript, Markdown, HTML/XML, and CSS. Simple C-like languages can be added with a user configuration file. |
@@ -29,16 +50,16 @@ for real editing rather than just demonstrating how a terminal works.
 | Portability | One C99 binary and no third-party runtime libraries. The supported targets are POSIX systems such as macOS and Linux. |
 | Testing | Syntax, settings, backup, terminal-input, key-binding, and very-long-line behavior are covered by `make test`; sample files are included for hands-on checks. |
 
-## Why it exists
+Settings can be changed from the built-in `F2` panel or by editing
+`~/.tinyeditrc`, which tinyedit creates automatically on first launch.
 
-Started as a learning exercise: exploring how terminal TUIs work from
-scratch (raw mode, ANSI escapes, manual redraw) instead of reaching for
-a framework like Bubble Tea, Ink, or Textual. The first prototype used
-[linenoise](https://github.com/antirez/linenoise) (antirez) for a
-line-editor-with-commands interface; the current version is a real
-full-screen editor with a free-moving cursor, which needs raw mode
-managed by hand. linenoise stays in the repo for historical reference
-but is no longer a build dependency.
+The project also remains an exploration of how terminal interfaces work from
+scratch: raw mode, ANSI escape sequences, input decoding, and manual redraw,
+without reaching for a TUI framework. Its first prototype used
+[linenoise](https://github.com/antirez/linenoise) for a command-driven line
+editor. The current version is a true full-screen editor with a freely moving
+cursor; linenoise remains in the repository for historical reference but is
+not a build dependency.
 
 ## Build
 
@@ -302,9 +323,8 @@ and asks whether to restore the changes before proceeding.
 
 - `tinyedit.c` / `tinyedit.h` — the editor itself: raw terminal mode,
   row buffer, rendering, input handling, settings panel. Shared
-  types/macros live in the header, logic in the `.c` (see `CLAUDE.md`
-  for the include/define/types/globals/functions ordering convention
-  every module in this project follows).
+  types and macros live in the header, while implementation logic stays
+  in the `.c` file.
 - `clipboard.c` / `clipboard.h` — system clipboard integration (macOS
   `pbcopy`/`pbpaste`, Linux `wl-clipboard` or `xclip`), falling back
   to an internal buffer when no system backend is available. Wired to

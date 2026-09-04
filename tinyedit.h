@@ -2,8 +2,8 @@
  *
  * tinyedit is a single translation unit (tinyedit.c); this header exists
  * so the type definitions are separated from the logic that uses them,
- * per project convention (see CLAUDE.md: includes -> defines -> types ->
- * globals -> functions, with types living in the header).
+ * per project convention: shared types live in the header, while logic
+ * remains in the implementation file.
  *
  * Type convention (applies project-wide, not just this file): every
  * row/column index, buffer length, and screen dimension is int32_t --
@@ -202,7 +202,7 @@ struct editorConfig {
     /* When set (via Ctrl-T), plain arrow keys extend the selection just
      * like Shift+Arrow does, instead of collapsing it. Universal
      * fallback for terminals that can't report Shift+Arrow as a
-     * distinct sequence (e.g. Terminal.app on macOS -- see CLAUDE.md). */
+     * distinct sequence (e.g. Terminal.app on macOS). */
     uint8_t sel_pinned;
 
     undoSnapshot *undo_stack;

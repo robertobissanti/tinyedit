@@ -7,3 +7,4 @@ dev/
 *.dSYM/
 testLatex.tex
 __pycache__/
+CLAUDE.md

@@ -163,8 +163,7 @@ static uint8_t stdinHasDataReady(void) {
  * S.mouse_enabled setting (F2), NOT unconditionally at startup like
  * bracketed paste above -- enabling it hands every click/drag to
  * tinyedit instead of the terminal's own text selection (e.g.
- * Cmd+C/Cmd+V on Ghostty), so it must be an explicit opt-in (see
- * CLAUDE.md and IDEAS.md's original note on this). Still registered
+ * Cmd+C/Cmd+V on Ghostty), so it must be an explicit opt-in. Still registered
  * with atexit() once turned on, same reasoning as bracketed paste:
  * must not leak into whatever runs in this terminal after tinyedit
  * quits, regardless of how the setting was left. */
@@ -1611,7 +1610,7 @@ static void editorMouseToCursor(int32_t screen_col, int32_t screen_row, int32_t 
         /* Walk the segment's characters to find the byte offset whose
          * rendered column is closest to target_rx -- same "walk with
          * utf8NextCharLen, never assume 1 byte == 1 column" rule as
-         * everywhere else in this codebase (see CLAUDE.md), since a
+         * everywhere else in this codebase, since a
          * clicked column can land in the middle of a wide/multi-byte
          * glyph. */
         int32_t seg_end = (seg + 1 < nseg) ? row->seg_start[seg + 1] : row->size;
@@ -2335,7 +2334,7 @@ static void editorFindAndReplace(const char *query);
  * POSIX-portable way to search backward with <regex.h> (REG_STARTEND,
  * which would let this restrict the search window directly, is a
  * BSD/macOS extension absent from glibc -- and this project targets
- * both macOS and Linux, see CLAUDE.md), so this re-runs regexec()
+ * both macOS and Linux), so this re-runs regexec()
  * repeatedly from increasing start offsets and keeps the rightmost
  * match that still qualifies, mirroring how the literal-substring
  * backward search below already works (memcmp() at every offset up to
@@ -2380,8 +2379,8 @@ static uint8_t editorRegexFindLastOnRow(const regex_t *re, erow *row, int32_t li
 /* Searches for `query` starting at (from_y, from_x), moving in `dir`
  * (1 forward, -1 backward), wrapping around the whole file. When
  * search_regex_mode is set, `query` is compiled as a POSIX extended
- * regular expression (<regex.h>, part of libc -- no new dependency,
- * see CLAUDE.md's "zero external dependencies" rule) instead of
+ * regular expression (<regex.h>, part of libc, so it adds no external
+ * dependency) instead of
  * matched as a literal substring; a malformed pattern is treated as
  * "no match" rather than surfacing regcomp()'s error, consistent with
  * how an empty query already means "no match" below rather than an
@@ -3270,7 +3269,7 @@ static const int32_t autoCloseMultiByteCount =
  * special handling). `out` receives the full sequence (lead byte
  * included), up to 4 bytes; returns the sequence length. This is the
  * ONLY place that needs to know the difference between "one byte" and
- * "one character" -- everywhere else in the codebase (see CLAUDE.md)
+ * "one character" -- everywhere else in the codebase
  * deliberately treats input as a raw byte stream and lets bytes land
  * in row->chars in order, which is simpler and correct for insertion
  * but can't tell whole characters apart for the comparison this
@@ -3996,7 +3995,7 @@ int main(int argc, char **argv) {
     /* Terminal.app on macOS sends the same byte sequence for a plain
      * arrow and Shift+Arrow, so text selection via Shift+Arrow silently
      * does nothing there -- not a bug, a limitation of that terminal
-     * (see CLAUDE.md). Point users at the universal Ctrl-T fallback
+     * limitation. Point users at the universal Ctrl-T fallback
      * instead of leaving them to wonder why Shift+Arrow is unresponsive. */
     const char *term_program = getenv("TERM_PROGRAM");
     if (term_program && strcmp(term_program, "Apple_Terminal") == 0) {
