@@ -1428,6 +1428,11 @@ static int32_t editorGutterWidth(void) {
         digits++;
         n /= 10;
     }
+    /* editorDrawGutter() formats into a fixed 16-byte buffer. Keeping the
+     * width bounded here preserves both the visual layout and a meaningful
+     * snprintf() bound even if a corrupted/constructed buffer reports an
+     * absurd number of rows. */
+    if (digits > 14) digits = 14;
     return digits + 1;
 }
 
@@ -1799,8 +1804,11 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
     }
 
     uint8_t in_sel = 0;
-    for (int32_t j = 0; j < len; j++) {
+    for (int32_t j = 0; j < len; ) {
         int32_t filecol = seg_from + j;
+        size_t char_len = utf8NextCharLen(line, (size_t)j, (size_t)len);
+        if (char_len == 0 || (size_t)j + char_len > (size_t)len) char_len = 1;
+        int32_t emitted_len = (int32_t)char_len;
         uint8_t should_sel = (row_sel_start >= 0 &&
             filecol >= row_sel_start && filecol < row_sel_end) ||
             (match_start >= 0 && filecol >= match_start && filecol < match_end);
@@ -1821,7 +1829,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
          * attention). Reset immediately after since these are lone
          * bytes interleaved with normal text, unlike the selection
          * span above which covers a contiguous range. */
-        uint8_t is_invisible_glyph = !should_sel &&
+        uint8_t is_invisible_glyph = !should_sel && emitted_len == 1 &&
             (line[j] == INVISIBLE_SPACE_GLYPH || line[j] == INVISIBLE_TAB_GLYPH) &&
             S.show_invisibles;
         if (is_invisible_glyph) {
@@ -1840,10 +1848,15 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
             syn_color = syntaxColorFor((enum syntaxHighlight)row->hl[filecol], &S);
         if (syn_color) abAppend(ab, syn_color, (int32_t)strlen(syn_color));
 
-        abAppend(ab, &line[j], 1);
+        /* Emit the complete UTF-8 sequence before resetting the color.
+         * ANSI escapes between continuation bytes would split the codepoint
+         * and make terminals render replacement diamonds (�), especially
+         * visible with accented characters such as é. */
+        abAppend(ab, &line[j], emitted_len);
 
         if (syn_color) abAppend(ab, "\x1b[m", 3);
         if (is_invisible_glyph) abAppend(ab, "\x1b[m", 3);
+        j += emitted_len;
     }
     if (in_sel) abAppend(ab, "\x1b[m", 3);
 }
@@ -1851,14 +1864,16 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
 static void editorDrawGutter(struct abuf *ab, int32_t gutter, int32_t filerow, uint8_t is_continuation) {
     if (gutter <= 0) return;
     char numbuf[16];
+    int32_t safe_gutter = gutter;
+    if (safe_gutter > (int32_t)sizeof(numbuf) - 1) safe_gutter = (int32_t)sizeof(numbuf) - 1;
     if (filerow < E.numrows && !is_continuation) {
-        snprintf(numbuf, sizeof(numbuf), "%*d ", gutter - 1, filerow + 1);
+        snprintf(numbuf, sizeof(numbuf), "%*d ", safe_gutter - 1, filerow + 1);
     } else {
-        snprintf(numbuf, sizeof(numbuf), "%*s ", gutter - 1, "");
+        snprintf(numbuf, sizeof(numbuf), "%*s ", safe_gutter - 1, "");
     }
     const char *gutter_color = ansiColorCode(S.color_gutter);
     abAppend(ab, gutter_color, (int32_t)strlen(gutter_color));
-    abAppend(ab, numbuf, gutter);
+    abAppend(ab, numbuf, safe_gutter);
     abAppend(ab, "\x1b[m", 3);
 }
 

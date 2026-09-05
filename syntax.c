@@ -125,6 +125,31 @@ static uint8_t userLangsLoaded = 0;
 
 static void syntaxLoadUserLangs(void);
 
+/* File extensions are conventionally case-insensitive for language
+ * detection, even on case-sensitive filesystems (notably .C/.H on Unix).
+ * Compare ASCII letters without depending on the user's locale. */
+static uint8_t syntaxExtensionEquals(const char *left, const char *right) {
+    while (*left && *right) {
+        unsigned char a = (unsigned char)*left;
+        unsigned char b = (unsigned char)*right;
+        if (a >= 'A' && a <= 'Z') a = (unsigned char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = (unsigned char)(b - 'A' + 'a');
+        if (a != b) return 0;
+        left++;
+        right++;
+    }
+    return *left == '\0' && *right == '\0';
+}
+
+/* Language keywords are ASCII spelling by definition.  Do not delegate
+ * this decision to the process locale: libc's isalpha() may classify
+ * non-ASCII bytes differently on different systems, while the tokenizer
+ * must make the same choice on macOS, Linux and other POSIX targets. */
+static uint8_t syntaxIsAsciiLetter(unsigned char byte) {
+    return (byte >= (unsigned char)'A' && byte <= (unsigned char)'Z') ||
+        (byte >= (unsigned char)'a' && byte <= (unsigned char)'z');
+}
+
 static const struct syntaxLang *syntaxLangForFilename(const char *filename) {
     if (!filename) return NULL;
     const char *dot = strrchr(filename, '.');
@@ -142,13 +167,13 @@ static const struct syntaxLang *syntaxLangForFilename(const char *filename) {
     for (int32_t i = 0; i < userLangTableCount; i++) {
         const struct syntaxLang *lang = userLangTable[i];
         for (int32_t j = 0; lang->extensions[j]; j++)
-            if (strcmp(lang->extensions[j], ext) == 0) return lang;
+            if (syntaxExtensionEquals(lang->extensions[j], ext)) return lang;
     }
 
     for (int32_t i = 0; i < syntaxLangTableCount; i++) {
         const struct syntaxLang *lang = syntaxLangTable[i];
         for (int32_t j = 0; lang->extensions[j]; j++)
-            if (strcmp(lang->extensions[j], ext) == 0) return lang;
+            if (syntaxExtensionEquals(lang->extensions[j], ext)) return lang;
     }
     return NULL;
 }
@@ -364,7 +389,8 @@ static uint8_t syntaxIsIdentifierByte(char c, const char *extra, uint8_t first) 
     unsigned char byte = (unsigned char)c;
     if (byte >= 0x80) return 1;
     if (c == '_' || (extra && strchr(extra, c))) return 1;
-    return first ? (uint8_t)isalpha(byte) : (uint8_t)isalnum(byte);
+    if (first) return syntaxIsAsciiLetter(byte);
+    return syntaxIsAsciiLetter(byte) || (byte >= (unsigned char)'0' && byte <= (unsigned char)'9');
 }
 
 static int32_t syntaxHighlightQuoted(erow *row, const char *s, int32_t len,
@@ -550,7 +576,7 @@ static void syntaxHighlightRowGeneric(erow *row, const struct syntaxLang *lang,
  * after the opening ```, matching the "no nested/embedded syntax" scope
  * boundary from the original C-only version. */
 static uint8_t isMdExtension(const char *ext) {
-    return strcmp(ext, "md") == 0 || strcmp(ext, "markdown") == 0;
+    return syntaxExtensionEquals(ext, "md") || syntaxExtensionEquals(ext, "markdown");
 }
 
 /* Looks for `open` starting at s[i] and, if found, scans forward for
@@ -768,7 +794,8 @@ static void syntaxHighlightRowMarkdown(erow *row, uint8_t prev_in_fence, uint8_t
  * covers the common case (tags, attributes, comments), same "narrow
  * first version" scope as the rest of this file. */
 static uint8_t isXmlExtension(const char *ext) {
-    return strcmp(ext, "html") == 0 || strcmp(ext, "htm") == 0 || strcmp(ext, "xml") == 0;
+    return syntaxExtensionEquals(ext, "html") || syntaxExtensionEquals(ext, "htm") ||
+        syntaxExtensionEquals(ext, "xml");
 }
 
 static uint8_t syntaxHighlightRowXml(erow *row, uint8_t prev_open_comment) {
@@ -853,7 +880,7 @@ static uint8_t syntaxHighlightRowXml(erow *row, uint8_t prev_open_comment) {
  * has no line comments), string values, and property names (word
  * immediately followed by ':') as HL_KEYWORD. */
 static uint8_t isCssExtension(const char *ext) {
-    return strcmp(ext, "css") == 0;
+    return syntaxExtensionEquals(ext, "css");
 }
 
 static uint8_t syntaxHighlightRowCss(erow *row, uint8_t prev_open_comment) {

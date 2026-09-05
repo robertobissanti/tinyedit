@@ -46,6 +46,20 @@ int main(void) {
     expectClass(&row, 6, HL_KEYWORD, "standalone C keyword");
     freeRow(&row);
 
+    initRow(&row, "int main(void) { return 0; }");
+    highlight(&row, "test.C", 0, 0);
+    expectClass(&row, 0, HL_KEYWORD, "uppercase C extension keyword");
+    expectClass(&row, 17, HL_KEYWORD, "C return keyword");
+    freeRow(&row);
+
+    initRow(&row, "int main(void){ return 1; }");
+    highlight(&row, "testC.c", 0, 0);
+    expectClass(&row, 0, HL_KEYWORD, "testC.c int keyword");
+    expectClass(&row, 4, HL_NORMAL, "testC.c identifier remains normal");
+    expectClass(&row, 10, HL_KEYWORD, "testC.c void keyword");
+    expectClass(&row, 18, HL_KEYWORD, "testC.c return keyword");
+    freeRow(&row);
+
     initRow(&row, "/* open");
     highlight(&row, "demo.c", 0, 0);
     if (!row.hl_open_comment) { fprintf(stderr, "FAIL open C comment state\n"); failures++; }
