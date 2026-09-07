@@ -2037,6 +2037,82 @@ static void editorDrawGutter(struct abuf *ab, int32_t gutter, int32_t filerow, u
     abAppendReset(ab);
 }
 
+/* Splash lines shown on the empty buffer, centered as a block. NULL is
+ * a blank spacer line. Kept short and few: this is the first thing a
+ * new user sees and the only place the basic keys are advertised
+ * without knowing to press F1, but it still has to fit a small
+ * terminal, so it lists the way out and the way to get help rather
+ * than trying to summarize the whole keymap. */
+static const char *const splashLines[] = {
+    "tinyedit -- a small terminal text editor",
+    NULL,
+    "version " TE_VERSION,
+    "by Roberto Bissanti",
+    "MIT licensed -- free to use and redistribute",
+    NULL,
+    /* Padded to a common width so the block's own centering can't
+     * stagger them: these four must share one left edge for their two
+     * key columns to line up. */
+    "Ctrl-O  open a file        Ctrl-S  save    ",
+    "Ctrl-F  find               F4      save as ",
+    "Ctrl-Z  undo               F2      settings",
+    "Ctrl-Q  quit               F1      help    ",
+    NULL,
+    "Start typing, or press F3 for details",
+};
+static const int32_t splashLineCount =
+    (int32_t)(sizeof(splashLines) / sizeof(splashLines[0]));
+
+/* Draws the splash line belonging to video row `y`, or a plain "~" when
+ * that row isn't part of the block. The block is centered both ways and
+ * skipped entirely on a terminal too short to hold it, where "~"
+ * everywhere is better than a half-drawn banner. */
+static void editorDrawSplashRow(struct abuf *ab, int32_t y, int32_t textcols) {
+    /* All-or-nothing: a block that doesn't fit is dropped rather than
+     * clipped, so a short terminal never shows a banner missing its
+     * last lines. Checking the height directly (not just top >= 0)
+     * matters because a negative top still leaves rows 0.. inside
+     * [top, top + count), which would draw a truncated block. */
+    if (splashLineCount > E.screenrows) {
+        abAppend(ab, "~", 1);
+        return;
+    }
+
+    int32_t top = (E.screenrows - splashLineCount) / 2;
+    if (y < top || y >= top + splashLineCount) {
+        abAppend(ab, "~", 1);
+        return;
+    }
+
+    const char *line = splashLines[y - top];
+    if (line == NULL) {
+        abAppend(ab, "~", 1);
+        return;
+    }
+
+    /* Center the block as a unit on its widest line, then center each
+     * line within that block. Centering every line on the full screen
+     * width instead would stagger the key rows, whose two columns only
+     * line up if they share one left edge. */
+    int32_t widest = 0;
+    for (int32_t i = 0; i < splashLineCount; i++) {
+        if (!splashLines[i]) continue;
+        int32_t w = (int32_t)strlen(splashLines[i]);
+        if (w > widest) widest = w;
+    }
+    if (widest > textcols) widest = textcols;
+
+    int32_t len = (int32_t)strlen(line);
+    if (len > textcols) len = textcols;
+    int32_t padding = (textcols - widest) / 2 + (widest - len) / 2;
+    if (padding) {
+        abAppend(ab, "~", 1);
+        padding--;
+    }
+    while (padding--) abAppend(ab, " ", 1);
+    abAppend(ab, line, len);
+}
+
 static void editorDrawRows(struct abuf *ab) {
     int32_t sel_y0 = 0, sel_x0 = 0, sel_y1 = 0, sel_x1 = 0;
     uint8_t has_sel = editorGetSelection(&sel_y0, &sel_x0, &sel_y1, &sel_x1);
@@ -2050,18 +2126,8 @@ static void editorDrawRows(struct abuf *ab) {
             editorDrawGutter(ab, gutter, filerow, 0);
 
             if (filerow >= E.numrows) {
-                if (E.numrows == 0 && y == E.screenrows / 3) {
-                    char welcome[80];
-                    int32_t welcomelen = snprintf(welcome, sizeof(welcome),
-                        "tinyedit -- version %s", TE_VERSION);
-                    if (welcomelen > textcols) welcomelen = textcols;
-                    int32_t padding = (textcols - welcomelen) / 2;
-                    if (padding) {
-                        abAppend(ab, "~", 1);
-                        padding--;
-                    }
-                    while (padding--) abAppend(ab, " ", 1);
-                    abAppend(ab, welcome, welcomelen);
+                if (E.numrows == 0) {
+                    editorDrawSplashRow(ab, y, textcols);
                 } else {
                     abAppend(ab, "~", 1);
                 }
@@ -2086,19 +2152,9 @@ static void editorDrawRows(struct abuf *ab) {
         int32_t filerow, seg;
 
         if (vy >= editorTotalVideoRows(wrapcols)) {
-            if (E.numrows == 0 && y == E.screenrows / 3) {
+            if (E.numrows == 0) {
                 editorDrawGutter(ab, gutter, 0, 1);
-                char welcome[80];
-                int32_t welcomelen = snprintf(welcome, sizeof(welcome),
-                    "tinyedit -- version %s", TE_VERSION);
-                if (welcomelen > textcols) welcomelen = textcols;
-                int32_t padding = (textcols - welcomelen) / 2;
-                if (padding) {
-                    abAppend(ab, "~", 1);
-                    padding--;
-                }
-                while (padding--) abAppend(ab, " ", 1);
-                abAppend(ab, welcome, welcomelen);
+                editorDrawSplashRow(ab, y, textcols);
             } else {
                 editorDrawGutter(ab, gutter, E.numrows, 0);
                 abAppend(ab, "~", 1);
