@@ -5,6 +5,7 @@ import fcntl
 import os
 import pathlib
 import pty
+import re
 import select
 import struct
 import subprocess
@@ -201,6 +202,149 @@ def test_ctrl_o_discards_then_creates_named_file(home):
         raise AssertionError("Ctrl-O did not create the named file on save")
 
 
+def test_invisible_colors(home):
+    """Literal punctuation must not inherit the space/tab marker color."""
+    case_home = pathlib.Path(home) / "invisible-colors"
+    case_home.mkdir()
+    target = case_home / "markers.c"
+    # Tabs and UTF-8 make source byte offsets differ from render offsets;
+    # the short wrap width also exercises segments starting mid-row.
+    target.write_text('"é\t.>$ .>$\t.>$ .>$ .>$"\n// .>$\n', encoding="utf-8")
+    for enabled, syntax in ((1, 1), (1, 0), (0, 1)):
+        (case_home / ".tinyeditrc").write_text(
+            f"show_invisibles = {enabled}\nsyntax_highlight = {syntax}\n"
+            "color_invisibles = red-light\ncolor_syntax_string = green-light\n"
+            "color_syntax_comment = blue-light\nsoft_wrap = 12\ntab_stop = 4\n",
+            encoding="utf-8",
+        )
+        process, master = spawn_editor([str(target)], case_home)
+        try:
+            output = read_available(master)
+            invisible = b"\x1b[91m"
+            reset = b"\x1b[m"
+            # Only three real spaces and two tabs in the string, plus
+            # one comment space, should receive the invisible color.
+            expected_dots, expected_tabs = (4, 2) if enabled else (0, 0)
+            assert output.count(invisible + b"." + reset) == expected_dots, (
+                "literal dots received invisible color, or space markers lost it"
+            )
+            assert output.count(invisible + b">" + reset) == expected_tabs, (
+                "literal greater-than signs received invisible color, or tab markers lost it"
+            )
+            assert output.count(invisible + b"$" + reset) == (2 if enabled else 0), (
+                "literal dollars received invisible color, or newline markers lost it"
+            )
+            if syntax:
+                for glyph in (b".", b">", b"$"):
+                    assert output.count(b"\x1b[92m" + glyph + reset) == 5, (
+                        f"string punctuation {glyph!r} lost its syntax color"
+                    )
+                    assert output.count(b"\x1b[94m" + glyph + reset) == 1, (
+                        f"comment punctuation {glyph!r} lost its syntax color"
+                    )
+        finally:
+            finish(process, master)
+
+
+def edit_setting(master, index, keys, save):
+    """Edit one F2 setting, exercising either save path or discard."""
+    os.write(master, b"\x1bOQ")  # F2
+    assert b"Settings" in read_until(master, b"Settings")
+    os.write(master, b"\x1b[B" * index + keys)
+    read_available(master, 0.2)
+    if save == "ctrl-s":
+        os.write(master, b"\x13")
+    else:
+        os.write(master, b"\x1b")
+        assert b"Save changes before leaving?" in read_until(
+            master, b"Save changes before leaving?"
+        )
+        os.write(master, b"n" if save == "discard" else b"y")
+    return read_available(master)
+
+
+def expect_rendered_rows(output, text, visible, tab_stop=4):
+    """Compare the actual last redraw, including uncolored stale markers."""
+    frame = output.rsplit(b"\x1b[?25l", 1)[-1]
+    plain = re.sub(rb"\x1b\[[0-?]*[ -/]*[@-~]", b"", frame)
+    expected = []
+    for line in text.splitlines():
+        rendered = ""
+        for char in line:
+            if char == "\t":
+                width = tab_stop - len(rendered) % tab_stop
+                rendered += (">" if visible else " ") + " " * (width - 1)
+            elif char == " " and visible:
+                rendered += "."
+            else:
+                rendered += char
+        expected.append((rendered + ("$" if visible else "")).encode())
+    actual = plain.split(b"\r\n")[:len(expected)]
+    assert actual == expected, f"stale row rendering: {actual!r}, expected {expected!r}"
+
+
+def test_settings_refresh_rows(home, save, initially_visible):
+    case_home = pathlib.Path(home) / f"refresh-{save}-{initially_visible}"
+    case_home.mkdir()
+    (case_home / ".tinyeditrc").write_text(
+        f"show_invisibles = {initially_visible}\nshow_line_numbers = 0\n"
+        "show_top_bar = 0\ninsert_spaces_for_tab = 0\ntab_stop = 4\n"
+        "color_syntax_string = green-light\n",
+        encoding="utf-8",
+    )
+    source = 'alpha beta\t.>$\nsecond\tline tail\n"third row"\n'
+    target = case_home / "refresh.c"
+    target.write_text(source, encoding="utf-8")
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        expect_rendered_rows(read_available(master), source, initially_visible)
+        os.write(master, b"X")  # snapshot under the original settings
+        expect_rendered_rows(read_available(master), "X" + source, initially_visible)
+
+        # Discard must preserve both the live settings and row rendering.
+        output = edit_setting(master, 14, b" ", "discard")
+        expect_rendered_rows(output, "X" + source, initially_visible)
+        output = edit_setting(master, 14, b" ", save)  # Show invisible characters
+        visible = not initially_visible
+        expect_rendered_rows(output, "X" + source, visible)
+        assert f"show_invisibles = {str(visible).lower()}" in (
+            case_home / ".tinyeditrc"
+        ).read_text()
+
+        os.write(master, b"\x1a")  # Undo after changing the settings
+        output = read_available(master)
+        expect_rendered_rows(output, source, visible)
+        assert b'\x1b[92mt\x1b[m' in output, "Undo lost third-row syntax color"
+        os.write(master, b"\x19")  # Redo must also use the live settings
+        expect_rendered_rows(read_available(master), "X" + source, visible)
+
+        output = edit_setting(master, 1, b"\r8\r", save)  # Tab width
+        expect_rendered_rows(output, "X" + source, visible, 8)
+        os.write(master, b"\x1a")
+        expect_rendered_rows(read_available(master), source, visible, 8)
+        os.write(master, b"\x19")
+        expect_rendered_rows(read_available(master), "X" + source, visible, 8)
+
+        output = edit_setting(master, 14, b" ", save)
+        expect_rendered_rows(output, "X" + source, initially_visible, 8)
+        os.write(master, b"\x1a")
+        expect_rendered_rows(read_available(master), source, initially_visible, 8)
+        os.write(master, b"\x19")
+        expect_rendered_rows(read_available(master), "X" + source, initially_visible, 8)
+
+        for syntax_enabled in (False, True):
+            output = edit_setting(master, 16, b" ", save)  # Syntax highlighting
+            expect_rendered_rows(output, "X" + source, initially_visible, 8)
+            assert (b'\x1b[92mt\x1b[m' in output) == syntax_enabled, (
+                "syntax setting did not refresh untouched rows"
+            )
+        os.write(master, b"\x13")
+        assert b"bytes written to disk" in read_until(master, b"bytes written to disk")
+        assert target.read_text() == "X" + source, "display markers changed the saved text"
+    finally:
+        finish(process, master)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="tinyedit-tests-") as tmp:
         home = pathlib.Path(tmp)
@@ -211,6 +355,10 @@ def main():
         test_regex_replace_all_newline_finishes(home)
         test_ctrl_w_saves_and_closes_only_file(home)
         test_ctrl_o_discards_then_creates_named_file(home)
+        test_invisible_colors(home)
+        for save in ("ctrl-s", "esc-y"):
+            for initially_visible in (0, 1):
+                test_settings_refresh_rows(home, save, initially_visible)
     print("pty tests: ok")
 
 

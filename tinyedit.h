@@ -120,9 +120,7 @@ typedef struct erow {
 
 typedef struct undoRow {
     int32_t size;
-    int32_t rsize;
     char *chars;
-    char *render;
 } undoRow;
 
 typedef struct undoSnapshot {

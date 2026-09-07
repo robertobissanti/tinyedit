@@ -687,7 +687,8 @@ static void editorRowDelChar(erow *row, int32_t at) {
 
 static void editorSetStatusMessage(const char *fmt, ...);
 
-/* Deep-copies the current buffer (rows + cursor) into a snapshot. */
+/* Deep-copies text and cursor only. Rendering depends on the live
+ * settings and must be rebuilt when a snapshot is restored. */
 static undoSnapshot editorMakeSnapshot(void) {
     undoSnapshot snap;
     snap.numrows = E.numrows;
@@ -696,11 +697,8 @@ static undoSnapshot editorMakeSnapshot(void) {
     snap.row = malloc(sizeof(undoRow) * (size_t)E.numrows);
     for (int32_t i = 0; i < E.numrows; i++) {
         snap.row[i].size = E.row[i].size;
-        snap.row[i].rsize = E.row[i].rsize;
         snap.row[i].chars = malloc((size_t)E.row[i].size + 1);
         memcpy(snap.row[i].chars, E.row[i].chars, (size_t)E.row[i].size + 1);
-        snap.row[i].render = malloc((size_t)E.row[i].rsize + 1);
-        memcpy(snap.row[i].render, E.row[i].render, (size_t)E.row[i].rsize + 1);
     }
     return snap;
 }
@@ -708,7 +706,6 @@ static undoSnapshot editorMakeSnapshot(void) {
 static void editorFreeSnapshot(undoSnapshot *snap) {
     for (int32_t i = 0; i < snap->numrows; i++) {
         free(snap->row[i].chars);
-        free(snap->row[i].render);
     }
     free(snap->row);
     snap->row = NULL;
@@ -759,11 +756,10 @@ static void editorRestoreSnapshot(undoSnapshot *snap) {
     E.row = malloc(sizeof(erow) * (size_t)E.numrows);
     for (int32_t i = 0; i < E.numrows; i++) {
         E.row[i].size = snap->row[i].size;
-        E.row[i].rsize = snap->row[i].rsize;
+        E.row[i].rsize = 0;
         E.row[i].chars = malloc((size_t)snap->row[i].size + 1);
         memcpy(E.row[i].chars, snap->row[i].chars, (size_t)snap->row[i].size + 1);
-        E.row[i].render = malloc((size_t)snap->row[i].rsize + 1);
-        memcpy(E.row[i].render, snap->row[i].render, (size_t)snap->row[i].rsize + 1);
+        E.row[i].render = NULL;
         E.row[i].hl = NULL;
         E.row[i].hl_open_comment = 0;
         E.row[i].hl_open_math = 0;
@@ -772,7 +768,9 @@ static void editorRestoreSnapshot(undoSnapshot *snap) {
         E.row[i].seg_count = 0;
         E.row[i].seg_wrapcols = -1;
     }
-    editorRehighlightFrom(0);
+    /* Rebuild every row with the current invisibles/tab settings and
+     * syntax highlighting, including rows beyond unchanged comment state. */
+    editorUpdateAllRows();
     E.cx = snap->cx;
     E.cy = snap->cy;
     if (E.cy > E.numrows) E.cy = E.numrows;
@@ -1780,7 +1778,7 @@ static void editorScroll(void) {
     }
 }
 
-/* Draws the render-column range [seg_from, seg_to) of `filerow` into
+/* Draws the render-byte range [seg_from, seg_to) of `filerow` into
  * `ab`, applying selection/search-match highlight -- the body shared
  * by both the unwrapped (one call per file row) and wrapped (one call
  * per visual segment) paths in editorDrawRows(). */
@@ -1803,6 +1801,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
         match_end = E.search_match_x + E.search_match_len;
     }
 
+    int32_t source_byte = 0, render_byte = 0;
     uint8_t in_sel = 0;
     for (int32_t j = 0; j < len; ) {
         int32_t filecol = seg_from + j;
@@ -1832,6 +1831,21 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
         uint8_t is_invisible_glyph = !should_sel && emitted_len == 1 &&
             (line[j] == INVISIBLE_SPACE_GLYPH || line[j] == INVISIBLE_TAB_GLYPH) &&
             S.show_invisibles;
+        if (is_invisible_glyph) {
+            /* Match the byte expansion in editorUpdateRow(), not display
+             * columns: tabs expand while UTF-8 bytes are copied unchanged.
+             * Keep the source position between candidates, including when
+             * this visual segment starts partway through a logical row. */
+            while (source_byte < row->size && render_byte < filecol) {
+                int32_t width = row->chars[source_byte] == '\t'
+                    ? S.tab_stop - render_byte % S.tab_stop : 1;
+                if (render_byte + width > filecol) break;
+                render_byte += width;
+                source_byte++;
+            }
+            is_invisible_glyph = source_byte < row->size && render_byte == filecol &&
+                (row->chars[source_byte] == ' ' || row->chars[source_byte] == '\t');
+        }
         if (is_invisible_glyph) {
             const char *inv_color = ansiColorCode(S.color_invisibles);
             abAppend(ab, inv_color, (int32_t)strlen(inv_color));
@@ -3227,6 +3241,28 @@ static uint8_t editorSettingsEditInt(struct editorSettings *edited, int32_t curs
     }
 }
 
+/* Both Ctrl-S and Esc -> Yes must apply the same live updates before
+ * saving. Changing only S leaves cached row rendering out of date. */
+static void editorSettingsSave(const struct editorSettings *edited) {
+    struct editorSettings previous = S;
+    S = *edited;
+    if (S.show_top_bar != previous.show_top_bar)
+        winsize_changed = 1;
+    if (S.tab_stop != previous.tab_stop ||
+        S.show_invisibles != previous.show_invisibles ||
+        S.syntax_highlight != previous.syntax_highlight)
+        editorUpdateAllRows();
+    if (S.mouse_enabled != previous.mouse_enabled) {
+        if (S.mouse_enabled) enableMouseReporting();
+        else disableMouseReporting();
+    }
+    if (settingsSave(&S)) {
+        editorSetStatusMessage("Settings saved to ~/.tinyeditrc");
+    } else {
+        editorSetStatusMessage("Could not write ~/.tinyeditrc");
+    }
+}
+
 static void editorSettingsScreen(void) {
     struct editorSettings edited = S;
     int32_t cursor = 0;
@@ -3293,32 +3329,9 @@ static void editorSettingsScreen(void) {
                 }
                 break;
 
-            case CTRL_KEY('s'): {
-                int32_t old_top_bar = S.show_top_bar;
-                int32_t old_tab_stop = S.tab_stop;
-                int32_t old_show_invisibles = S.show_invisibles;
-                int32_t old_mouse_enabled = S.mouse_enabled;
-                S = edited;
-                if (S.show_top_bar != old_top_bar)
-                    winsize_changed = 1; /* forces editorRefreshScreen() to recompute screenrows */
-                if (S.tab_stop != old_tab_stop || S.show_invisibles != old_show_invisibles)
-                    editorUpdateAllRows(); /* re-render existing rows with the new tab width/glyphs */
-                if (S.mouse_enabled != old_mouse_enabled) {
-                    /* Toggled live, not just at next startup -- flipping
-                     * this setting has an immediate, visible effect
-                     * (native terminal selection stops/starts working),
-                     * so it should take effect the moment Ctrl-S is
-                     * pressed here, same as show_top_bar/tab_stop above. */
-                    if (S.mouse_enabled) enableMouseReporting();
-                    else disableMouseReporting();
-                }
-                if (settingsSave(&S)) {
-                    editorSetStatusMessage("Settings saved to ~/.tinyeditrc");
-                } else {
-                    editorSetStatusMessage("Could not write ~/.tinyeditrc");
-                }
+            case CTRL_KEY('s'):
+                editorSettingsSave(&edited);
                 return;
-            }
 
             case CTRL_KEY('d'):
                 /* Resets only the local edited copy, same as any
@@ -3342,19 +3355,7 @@ static void editorSettingsScreen(void) {
 
                 int32_t confirm = editorReadKey();
                 if (confirm == 'y' || confirm == 'Y') {
-                    int32_t old_top_bar = S.show_top_bar;
-                    int32_t old_mouse_enabled = S.mouse_enabled;
-                    S = edited;
-                    if (S.show_top_bar != old_top_bar) winsize_changed = 1;
-                    if (S.mouse_enabled != old_mouse_enabled) {
-                        if (S.mouse_enabled) enableMouseReporting();
-                        else disableMouseReporting();
-                    }
-                    if (settingsSave(&S)) {
-                        editorSetStatusMessage("Settings saved to ~/.tinyeditrc");
-                    } else {
-                        editorSetStatusMessage("Could not write ~/.tinyeditrc");
-                    }
+                    editorSettingsSave(&edited);
                     return;
                 } else if (confirm == 'n' || confirm == 'N') {
                     return; /* discard edited, live settings (S) untouched */
