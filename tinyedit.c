@@ -2122,9 +2122,23 @@ static const char *editorFiletypeLabel(void) {
  * indicator. Kept separate from the bottom status bar, which shows
  * transient position/count info instead -- the top bar acts as a
  * persistent title that stays visible while scrolling. */
+/* Reverse-video (\x1b[7m) swaps whatever foreground/background is
+ * currently active -- with a configured color_background, that would
+ * swap it into the FOREGROUND of the bar text instead of leaving it
+ * as an actual background, mixing the two color systems in a way
+ * that made bar text unreadable (foreground ending up the same as
+ * the editor's background). The bars always reset to no background
+ * right before setting bar_color/reverse-video, so their look stays
+ * exactly what it was before color_background existed regardless of
+ * that setting; abAppendReset() below (after the bar) restores the
+ * editor's own background for the rows that follow. Skipped entirely
+ * when color_background is COLOR_TERMINAL_DEFAULT (off) so the byte
+ * stream is unchanged from before this setting existed in that,
+ * still-default, case. */
 static void editorDrawTopBar(struct abuf *ab) {
     if (!S.show_top_bar) return;
 
+    if (S.color_background != COLOR_TERMINAL_DEFAULT) abAppend(ab, "\x1b[49m", 5);
     const char *bar_color = ansiColorCode(S.color_statusbar);
     abAppend(ab, bar_color, (int32_t)strlen(bar_color));
     abAppend(ab, "\x1b[7m", 4);
@@ -2140,11 +2154,12 @@ static void editorDrawTopBar(struct abuf *ab) {
         abAppend(ab, " ", 1);
         len++;
     }
-    abAppend(ab, "\x1b[m", 3);
+    abAppendReset(ab);
     abAppend(ab, "\r\n", 2);
 }
 
 static void editorDrawStatusBar(struct abuf *ab) {
+    if (S.color_background != COLOR_TERMINAL_DEFAULT) abAppend(ab, "\x1b[49m", 5);
     const char *bar_color = ansiColorCode(S.color_statusbar);
     abAppend(ab, bar_color, (int32_t)strlen(bar_color));
     abAppend(ab, "\x1b[7m", 4);
@@ -2182,7 +2197,7 @@ static void editorDrawStatusBar(struct abuf *ab) {
             len++;
         }
     }
-    abAppend(ab, "\x1b[m", 3);
+    abAppendReset(ab);
     abAppend(ab, "\r\n", 2);
 }
 

@@ -456,7 +456,18 @@ const char *ansiColorCode(int32_t c) {
  * affects foreground on any terminal this project targets), so dim
  * variants reuse their base hue's normal (dark) background -- still a
  * distinct, correct color, just without a separate "dim background"
- * concept that doesn't exist to reuse. */
+ * concept that doesn't exist to reuse.
+ *
+ * gray-dark/gray-dim -> \x1b[40m is BLACK, not an actual gray -- same
+ * as ansiColorCode()'s COLOR_GRAY_DARK/_DIM, which are already plain
+ * black foreground (see settings.h's comment on enum settingColor:
+ * "gray" here names a position in the 8-hue ANSI palette, not a real
+ * gray). On a terminal whose own background is already black/dark
+ * (common), color_background = gray-dark/gray-dim will look like "no
+ * effect" for that reason -- intentional, kept consistent with the
+ * existing foreground scheme rather than special-cased into a real
+ * gray just for this one setting. Pick blue-dark/white-dark/etc. for a
+ * visibly distinct editor background instead. */
 const char *ansiBgColorCode(int32_t c) {
     switch (c) {
         case COLOR_GRAY_LIGHT:                        return "\x1b[100m";
