@@ -3016,6 +3016,27 @@ static int32_t editorSettingsDescriptorAt(const struct editorSettings *edited, i
     return -1;
 }
 
+/* Steps a SETTING_ENUM value by `delta` (+1/-1), wrapping at both ends.
+ * On color_background it skips the 8 "-dim" hues: the dim attribute is
+ * foreground-only, so as a background each renders identically to its
+ * "-dark" twin (see settingColorIsDim()) and offering both just makes
+ * the picker look broken -- you cycle, the swatch doesn't change. A
+ * -dim value already in ~/.tinyeditrc still loads and renders fine;
+ * stepping away from it lands on a non-dim one and can't come back. */
+static void editorSettingsCycleEnum(const struct settingDescriptor *d, int32_t *slot, int32_t delta) {
+    uint8_t skip_dim = strcmp(d->key, "color_background") == 0;
+    int32_t value = *slot;
+    /* Bounded by enum_count: even if every remaining value were dim,
+     * this stops after one full lap instead of spinning forever. */
+    for (int32_t i = 0; i < d->enum_count; i++) {
+        value += delta;
+        if (value < 0) value = d->enum_count - 1;
+        else if (value >= d->enum_count) value = 0;
+        if (!skip_dim || !settingColorIsDim(value)) break;
+    }
+    *slot = value;
+}
+
 /* `scroll_indicator` is '^' when this row is the topmost visible one
  * and there are more settings scrolled off above, 'v' when it's the
  * bottommost visible one and there are more below, or '\0' for no
@@ -3494,11 +3515,11 @@ static void editorSettingsScreen(void) {
              * it's simply a no-op there. */
             case ARROW_LEFT:
                 if (d->type == SETTING_ENUM)
-                    *slot = (*slot > 0) ? *slot - 1 : d->enum_count - 1;
+                    editorSettingsCycleEnum(d, slot, -1);
                 break;
             case ARROW_RIGHT:
                 if (d->type == SETTING_ENUM)
-                    *slot = (*slot + 1) % d->enum_count;
+                    editorSettingsCycleEnum(d, slot, +1);
                 break;
 
             case '\r':
@@ -3506,7 +3527,7 @@ static void editorSettingsScreen(void) {
                 if (d->type == SETTING_BOOL) {
                     *slot = !*slot;
                 } else if (d->type == SETTING_ENUM) {
-                    *slot = (*slot + 1) % d->enum_count;
+                    editorSettingsCycleEnum(d, slot, +1);
                 } else { /* SETTING_INT: inline numeric input, panel stays on screen */
                     int32_t v;
                     if (editorSettingsEditInt(&edited, cursor, scroll, d, &v))

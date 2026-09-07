@@ -497,6 +497,14 @@ const char *ansiBgColorCode(int32_t c) {
     }
 }
 
+/* The palette is 8 hues x 3 variants in light/dark/dim order (see enum
+ * settingColor), so the dim ones are exactly the indices below 24 whose
+ * position within their hue triplet is 2. COLOR_TERMINAL_DEFAULT (24)
+ * and anything out of range are not dim. */
+uint8_t settingColorIsDim(int32_t c) {
+    return c >= 0 && c < 24 && c % 3 == 2;
+}
+
 const char *settingColorName(int32_t c) {
     if (c >= 0 && c < SETTING_COLOR_COUNT) return colorNames[c];
     return "white-dark";

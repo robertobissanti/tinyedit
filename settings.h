@@ -256,6 +256,15 @@ const char *ansiColorCode(int32_t c);
  * an error case that needs a NULL check at every call site. */
 const char *ansiBgColorCode(int32_t c);
 
+/* Whether `c` is one of the 8 "-dim" variants. The dim attribute
+ * (\x1b[2m) applies to foreground only -- there is no faint background
+ * in base ANSI -- so ansiBgColorCode() renders every -dim hue
+ * identically to its -dark counterpart. Background pickers use this to
+ * skip those 8 values while cycling, since offering two names for the
+ * same visible color is just a trap for the user. Values already saved
+ * in ~/.tinyeditrc stay valid either way: they simply render as -dark. */
+uint8_t settingColorIsDim(int32_t c);
+
 /* Human-readable name for a settingColor (e.g. "gray"), used both when
  * writing the config file and in the F2 screen. */
 const char *settingColorName(int32_t c);
