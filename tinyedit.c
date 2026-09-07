@@ -343,11 +343,21 @@ static int32_t editorReadKey(void) {
                     if (read(STDIN_FILENO, &term, 1) != 1) return '\x1b';
                     uint8_t is_alt = (mod == '3');
                     uint8_t is_shift = (mod == '2');
+                    /* Modifier codes are a bitmask + 1: 5 = Ctrl,
+                     * 6 = Ctrl+Shift. */
+                    uint8_t is_ctrl = (mod == '5');
+                    uint8_t is_ctrl_shift = (mod == '6');
 
-                    if (seq[1] == '5' && term == '~')
+                    if (seq[1] == '5' && term == '~') {
+                        if (is_ctrl_shift) return SHIFT_DOC_HOME;
+                        if (is_ctrl) return DOC_HOME;
                         return is_shift ? SHIFT_PAGE_UP : PAGE_UP;
-                    if (seq[1] == '6' && term == '~')
+                    }
+                    if (seq[1] == '6' && term == '~') {
+                        if (is_ctrl_shift) return SHIFT_DOC_END;
+                        if (is_ctrl) return DOC_END;
                         return is_shift ? SHIFT_PAGE_DOWN : PAGE_DOWN;
+                    }
 
                     switch (term) {
                         case 'A': return is_shift ? SHIFT_ARROW_UP : ARROW_UP;
@@ -360,8 +370,14 @@ static int32_t editorReadKey(void) {
                             if (is_alt) return ALT_ARROW_LEFT;
                             if (is_shift) return SHIFT_ARROW_LEFT;
                             return ARROW_LEFT;
-                        case 'H': return is_shift ? SHIFT_HOME : HOME_KEY;
-                        case 'F': return is_shift ? SHIFT_END : END_KEY;
+                        case 'H':
+                            if (is_ctrl_shift) return SHIFT_DOC_HOME;
+                            if (is_ctrl) return DOC_HOME;
+                            return is_shift ? SHIFT_HOME : HOME_KEY;
+                        case 'F':
+                            if (is_ctrl_shift) return SHIFT_DOC_END;
+                            if (is_ctrl) return DOC_END;
+                            return is_shift ? SHIFT_END : END_KEY;
                     }
                     /* `term` didn't match a known final byte -- either
                      * because it's itself a further ';'-separated
@@ -3221,6 +3237,7 @@ static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected
 static const struct helpEntry helpEntries[] = {
     { NULL, "Movement" },
     { "Arrows, Home, End, PageUp/Down", "Move cursor" },
+    { "Ctrl-Home/End (or Ctrl-PageUp/Down)", "Jump to start/end of the file" },
     { "Alt+Left/Right (or Esc b / Esc f)", "Jump by word" },
     { "Mouse click (if enabled, see F2)", "Position cursor" },
     { "Mouse wheel (if enabled, see F2)", "Scroll view (cursor/selection unaffected)" },
@@ -3237,6 +3254,7 @@ static const struct helpEntry helpEntries[] = {
     { NULL, "Selection & clipboard" },
     { "Shift+Arrows, Shift+PageUp/Down", "Extend selection" },
     { "Shift+Home/End", "Extend selection to start/end of line" },
+    { "Shift+Ctrl+Home/End", "Extend selection to start/end of file" },
     { "Mouse drag (if enabled, see F2)", "Extend selection" },
     { "Ctrl-T", "Toggle selection mode (works on every terminal)" },
     { "Ctrl-A", "Select all" },
@@ -3981,7 +3999,7 @@ static void editorProcessKeypress(void) {
      * its Shift+ variant would. */
     uint8_t is_plain_motion = (c == ARROW_UP || c == ARROW_DOWN ||
         c == ARROW_LEFT || c == ARROW_RIGHT || c == PAGE_UP || c == PAGE_DOWN ||
-        c == HOME_KEY || c == END_KEY);
+        c == HOME_KEY || c == END_KEY || c == DOC_HOME || c == DOC_END);
 
     /* Tab/Shift+Tab keep the selection because with one active they
      * mean "indent/outdent these lines" (see editorIndentSelection())
@@ -3993,6 +4011,7 @@ static void editorProcessKeypress(void) {
         c != SHIFT_ARROW_LEFT && c != SHIFT_ARROW_RIGHT &&
         c != SHIFT_PAGE_UP && c != SHIFT_PAGE_DOWN &&
         c != SHIFT_HOME && c != SHIFT_END &&
+        c != SHIFT_DOC_HOME && c != SHIFT_DOC_END &&
         c != CTRL_KEY('a') && c != CTRL_KEY('c') &&
         c != CTRL_KEY('x') && c != CTRL_KEY('v') &&
         c != CTRL_KEY('t') && c != MOUSE_EVENT_KEY &&
@@ -4321,6 +4340,34 @@ static void editorProcessKeypress(void) {
                 editorSetStatusMessage("Selection mode off");
             }
             break;
+
+        case DOC_HOME:
+        case DOC_END:
+            if (!E.sel_pinned) E.sel_active = 0;
+            /* fall through, same as Home/End below */
+        case SHIFT_DOC_HOME:
+        case SHIFT_DOC_END: {
+            uint8_t to_start = (c == DOC_HOME || c == SHIFT_DOC_HOME);
+            uint8_t extending = (c == SHIFT_DOC_HOME || c == SHIFT_DOC_END || E.sel_pinned);
+
+            if (extending && !E.sel_active) {
+                E.sel_active = 1;
+                E.sel_anchor_x = E.cx;
+                E.sel_anchor_y = E.cy;
+            }
+
+            if (to_start) {
+                E.cy = 0;
+                E.cx = 0;
+            } else if (E.numrows > 0) {
+                E.cy = E.numrows - 1;
+                E.cx = E.row[E.numrows - 1].size;
+            }
+
+            if (extending && E.sel_anchor_x == E.cx && E.sel_anchor_y == E.cy)
+                E.sel_active = 0;
+            break;
+        }
 
         case HOME_KEY:
         case END_KEY:

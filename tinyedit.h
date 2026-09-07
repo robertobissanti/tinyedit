@@ -63,6 +63,14 @@ enum editorKey {
     SHIFT_PAGE_DOWN,
     SHIFT_HOME,
     SHIFT_END,
+    /* Start/end of the whole buffer, bound to both Ctrl+Home/Ctrl+End
+     * (the usual binding, which plenty of terminals never send) and
+     * Ctrl+PageUp/Ctrl+PageDown as a fallback that gets through more
+     * reliably. */
+    DOC_HOME,
+    DOC_END,
+    SHIFT_DOC_HOME,
+    SHIFT_DOC_END,
     /* Shift+Tab, sent as CSI Z ("backtab") by every terminal this
      * project targets. Only meaningful with a selection, where it
      * outdents the selected lines (see editorIndentSelection()). */
