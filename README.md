@@ -42,10 +42,10 @@ for real editing rather than just demonstrating how a terminal works.
 
 | Area | What you get |
 |---|---|
-| Editing | Familiar cursor movement, word jumps, selection, cut/copy/paste, automatic indentation, configurable pair closing, and an undo history of up to 2,000 steps (200 by default). |
+| Editing | Familiar cursor movement, word jumps, selection, cut/copy/paste, automatic indentation, block indent/outdent with Tab, configurable pair closing, and an undo history of up to 2,000 steps (200 by default). |
 | Files | Open or switch files without restarting tinyedit, start a named file before it exists, save atomically, and recover unsaved work from automatic backups after a crash. |
 | Search | Incremental literal or POSIX regular-expression search, match navigation, and interactive search and replace. |
-| Syntax highlighting | Built-in support for C/C++, Python, Shell, JavaScript/TypeScript, Markdown, HTML/XML, and CSS. Simple C-like languages can be added with a user configuration file. |
+| Syntax highlighting | Built-in support for C/C++, Python, Shell, JavaScript/TypeScript, Markdown, HTML/XML, and CSS, including function names. Simple C-like languages can be added with a user configuration file. |
 | UTF-8 | Cursor movement, deletion, display width, wrapping, and character counts understand combining marks, CJK text, and multi-code-point emoji. |
 | Long lines | Lines wrap at the terminal edge, preferably at word boundaries. Navigation follows the visible wrapped rows, without imposing a fixed line-length limit. |
 | Clipboard | Uses the native macOS clipboard or the available Wayland/X11 clipboard tool directly, without sending commands through a shell. |
@@ -86,12 +86,15 @@ Needs only a C99 compiler and a POSIX system (macOS or Linux).
 | Key | Action |
 |---|---|
 | Arrows, Home, End, PageUp/Down | Move cursor |
+| `Ctrl+Home` / `Ctrl+End` (or `Ctrl+PageUp` / `Ctrl+PageDown`) | Jump to the start/end of the file |
 | `Alt+←` / `Alt+→` (or `Esc b` / `Esc f`) | Jump by word |
-| `Shift+Arrows` / `Shift+PageUp` / `Shift+PageDown` | Extend/start text selection (doesn't work on macOS Terminal.app — use `Ctrl-T` instead) |
-| `Ctrl-T` | Toggle selection mode: while on, plain arrows and PageUp/PageDown extend the selection the way Shift would — works on every terminal, including Terminal.app |
+| `Shift+Arrows` / `Shift+PageUp` / `Shift+PageDown` / `Shift+Home` / `Shift+End` | Extend/start text selection (doesn't work on macOS Terminal.app — use `Ctrl-T` instead) |
+| `Ctrl-T` | Toggle selection mode: while on, plain arrows, PageUp/PageDown and Home/End extend the selection the way Shift would — works on every terminal, including Terminal.app |
 | Enter | New line (inherits the previous line's indentation if `auto_indent` is on) |
-| Tab | Indent (spaces or a literal tab, see `insert_spaces_for_tab`) |
-| `(` `{` `[` `"` `'` `` ` `` `$` | Auto-close the pair / skip over an existing closer / wrap the selection (if `auto_close_pairs` is on) |
+| Tab | Indent (spaces or a literal tab, see `insert_spaces_for_tab`); with a selection, indents every selected line one level |
+| `Shift+Tab` | Outdent the selected lines, or the current one when there's no selection |
+| `(` `{` `[` `"` `` ` `` `$` | Auto-close the pair / skip over an existing closer / wrap the selection (if `auto_close_pairs` is on) |
+| `'` | Same, but only when `auto_close_single_quote` is on (off by default, since apostrophes in prose are more common than pairs) |
 | Backspace / Delete | Delete a character (UTF-8 aware) |
 | `Ctrl-A` | Select all |
 | `Ctrl-C` / `Ctrl-X` / `Ctrl-V` | Copy / cut / paste (system clipboard; C/X need an active selection) |
@@ -102,6 +105,7 @@ Needs only a C99 compiler and a POSIX system (macOS or Linux).
 | `F3` | Info screen: version, author, and stats about the current file |
 | `F2` | Settings panel (Up/Down to navigate, Enter/Space to edit, Left/Right to cycle a multiple-choice value back/forward, `Ctrl-D` resets to defaults, `Ctrl-S` saves and exits, Esc exits — asks for confirmation if there are unsaved changes) |
 | `Ctrl-S` | Save (asks for a filename if none is set) |
+| `F4` (or `Ctrl-Shift-S` where the terminal sends it) | Save as: always asks for a filename, even when one is already set |
 | `Ctrl-O` | Open another file by entering its path; offers to save the current file first. A missing path becomes a new file on first save. |
 | `Ctrl-W` | Close the current file without quitting tinyedit; offers to save first and leaves an empty buffer. |
 | `Ctrl-Q` | Quit (if there are unsaved changes, asks y/n/Esc: save-and-quit / quit without saving / cancel) |
@@ -176,15 +180,27 @@ keeps the same indentation level without retyping it by hand. With
 `insert_spaces_for_tab` on (default), the Tab key inserts `tab_stop`
 spaces instead of a literal tab character.
 
+With an active selection, Tab indents every selected line one level and
+`Shift+Tab` outdents them; with no selection, `Shift+Tab` outdents the
+current line. Each press is a single undo step, and the selection stays
+put afterwards so the shortcut can be repeated. Outdent accepts
+whatever indentation the file already uses rather than only the flavor
+tinyedit would produce: a leading tab counts as one full level,
+otherwise up to `tab_stop` spaces are removed, stopping at the first
+non-space so a partially indented line only loses what it has.
+
 ### Automatic pair closing
 
-With `auto_close_pairs` on (default), typing `(`, `{`, `[`, `"`, `'`,
+With `auto_close_pairs` on (default), typing `(`, `{`, `[`, `"`,
 `` ` ``, or `$` inserts the matching closing character automatically
 with the cursor left in between; typing the closer by hand when the
 next character is already that closer skips over it instead of
 duplicating it (except for `` ` ``, see below); with an active text
 selection, typing an opening character wraps the selection in the
-pair instead of replacing it. Curly quotes (`«»`, `""`, `''`) behave
+pair instead of replacing it. The single quote `'` has its own switch,
+`auto_close_single_quote`, off by default: in prose an apostrophe
+(`don't`, `user's`) is far more common than a matching pair, so
+auto-closing it gets in the way in a manner `(` or `"` doesn't. Curly quotes (`«»`, `""`, `''`) behave
 the same way as the other pairs — even when composed via an OS
 compose sequence or pasted rather than typed directly, since none of
 them exist on a standard keyboard. `$$` (LaTeX display math, typing
@@ -221,6 +237,21 @@ files written by older versions (unsuffixed names, e.g. `color_gutter
 = cyan`) are recognized automatically on load and mapped to the
 corresponding `-light` variant (the one the old palette actually
 rendered), without losing the customization.
+
+Every color row in the `F2` panel shows a live swatch of its value next
+to the name, so you can see what you picked without leaving the panel —
+otherwise, with 24 names differing only by suffix, cycling through them
+tells you very little.
+
+`color_background` paints the whole editor area — rows, gutter, and the
+empty space below the text. It defaults to `terminal-default`, which
+emits no background escape at all and leaves the terminal's own
+background untouched. Its `-dim` variants are skipped while cycling:
+the dim attribute only applies to foreground text, so as a background
+each would be indistinguishable from its `-dark` twin. Note that
+`gray-dark`/`gray-dim` are plain black in this palette (the ANSI hue
+named "gray" is black at normal intensity), so they look like no
+background at all on a terminal whose own background is already dark.
 
 When the settings list doesn't fit the screen, a column on the left
 (like the line-number gutter) shows `^` on the first visible entry if
@@ -271,8 +302,11 @@ configurable color (`color_syntax_keyword`, `color_syntax_string`,
 `color_syntax_comment`, `color_syntax_number`,
 `color_syntax_preprocessor`, plus `color_syntax_emphasis_strong` for
 Markdown bold text, kept distinct from italic which uses
-`color_syntax_keyword`), same 24-color palette as the rest of the
-interface. Text with no class at all (identifiers, punctuation,
+`color_syntax_keyword`, and `color_syntax_function` for function
+names), same 24-color palette as the rest of the interface. Function
+names are recognized by the same heuristic other lightweight editors
+use — an identifier immediately followed by `(` — which covers both
+calls and definitions. Text with no class at all (identifiers, punctuation,
 whitespace) uses `color_syntax_normal`, defaulting to
 `terminal-default` — a 25th palette entry (not a real hue, only
 available for this setting) meaning "no color forced, terminal's own

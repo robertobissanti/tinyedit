@@ -1001,6 +1001,194 @@ partenza da cui il log sarà accurato in avanti.
     occorrenze, ciascuna di lunghezza diversa dal pattern originale)
     — "Replaced 3 occurrence(s)".
 
+- [x] **Save as esplicito (F4 / Ctrl-Shift-S)**
+  - _Inserito: 2026-09-07 · Completato: 2026-09-07_
+  - `Ctrl-S` chiedeva un nome solo per un buffer senza nome; non c'era
+    modo di salvare un file già nominato sotto un altro nome.
+    `editorSave()` diventa `editorSaveInternal(force_prompt)` con due
+    wrapper.
+  - **Tasto**: F4 (SS3 `ESC O S`, stesso schema di F1/F2/F3 già
+    verificati). Ctrl-Shift-S è indistinguibile da Ctrl-S su tty raw
+    (stesso problema già annotato per Ctrl-Shift-Z), quindi vale solo
+    dove il terminale manda una sequenza CSI-u distinta.
+  - **Sequenza reale rilevata col logger di tasti sul terminale
+    dell'utente**: `ESC[115;6u` — codepoint 115 = `s` **minuscola**,
+    non 83 (`S`): lo shift sta nel campo modificatore (6 = Ctrl+Shift),
+    non nella lettera. Il primo tentativo assumeva 83 e non funzionava.
+  - **Bug nel parser CSI trovato di conseguenza**: un codepoint a 3
+    cifre che inizia per `1` (come 115) non corrispondeva a nessun
+    ramo esistente (`~`, `20`, `13`, `;`), quindi i primi due byte
+    venivano scartati silenziosamente e i restanti (`5;6u`) finivano
+    nel buffer come testo letterale — bug osservato dall'utente.
+    Aggiunto un ramo CSI-u generico per prefissi di codepoint di 3+
+    cifre.
+
+- [x] **Auto-chiusura apice singolo opzionale (default off)**
+  - _Inserito: 2026-09-07 · Completato: 2026-09-07_
+  - Nuovo setting `auto_close_single_quote` separato da
+    `auto_close_pairs`: in prosa l'apostrofo (`don't`, `user's`) è
+    molto più frequente di una coppia, quindi chiuderlo
+    automaticamente disturba come non fa `(` o `"`.
+  - Implementato in `editorAutoCloseFor()`, che restituisce `NULL` per
+    `'` quando il setting è off — i chiamanti ricadono sull'inserimento
+    semplice come se la coppia non fosse in tabella. Lo skip-over
+    simmetrico passa dallo stesso punto, quindi non serve altro.
+
+- [x] **Tipi interi C/C++ aggiuntivi nell'evidenziazione**
+  - _Inserito: 2026-09-07 · Completato: 2026-09-07_
+  - Aggiunti `uint`, `intptr_t`, `uintptr_t`, `intmax_t`, `uintmax_t`,
+    `ptrdiff_t`, `wchar_t` a `cKeywords`/`cppKeywords`.
+
+- [x] **Evidenziazione dei nomi di funzione**
+  - _Inserito: 2026-09-07 · Completato: 2026-09-07_
+  - Nuova classe `HL_FUNCTION` + setting `color_syntax_function`
+    (default `yellow-light`).
+  - **Euristica**: identificatore seguito immediatamente da `(`
+    (saltando spazi/tab), la stessa di vim/nano. Non distingue
+    chiamate da definizioni — non c'è un vero parser — ed è il
+    comportamento atteso.
+  - **Opt-in per lingua** (`highlight_function_calls` in
+    `struct syntaxLang`, chiave omonima nei `.conf` utente): attivo per
+    C/C++/Python/Shell/JS-TS built-in, spento di default per le lingue
+    definite dall'utente, dove `nome(` potrebbe non indicare una
+    funzione.
+  - **Limite noto**: in shell una chiamata senza parentesi (`main` da
+    solo su una riga) non viene evidenziata. Intrinseco all'euristica,
+    accettato.
+
+- [x] **Colore di sfondo dell'editor (`color_background`)**
+  - _Inserito: 2026-09-07 · Completato: 2026-09-07_
+  - Default `terminal-default`: nessuna sequenza emessa, output
+    identico byte-per-byte a prima che il setting esistesse
+    (verificato).
+  - Nuova `ansiBgColorCode()` (codici 40-47/100-107), gemella di
+    `ansiColorCode()`.
+  - **Problema centrale**: `editorDrawRowSegment()` emette un reset
+    `\x1b[m` per *ogni* carattere colorato, che azzera anche lo sfondo.
+    Risolto con `abAppendReset()`, che resetta e poi riapplica lo
+    sfondo attivo; sostituisce i `\x1b[m` letterali nel percorso di
+    disegno delle righe.
+  - **Bug segnalati dall'utente e corretti**: (1) le barre superiore e
+    di stato usano il video inverso, che scambiava lo sfondo
+    dell'editor nel *foreground* del testo rendendolo illeggibile —
+    ora resettano lo sfondo prima del proprio colore e lo ripristinano
+    dopo; (2) il numero di riga 1 nel gutter non era colorato, stessa
+    causa (le barre resettavano con un `\x1b[m` nudo, perdendo lo
+    sfondo per tutte le righe sotto).
+  - **`-dim` non esiste per lo sfondo**: l'attributo faint vale solo
+    per il testo, quindi ogni `-dim` renderebbe identico al suo
+    `-dark`. Le 8 voci `-dim` vengono saltate ciclando
+    `color_background` (`settingColorIsDim()`); un valore `-dim` già
+    salvato in `~/.tinyeditrc` resta valido e viene reso come `-dark`.
+  - **Nota sulla palette**: `gray-dark`/`gray-dim` sono nero puro
+    (`\x1b[40m`) — nella palette ANSI la tinta chiamata "gray" è nero a
+    intensità normale — quindi sembrano "non fare nulla" su un
+    terminale con sfondo già scuro. Non è un bug, coerente con
+    `ansiColorCode()`. Un grigio scuro tipo `#222222` **non è
+    ottenibile** con la palette a 16 colori: servirebbe 256-colori o
+    truecolor. **DA DECIDERE** se introdurli.
+
+- [x] **Anteprima colore nel pannello F2**
+  - _Inserito: 2026-09-07 · Completato: 2026-09-07_
+  - Ogni riga colore mostra un campione dal vivo accanto al nome:
+    `color_background` come blocco di sfondo, le altre come barra
+    `███` colorata.
+  - **Motivo**: con 24 nomi che differiscono solo per il suffisso,
+    ciclare i valori non diceva nulla su cosa si stesse scegliendo.
+    L'utente ha segnalato "blue-dark uguale a blue-light" quando in
+    realtà ciclando in avanti da `blue-dark` si passa a `blue-dim` e
+    poi a `green-light`, saltando `blue-light` (che *precede* `dark`
+    nell'ordine). Il campione rende evidente cosa è selezionato.
+  - Disegnato fuori dalla stringa formattata, così gli escape non
+    contano nella larghezza dei campi.
+
+- [x] **Indentazione a blocco: Tab / Shift+Tab su selezione**
+  - _Inserito: 2026-09-07 · Completato: 2026-09-07_
+  - Con selezione: Tab indenta tutte le righe selezionate di un
+    livello, Shift+Tab le riduce. Senza selezione, Shift+Tab riduce la
+    riga corrente (Tab resta invariato). Spazi o tab secondo
+    `insert_spaces_for_tab`. Un passo di undo per pressione.
+  - Decodifica di Shift+Tab come CSI Z ("backtab").
+  - **L'outdent accetta l'indentazione già presente nel file**, non
+    solo quella che tinyedit produrrebbe: un tab iniziale vale un
+    livello intero, altrimenti si tolgono fino a `tab_stop` spazi
+    fermandosi al primo non-spazio.
+  - **Ritenzione della selezione** (segnalata dall'utente come il
+    problema principale): la selezione va ripristinata sulle stesse
+    righe dopo l'operazione, altrimenti la scorciatoia non è
+    ripetibile. Una colonna a 0 resta 0 invece di essere spostata dal
+    delta, altrimenti l'evidenziazione sconfinava su righe mai
+    selezionate (il "blocco giallo nel vuoto" degli screenshot).
+    Ancora e cursore mantengono i ruoli originali, per non invertire la
+    direzione di eventuali Shift+Freccia successivi.
+  - Una riga toccata dalla selezione solo alla colonna 0 non è
+    realmente coperta (nulla di essa è evidenziato) e non viene
+    spostata — convenzione di ogni editor con indentazione a blocco.
+
+- [x] **Ctrl-S non azzera più la selezione**
+  - _Inserito: 2026-09-07 · Completato: 2026-09-07_
+  - Salvare a metà lavoro faceva sparire la selezione, quindi lo
+    Shift+Tab successivo non faceva nulla — sequenza
+    tab+stab+stab+stab segnalata dall'utente in cui solo il primo
+    tasto aveva effetto.
+
+- [x] **Home/End estendono la selezione invece di azzerarla**
+  - _Inserito: 2026-09-07 · Completato: 2026-09-07_
+  - In modalità Ctrl-T ogni altro tasto di movimento estende la
+    selezione, ma Home/End la cancellavano: selezionare righe e premere
+    End per arrivare a fine riga la buttava via (bug preesistente,
+    emerso testando l'indentazione a blocco).
+  - Decodificati anche Shift+Home / Shift+End (CSI `1;2H`/`1;2F`): il
+    parser leggeva il modificatore ma lo scartava.
+
+- [x] **Inizio/fine documento (Ctrl+Home / Ctrl+End)**
+  - _Inserito: 2026-09-07 · Completato: 2026-09-07_
+  - Non esisteva alcun modo di saltare in cima o in fondo al buffer:
+    Home/End coprono solo la riga, `Ctrl-A` è già "seleziona tutto".
+  - **Riserva**: Ctrl+PageUp / Ctrl+PageDown, legati alle stesse
+    azioni. Ctrl+Home/End è la combinazione familiare ma molti
+    terminali non la mandano; verificato col logger che sul terminale
+    dell'utente Ctrl+Alt+`<`/`>` non emette **alcun** byte (intercettata
+    a monte), quindi scartata.
+  - Con Shift estendono la selezione; in modalità Ctrl-T lo fanno anche
+    senza.
+
+- [x] **Niente richiesta di salvataggio se il buffer coincide col disco**
+  - _Inserito: 2026-09-07 · Completato: 2026-09-07_
+  - `E.dirty` passa solo da 0 a 1: annullare tutte le modifiche con
+    Ctrl-Z, o cancellare e riscrivere lo stesso testo, lasciava
+    comunque la richiesta di salvare un file identico a quello su
+    disco.
+  - **Scelta**: confronto byte-per-byte col file, eseguito **una sola
+    volta** all'uscita dal documento (`editorDiffersFromDisk()` in
+    `editorConfirmDocumentChange()`), non un hash mantenuto ad ogni
+    tasto — durante la digitazione non costa nulla. Copre anche casi
+    che un contatore sulla pila di undo non coprirebbe (riscrittura
+    manuale identica).
+  - Errore di I/O o buffer senza nome contano come "diverso": se il
+    file non è leggibile l'ipotesi prudente è che ci sia qualcosa da
+    perdere.
+  - **Caso in cui chiede comunque, correttamente**: file salvato senza
+    newline finale — tinyedit ne aggiunge sempre uno, quindi il buffer
+    è davvero diverso dal disco.
+
+- [x] **Splash del buffer vuoto in stile vim**
+  - _Inserito: 2026-09-07 · Completato: 2026-09-07_
+  - Da una sola riga centrata con la versione a un blocco: cos'è il
+    programma, versione/autore/licenza, i tasti essenziali su due
+    colonne, e un rimando a F3.
+  - Blocco centrato come unità sulla riga più larga, e ogni riga
+    centrata dentro il blocco: centrare ogni riga sull'intera larghezza
+    dello schermo sfalsava le colonne dei tasti. Le righe dei tasti
+    sono riempite a larghezza comune per lo stesso motivo.
+  - **Tutto-o-niente**: sotto le 15 righe di terminale il blocco
+    sparisce invece di essere troncato. Il controllo verifica
+    l'altezza direttamente e non solo `top < 0`, perché un `top`
+    negativo lascia comunque le prime righe dentro l'intervallo del
+    blocco, disegnandolo mutilato (bug osservato in test a 14 righe).
+  - Unificate le due copie del codice di centratura nei percorsi di
+    disegno con e senza wrap.
+
 ## Da fare
 
 - [x] **Bug: testo digitato nel prompt di ricerca invisibile su schermi stretti**

@@ -290,8 +290,24 @@ def test_eol_after_trailing_tab(home):
         finish(process, master)
 
 
-def edit_setting(master, index, keys, save):
+def setting_index(key):
+    """Row index of a setting in the F2 panel, read from settings.c.
+
+    The panel is driven by the descriptor table, so its order is that
+    table's order. Looking the row up by key keeps these tests working
+    when a new setting is inserted above it -- hardcoded indices
+    silently start editing the wrong row instead.
+    """
+    source = (ROOT / "settings.c").read_text(encoding="utf-8")
+    table = source.split("settingDescriptors[] = {", 1)[1].split("\n};", 1)[0]
+    keys = re.findall(r'\{\s*"([^"]+)"', table)
+    assert key in keys, f"setting {key!r} not found in settings.c"
+    return keys.index(key)
+
+
+def edit_setting(master, key, keys, save):
     """Edit one F2 setting, exercising either save path or discard."""
+    index = setting_index(key)
     os.write(master, b"\x1bOQ")  # F2
     assert b"Settings" in read_until(master, b"Settings")
     os.write(master, b"\x1b[B" * index + keys)
@@ -348,9 +364,9 @@ def test_settings_refresh_rows(home, save, initially_visible):
         expect_rendered_rows(read_available(master), "X" + source, initially_visible)
 
         # Discard must preserve both the live settings and row rendering.
-        output = edit_setting(master, 15, b" ", "discard")
+        output = edit_setting(master, "show_invisibles", b" ", "discard")
         expect_rendered_rows(output, "X" + source, initially_visible)
-        output = edit_setting(master, 15, b" ", save)  # Show invisible characters
+        output = edit_setting(master, "show_invisibles", b" ", save)
         visible = not initially_visible
         expect_rendered_rows(output, "X" + source, visible)
         assert f"show_invisibles = {str(visible).lower()}" in (
@@ -364,14 +380,14 @@ def test_settings_refresh_rows(home, save, initially_visible):
         os.write(master, b"\x19")  # Redo must also use the live settings
         expect_rendered_rows(read_available(master), "X" + source, visible)
 
-        output = edit_setting(master, 1, b"\r8\r", save)  # Tab width
+        output = edit_setting(master, "tab_stop", b"\r8\r", save)
         expect_rendered_rows(output, "X" + source, visible, 8)
         os.write(master, b"\x1a")
         expect_rendered_rows(read_available(master), source, visible, 8)
         os.write(master, b"\x19")
         expect_rendered_rows(read_available(master), "X" + source, visible, 8)
 
-        output = edit_setting(master, 15, b" ", save)
+        output = edit_setting(master, "show_invisibles", b" ", save)
         expect_rendered_rows(output, "X" + source, initially_visible, 8)
         os.write(master, b"\x1a")
         expect_rendered_rows(read_available(master), source, initially_visible, 8)
@@ -379,7 +395,7 @@ def test_settings_refresh_rows(home, save, initially_visible):
         expect_rendered_rows(read_available(master), "X" + source, initially_visible, 8)
 
         for syntax_enabled in (False, True):
-            output = edit_setting(master, 17, b" ", save)  # Syntax highlighting
+            output = edit_setting(master, "syntax_highlight", b" ", save)
             expect_rendered_rows(output, "X" + source, initially_visible, 8)
             assert (b'\x1b[92mt\x1b[m' in output) == syntax_enabled, (
                 "syntax setting did not refresh untouched rows"
@@ -389,6 +405,89 @@ def test_settings_refresh_rows(home, save, initially_visible):
         assert target.read_text() == "X" + source, "display markers changed the saved text"
     finally:
         finish(process, master)
+
+
+def test_block_indent(home):
+    """Tab/Shift+Tab shift the selected lines and keep the selection."""
+    case_home = pathlib.Path(home) / "block-indent"
+    case_home.mkdir()
+    target = case_home / "indent.txt"
+    (case_home / ".tinyeditrc").write_text(
+        "insert_spaces_for_tab = true\ntab_stop = 4\nbackup_interval = 0\n",
+        encoding="utf-8",
+    )
+
+    def run(initial, keys):
+        target.write_text(initial, encoding="utf-8")
+        process, master = spawn_editor([str(target)], case_home)
+        try:
+            read_available(master)
+            for key in keys:
+                os.write(master, key)
+                read_available(master, 0.2)
+            os.write(master, b"\x13")  # Ctrl-S
+            read_until(master, b"bytes written to disk")
+            return target.read_text(encoding="utf-8")
+        finally:
+            finish(process, master)
+
+    select_two = [b"\x14", b"\x1b[B", b"\x1b[C"]  # Ctrl-T, Down, Right
+
+    got = run("aaa\nbbb\nccc\n", select_two + [b"\t"])
+    assert got == "    aaa\n    bbb\nccc\n", f"block indent: {got!r}"
+
+    # Repeatable: the selection has to survive each press.
+    got = run("aaa\nbbb\nccc\n", select_two + [b"\t", b"\t"])
+    assert got == "        aaa\n        bbb\nccc\n", f"repeated indent: {got!r}"
+
+    # ...including across a save, which used to clear the selection.
+    got = run("aaa\nbbb\nccc\n", select_two + [b"\t", b"\x13", b"\x1b[Z"])
+    assert got == "aaa\nbbb\nccc\n", f"outdent after save: {got!r}"
+
+    # Outdent stops at column 0 instead of eating the text.
+    got = run("  aaa\n  bbb\n", select_two + [b"\x1b[Z", b"\x1b[Z"])
+    assert got == "aaa\nbbb\n", f"outdent floor: {got!r}"
+
+    # A tab counts as one whole level whatever tab_stop says.
+    got = run("\taaa\n\tbbb\n", select_two + [b"\x1b[Z"])
+    assert got == "aaa\nbbb\n", f"outdent of a literal tab: {got!r}"
+
+    # With no selection Shift+Tab outdents just the cursor's line.
+    got = run("    aaa\n    bbb\n", [b"\x1b[B", b"\x1b[Z"])
+    assert got == "    aaa\nbbb\n", f"outdent without selection: {got!r}"
+
+
+def test_no_save_prompt_when_undone(home):
+    """Undoing every edit must leave the file clean, not merely 'dirty'."""
+    case_home = pathlib.Path(home) / "undo-clean"
+    case_home.mkdir()
+    target = case_home / "undo.txt"
+    (case_home / ".tinyeditrc").write_text("backup_interval = 0\n", encoding="utf-8")
+
+    def quits_without_prompt(keys):
+        target.write_text("aaa\nbbb\n", encoding="utf-8")
+        process, master = spawn_editor([str(target)], case_home)
+        try:
+            read_available(master)
+            for key in keys:
+                os.write(master, key)
+                read_available(master, 0.2)
+            os.write(master, b"\x11")  # Ctrl-Q
+            return b"Save changes before" not in read_available(master, 0.5)
+        finally:
+            # Answering the prompt only applies when there was one; when
+            # the editor quit on its own the pty is already gone.
+            try:
+                os.write(master, b"n")
+            except OSError:
+                pass
+            finish(process, master)
+
+    assert quits_without_prompt([]), "clean file asked to save"
+    assert quits_without_prompt([b"x", b"\x1a"]), "edit+undo still asked to save"
+    assert quits_without_prompt([b"x", b"\x7f"]), "retyped-identical still asked to save"
+    assert not quits_without_prompt([b"x"]), "real edit did not ask to save"
+    assert not quits_without_prompt([b"x", b"\x1a", b"\x19"]), "redo did not ask to save"
 
 
 def main():
@@ -404,6 +503,8 @@ def main():
         test_invisible_colors(home)
         test_selection_across_tab(home)
         test_eol_after_trailing_tab(home)
+        test_block_indent(home)
+        test_no_save_prompt_when_undone(home)
         for save in ("ctrl-s", "f2", "esc-y"):
             for initially_visible in (0, 1):
                 test_settings_refresh_rows(home, save, initially_visible)

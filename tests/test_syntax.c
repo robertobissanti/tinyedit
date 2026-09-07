@@ -55,9 +55,33 @@ int main(void) {
     initRow(&row, "int main(void){ return 1; }");
     highlight(&row, "testC.c", 0, 0);
     expectClass(&row, 0, HL_KEYWORD, "testC.c int keyword");
-    expectClass(&row, 4, HL_NORMAL, "testC.c identifier remains normal");
+    expectClass(&row, 4, HL_FUNCTION, "testC.c identifier before '(' is a function");
     expectClass(&row, 10, HL_KEYWORD, "testC.c void keyword");
     expectClass(&row, 18, HL_KEYWORD, "testC.c return keyword");
+    freeRow(&row);
+
+    /* Function names are an identifier immediately followed by '(' --
+     * anything else stays unhighlighted, and a keyword before '(' is
+     * still a keyword (if/while/sizeof must not read as calls). */
+    initRow(&row, "int x = add(a, b);");
+    highlight(&row, "demo.c", 0, 0);
+    expectClass(&row, 8, HL_FUNCTION, "called function name");
+    expectClass(&row, 12, HL_NORMAL, "argument stays normal");
+    freeRow(&row);
+
+    initRow(&row, "value = other;");
+    highlight(&row, "demo.c", 0, 0);
+    expectClass(&row, 0, HL_NORMAL, "identifier with no '(' stays normal");
+    freeRow(&row);
+
+    initRow(&row, "if (cond) { }");
+    highlight(&row, "demo.c", 0, 0);
+    expectClass(&row, 0, HL_KEYWORD, "keyword before '(' stays a keyword");
+    freeRow(&row);
+
+    initRow(&row, "spaced  (x);");
+    highlight(&row, "demo.c", 0, 0);
+    expectClass(&row, 0, HL_FUNCTION, "spaces before '(' still a function");
     freeRow(&row);
 
     initRow(&row, "/* open");
