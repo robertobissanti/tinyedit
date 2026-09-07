@@ -61,6 +61,10 @@ enum editorKey {
     SHIFT_ARROW_DOWN,
     SHIFT_PAGE_UP,
     SHIFT_PAGE_DOWN,
+    /* Shift+Tab, sent as CSI Z ("backtab") by every terminal this
+     * project targets. Only meaningful with a selection, where it
+     * outdents the selected lines (see editorIndentSelection()). */
+    SHIFT_TAB,
     F1_KEY,
     F2_KEY,
     F3_KEY,
@@ -68,7 +72,8 @@ enum editorKey {
     /* Save As, bound to F4 (see editorReadKey()'s SS3 handling) and,
      * where the terminal actually sends it as a distinct sequence
      * rather than the same byte as plain Ctrl-S, to Ctrl-Shift-S via
-     * CSI-u (ESC[83;<mod>u, 83 = 'S'). */
+     * CSI-u (ESC[115;6u -- 115 is 's', lowercase: the shift is
+     * reported in the modifier field, not by shifting the codepoint). */
     SAVE_AS_KEY,
     /* Bracketed paste start (ESC[200~, see editorReadKey()) -- signals
      * the caller to switch to editorReadPastedText() instead of

@@ -390,6 +390,7 @@ static int32_t editorReadKey(void) {
                     case 'D': return ARROW_LEFT;
                     case 'H': return HOME_KEY;
                     case 'F': return END_KEY;
+                    case 'Z': return SHIFT_TAB; /* CSI Z, "backtab" */
                 }
                 /* seq[1] == '<': SGR mouse report, ESC[<Cb;Cx;Cy(M|m)
                  * -- decode it into the mouseEvent* globals rather than
@@ -2538,6 +2539,107 @@ static void editorInsertText(const char *text, size_t len) {
     }
 }
 
+/* Removes up to one indent level's worth of leading whitespace from
+ * `row`, returning how many bytes went away. Mirrors what one indent
+ * step inserts, but tolerantly: a single leading tab counts as a whole
+ * level regardless of tab_stop, and otherwise up to tab_stop spaces are
+ * removed, stopping early at the first non-space so a partially
+ * indented line loses only what it actually has. Deliberately handles
+ * both tabs and spaces whatever insert_spaces_for_tab says -- outdent
+ * has to cope with whatever indentation the file already contains, not
+ * just the flavor this editor would produce. */
+static int32_t editorRowOutdent(erow *row) {
+    if (row->size > 0 && row->chars[0] == '\t') {
+        editorRowDelChar(row, 0);
+        return 1;
+    }
+    int32_t removed = 0;
+    while (removed < S.tab_stop && row->size > 0 && row->chars[0] == ' ') {
+        editorRowDelChar(row, 0);
+        removed++;
+    }
+    return removed;
+}
+
+/* Shifts every line touched by the selection one indent level right
+ * (`outdent` false) or left (true), as one undo step, keeping the
+ * selection over the same lines afterward so the shortcut can be
+ * repeated. Blank lines are skipped when indenting -- trailing
+ * whitespace on an otherwise empty line is noise, and no editor that
+ * does block indent adds it. */
+static void editorIndentSelection(uint8_t outdent) {
+    int32_t sel_y0, sel_x0, sel_y1, sel_x1;
+    if (!editorGetSelection(&sel_y0, &sel_x0, &sel_y1, &sel_x1)) return;
+
+    /* Which lines get shifted. A selection ending at column 0 was
+     * dragged onto the next line without covering any of it, so that
+     * line is left alone (the convention in every editor with block
+     * indent). This narrowing applies to the edit ONLY -- the selection
+     * itself must still be restored across its original lines below, or
+     * the excluded line would silently drop out of it on every press. */
+    int32_t first = sel_y0;
+    int32_t last = (sel_y1 > sel_y0 && sel_x1 == 0) ? sel_y1 - 1 : sel_y1;
+
+    editorPushUndo(EDIT_OTHER);
+
+    /* Per-line shift, so each selection endpoint can be moved by what
+     * happened to ITS line: with outdent the two lines can lose
+     * different amounts (or nothing at all). */
+    int32_t delta_y0 = 0, delta_y1 = 0;
+    for (int32_t y = first; y <= last; y++) {
+        erow *row = &E.row[y];
+        int32_t delta = 0;
+
+        if (outdent) {
+            delta = -editorRowOutdent(row);
+        } else if (row->size > 0) {
+            if (S.insert_spaces_for_tab) {
+                for (int32_t i = 0; i < S.tab_stop; i++) editorRowInsertChar(row, 0, ' ');
+                delta = S.tab_stop;
+            } else {
+                editorRowInsertChar(row, 0, '\t');
+                delta = 1;
+            }
+        }
+
+        if (y == sel_y0) delta_y0 = delta;
+        if (y == sel_y1) delta_y1 = delta;
+    }
+
+    /* Restore the selection over the same lines it covered before, with
+     * each end nudged by its own line's shift, so the shortcut can be
+     * pressed repeatedly. A column of 0 stays 0: it means "the very
+     * start of this line", which is still the start after the line
+     * moved -- adding the delta there would push the selection into
+     * text it never covered (and, on the excluded last line, make it
+     * spill onto a line the user never selected). Otherwise clamp into
+     * the line, since an endpoint that sat inside removed indentation
+     * has nowhere to land but the new start of text. Anchor and cursor
+     * keep their original roles rather than being normalized to
+     * start/end -- E.sel_anchor_* is where the user began selecting,
+     * and swapping it would flip the direction of any further
+     * Shift+Arrow. */
+    if (sel_x0 > 0) sel_x0 += delta_y0;
+    if (sel_x1 > 0) sel_x1 += delta_y1;
+    if (sel_x0 < 0) sel_x0 = 0;
+    if (sel_x1 < 0) sel_x1 = 0;
+    if (sel_x0 > E.row[sel_y0].size) sel_x0 = E.row[sel_y0].size;
+    if (sel_x1 > E.row[sel_y1].size) sel_x1 = E.row[sel_y1].size;
+
+    uint8_t cursor_at_end = (E.cy > E.sel_anchor_y) ||
+        (E.cy == E.sel_anchor_y && E.cx >= E.sel_anchor_x);
+
+    E.sel_active = 1;
+    if (cursor_at_end) {
+        E.sel_anchor_y = sel_y0; E.sel_anchor_x = sel_x0;
+        E.cy = sel_y1; E.cx = sel_x1;
+    } else {
+        E.sel_anchor_y = sel_y1; E.sel_anchor_x = sel_x1;
+        E.cy = sel_y0; E.cx = sel_x0;
+    }
+    E.dirty = 1;
+}
+
 /* ---- search / replace ------------------------------------------------------- */
 
 static void editorFindAndReplace(const char *query);
@@ -3125,6 +3227,8 @@ static const struct helpEntry helpEntries[] = {
     { NULL, "Editing" },
     { "Enter", "New line (auto-indents if enabled)" },
     { "Tab", "Indent (spaces or literal tab, see F2)" },
+    { "Tab (with selection)", "Indent every selected line one level" },
+    { "Shift-Tab", "Outdent selected lines, or the current one" },
     { "( { [ \" ` $", "Auto-close pair / skip over / wrap selection" },
     { "'", "Same, only if auto-close single quote is on (F2, off by default)" },
     { "Backspace / Delete", "Delete character (UTF-8 aware)" },
@@ -3874,12 +3978,20 @@ static void editorProcessKeypress(void) {
     uint8_t is_plain_arrow = (c == ARROW_UP || c == ARROW_DOWN ||
         c == ARROW_LEFT || c == ARROW_RIGHT || c == PAGE_UP || c == PAGE_DOWN);
 
+    /* Tab/Shift+Tab keep the selection because with one active they
+     * mean "indent/outdent these lines" (see editorIndentSelection())
+     * and are meant to be repeatable -- without a selection Tab falls
+     * through to inserting one indent at the cursor as usual. */
+    uint8_t is_indent_key = (c == '\t' || c == SHIFT_TAB);
+
     if (c != SHIFT_ARROW_UP && c != SHIFT_ARROW_DOWN &&
         c != SHIFT_ARROW_LEFT && c != SHIFT_ARROW_RIGHT &&
         c != SHIFT_PAGE_UP && c != SHIFT_PAGE_DOWN &&
         c != CTRL_KEY('a') && c != CTRL_KEY('c') &&
         c != CTRL_KEY('x') && c != CTRL_KEY('v') &&
         c != CTRL_KEY('t') && c != MOUSE_EVENT_KEY &&
+        c != CTRL_KEY('s') &&
+        !(had_sel && is_indent_key) &&
         !(E.sel_pinned && is_plain_arrow))
         E.sel_active = 0;
 
@@ -3889,10 +4001,28 @@ static void editorProcessKeypress(void) {
             break;
 
         case '\t':
-            if (S.insert_spaces_for_tab) {
+            if (had_sel) {
+                editorIndentSelection(0);
+            } else if (S.insert_spaces_for_tab) {
                 for (int32_t i = 0; i < S.tab_stop; i++) editorInsertChar(' ');
             } else {
                 editorInsertChar('\t');
+            }
+            break;
+
+        /* With no selection this outdents the current line, which is
+         * what Shift+Tab does everywhere else -- the cursor doesn't
+         * have to be in the indentation for "this line is indented one
+         * level too far" to be the obvious intent. */
+        case SHIFT_TAB:
+            if (had_sel) {
+                editorIndentSelection(1);
+            } else if (E.cy < E.numrows) {
+                editorPushUndo(EDIT_OTHER);
+                int32_t removed = editorRowOutdent(&E.row[E.cy]);
+                E.cx -= removed;
+                if (E.cx < 0) E.cx = 0;
+                if (removed) E.dirty = 1;
             }
             break;
 
