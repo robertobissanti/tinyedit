@@ -1371,11 +1371,57 @@ static void editorSaveAs(void) {
     editorSaveInternal(1);
 }
 
+/* Whether the buffer differs from what's on disk, compared byte for
+ * byte. E.dirty only ever goes from 0 to 1: undoing every edit, or
+ * retyping what was deleted, leaves it set even though nothing actually
+ * changed, and the user then gets asked to save a file that is already
+ * identical. Checking the real contents catches all of those without
+ * having to keep dirty exact after every keystroke -- this runs once,
+ * when leaving the document, so reading the file back costs nothing
+ * during editing.
+ *
+ * Any I/O failure answers "yes, it differs": if the file can't be read
+ * the safe assumption is that there is something to lose, so the user
+ * still gets the prompt. A buffer with no filename is likewise always
+ * different -- there is nothing on disk to match. */
+static uint8_t editorDiffersFromDisk(void) {
+    if (!E.filename) return 1;
+
+    FILE *fp = fopen(E.filename, "rb");
+    if (!fp) return 1;
+
+    size_t buflen;
+    char *buf = editorRowsToString(&buflen);
+    uint8_t differs = 1;
+
+    if (fseek(fp, 0, SEEK_END) == 0) {
+        long disklen = ftell(fp);
+        if (disklen >= 0 && (size_t)disklen == buflen && fseek(fp, 0, SEEK_SET) == 0) {
+            char *disk = malloc(buflen ? buflen : 1);
+            if (fread(disk, 1, buflen, fp) == buflen)
+                differs = (buflen > 0) && (memcmp(disk, buf, buflen) != 0);
+            free(disk);
+        }
+    }
+
+    free(buf);
+    fclose(fp);
+    return differs;
+}
+
 /* Shared save/discard/cancel gate for every operation that would leave the
  * current document (quit, close, or open another file). Returns 1 only when
  * it is safe to proceed; a failed/cancelled save leaves the document open. */
 static uint8_t editorConfirmDocumentChange(const char *action) {
     if (!E.dirty) return 1;
+
+    /* Nothing to save after all -- the edits cancelled out (undone,
+     * or retyped identically). Clear the flag so the status bar stops
+     * claiming the file is modified too. */
+    if (!editorDiffersFromDisk()) {
+        E.dirty = 0;
+        return 1;
+    }
 
     editorSetStatusMessage("Save changes before %s? (y/n/Esc to cancel)", action);
     editorRefreshScreen();
