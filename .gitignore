@@ -5,8 +5,7 @@ tinyedit
 # never part of the source, kept out of git entirely.
 dev/
 *.dSYM/
-testLatex.tex
-testEscape.md
+tests/
 __pycache__/
 CLAUDE.md
 .DS_Store
