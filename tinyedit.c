@@ -2987,6 +2987,15 @@ static uint8_t editorSettingsIsSyntaxColor(const struct settingDescriptor *d) {
     return strncmp(d->key, "color_syntax_", strlen("color_syntax_")) == 0;
 }
 
+/* Any setting whose value is one of enum settingColor -- i.e. every
+ * "color_*" key, syntax ones included. Recognized by key prefix rather
+ * than by comparing d->enum_names against colorNames, since that array
+ * is file-local to settings.c. */
+static uint8_t editorSettingsIsColor(const struct settingDescriptor *d) {
+    return d->type == SETTING_ENUM &&
+        strncmp(d->key, "color_", strlen("color_")) == 0;
+}
+
 /* Syntax colors are subordinate to the syntax-highlighting switch: keep
  * them out of both the display and keyboard navigation while disabled. */
 static int32_t editorSettingsVisibleCount(const struct editorSettings *edited) {
@@ -3044,6 +3053,35 @@ static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected
     if (selected) abAppend(ab, "\x1b[7m", 4);
     abAppend(ab, line, len);
     if (selected) abAppend(ab, "\x1b[m", 3);
+
+    /* Live swatch after the value name: the palette has 24 hues whose
+     * names differ only by a "-light"/"-dark"/"-dim" suffix, and
+     * stepping through them by name alone gives no way to tell what
+     * you actually picked (or to notice you skipped past the variant
+     * you wanted) until you leave the panel. color_background is shown
+     * as an actual background block since that's how it will be used;
+     * every other color setting paints the foreground, matching how it
+     * renders in the editor. Drawn outside `line` because the escapes
+     * around it aren't printable columns and must not count toward the
+     * field widths above. */
+    if (editorSettingsIsColor(d)) {
+        if (strcmp(d->key, "color_background") == 0) {
+            const char *bg = ansiBgColorCode(*slot);
+            if (bg[0]) {
+                abAppend(ab, "  ", 2);
+                abAppend(ab, bg, (int32_t)strlen(bg));
+                abAppend(ab, "      ", 6);
+                abAppend(ab, "\x1b[m", 3);
+            }
+        } else {
+            const char *fg = ansiColorCode(*slot);
+            abAppend(ab, "  ", 2);
+            abAppend(ab, fg, (int32_t)strlen(fg));
+            abAppend(ab, "\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88", 9); /* ███ */
+            abAppend(ab, "\x1b[m", 3);
+        }
+    }
+
     abAppend(ab, "\x1b[K\r\n", 5);
 }
 
