@@ -1478,6 +1478,22 @@ static void abAppend(struct abuf *ab, const char *s, int32_t len) {
 
 static void abFree(struct abuf *ab) { free(ab->b); }
 
+/* Resets SGR attributes (colors, reverse-video, bold, ...) the same as
+ * a literal "\x1b[m" everywhere else in this file, but immediately
+ * re-applies the configured background color (see color_background in
+ * settings.h) if one is set -- otherwise every reset scattered through
+ * editorDrawRowSegment() (one per highlighted character/glyph, see its
+ * per-char syn_color/is_invisible_glyph resets) would also erase the
+ * background for the very next character, defeating a whole-editor
+ * background the instant any syntax highlighting or selection is
+ * active. Callers that don't need to distinguish should always use
+ * this over a bare "\x1b[m" for that reason. */
+static void abAppendReset(struct abuf *ab) {
+    abAppend(ab, "\x1b[m", 3);
+    const char *bg = ansiBgColorCode(S.color_background);
+    if (bg[0]) abAppend(ab, bg, (int32_t)strlen(bg));
+}
+
 /* ---- output ---------------------------------------------------------------- */
 
 static uint8_t editorGetSelection(int32_t *start_y, int32_t *start_x, int32_t *end_y, int32_t *end_x);
@@ -1895,7 +1911,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
             abAppend(ab, "\x1b[7m", 4);
             in_sel = 1;
         } else if (!should_sel && in_sel) {
-            abAppend(ab, "\x1b[m", 3);
+            abAppendReset(ab);
             in_sel = 0;
         }
 
@@ -1935,11 +1951,11 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
          * visible with accented characters such as é. */
         abAppend(ab, &line[j], emitted_len);
 
-        if (syn_color) abAppend(ab, "\x1b[m", 3);
-        if (is_invisible_glyph) abAppend(ab, "\x1b[m", 3);
+        if (syn_color) abAppendReset(ab);
+        if (is_invisible_glyph) abAppendReset(ab);
         j += emitted_len;
     }
-    if (in_sel) abAppend(ab, "\x1b[m", 3);
+    if (in_sel) abAppendReset(ab);
 }
 
 static void editorDrawGutter(struct abuf *ab, int32_t gutter, int32_t filerow, uint8_t is_continuation) {
@@ -1955,7 +1971,7 @@ static void editorDrawGutter(struct abuf *ab, int32_t gutter, int32_t filerow, u
     const char *gutter_color = ansiColorCode(S.color_gutter);
     abAppend(ab, gutter_color, (int32_t)strlen(gutter_color));
     abAppend(ab, numbuf, safe_gutter);
-    abAppend(ab, "\x1b[m", 3);
+    abAppendReset(ab);
 }
 
 static void editorDrawRows(struct abuf *ab) {
@@ -2056,7 +2072,7 @@ static void editorDrawRows(struct abuf *ab) {
             const char *eol_color = ansiColorCode(S.color_invisibles);
             abAppend(ab, eol_color, (int32_t)strlen(eol_color));
             abAppend(ab, "$", 1);
-            abAppend(ab, "\x1b[m", 3);
+            abAppendReset(ab);
         }
 
         abAppend(ab, "\x1b[K", 3);
@@ -2214,6 +2230,12 @@ static void editorRefreshScreen(void) {
     struct abuf ab = ABUF_INIT;
 
     abAppend(&ab, "\x1b[?25l", 6);
+    /* Set before the clear (not after) so the cells \x1b[2J erases
+     * pick up this background too, not just the rows/gutter text
+     * drawn below -- \x1b[2J fills erased cells with whatever SGR
+     * background is currently active, same as \x1b[K per line. */
+    const char *bg = ansiBgColorCode(S.color_background);
+    if (bg[0]) abAppend(&ab, bg, (int32_t)strlen(bg));
     if (need_full_clear) abAppend(&ab, "\x1b[2J", 4);
     abAppend(&ab, "\x1b[H", 3);
 

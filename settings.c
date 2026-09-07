@@ -142,6 +142,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, color_syntax_math), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_syntax_function", "Syntax: function name color (C/C++)", SETTING_ENUM,
       offsetof(struct editorSettings, color_syntax_function), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_background", "Editor background color (off=terminal default)", SETTING_ENUM,
+      offsetof(struct editorSettings, color_background), 0, 0, colorNames, SETTING_COLOR_COUNT },
 };
 const int32_t settingDescriptorCount = (int32_t)(sizeof(settingDescriptors) / sizeof(settingDescriptors[0]));
 
@@ -184,6 +186,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_syntax_emphasis_strong = COLOR_RED_LIGHT;
     out->color_syntax_math = COLOR_CYAN_LIGHT;
     out->color_syntax_function = COLOR_YELLOW_LIGHT;
+    out->color_background = COLOR_TERMINAL_DEFAULT;
     out->mouse_enabled = 0;
 }
 
@@ -443,6 +446,43 @@ const char *ansiColorCode(int32_t c) {
          * syntaxColorFor() in syntax.c) check for
          * COLOR_TERMINAL_DEFAULT themselves before calling this. */
         default:                  return "\x1b[39m";
+    }
+}
+
+/* Background SGR codes are the foreground codes' family +10 (30-37 ->
+ * 40-47, 90-97 -> 100-107) -- standard ANSI, same universally-supported
+ * base palette as ansiColorCode(). "dim" (\x1b[2;3Xm) has no background
+ * equivalent in the base ANSI spec (the intensity attribute only
+ * affects foreground on any terminal this project targets), so dim
+ * variants reuse their base hue's normal (dark) background -- still a
+ * distinct, correct color, just without a separate "dim background"
+ * concept that doesn't exist to reuse. */
+const char *ansiBgColorCode(int32_t c) {
+    switch (c) {
+        case COLOR_GRAY_LIGHT:                        return "\x1b[100m";
+        case COLOR_GRAY_DARK: case COLOR_GRAY_DIM:     return "\x1b[40m";
+        case COLOR_BLUE_LIGHT:                         return "\x1b[104m";
+        case COLOR_BLUE_DARK: case COLOR_BLUE_DIM:      return "\x1b[44m";
+        case COLOR_GREEN_LIGHT:                        return "\x1b[102m";
+        case COLOR_GREEN_DARK: case COLOR_GREEN_DIM:    return "\x1b[42m";
+        case COLOR_YELLOW_LIGHT:                       return "\x1b[103m";
+        case COLOR_YELLOW_DARK: case COLOR_YELLOW_DIM:  return "\x1b[43m";
+        case COLOR_CYAN_LIGHT:                         return "\x1b[106m";
+        case COLOR_CYAN_DARK: case COLOR_CYAN_DIM:      return "\x1b[46m";
+        case COLOR_MAGENTA_LIGHT:                      return "\x1b[105m";
+        case COLOR_MAGENTA_DARK: case COLOR_MAGENTA_DIM: return "\x1b[45m";
+        case COLOR_RED_LIGHT:                          return "\x1b[101m";
+        case COLOR_RED_DARK: case COLOR_RED_DIM:        return "\x1b[41m";
+        case COLOR_WHITE_LIGHT:                        return "\x1b[107m";
+        case COLOR_WHITE_DARK: case COLOR_WHITE_DIM:    return "\x1b[47m";
+        /* COLOR_TERMINAL_DEFAULT: "" rather than "\x1b[49m" (reset-to-
+         * default-background) -- unlike ansiColorCode()'s
+         * COLOR_TERMINAL_DEFAULT fallback, this setting's "off" state
+         * (see color_background in settings.h) must never touch the
+         * background at all, including implicitly resetting it, since
+         * the caller may be re-asserting the active background after
+         * an unrelated \x1b[m elsewhere on the same row. */
+        default: return "";
     }
 }
 

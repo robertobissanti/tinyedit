@@ -170,6 +170,13 @@ struct editorSettings {
      * identifier immediately followed by '(' -- see HL_FUNCTION in
      * syntax.h. */
     int32_t color_syntax_function;
+    /* Background color for the whole editor (behind every row, the
+     * gutter, status/message bars). COLOR_TERMINAL_DEFAULT (the
+     * default) emits no background escape at all, leaving the
+     * terminal's own background exactly as before this setting
+     * existed -- same "off means untouched" convention as
+     * color_syntax_normal. See ansiBgColorCode() in settings.h/.c. */
+    int32_t color_background;
     /* Enables SGR mouse reporting (click to move the cursor, drag to
      * select, wheel to scroll) -- see enableMouseReporting() in
      * tinyedit.c. Default false: turning this on disables the
@@ -239,6 +246,15 @@ uint8_t settingsSave(const struct editorSettings *s);
 /* ANSI foreground color escape sequence (e.g. "\x1b[90m") for a given
  * settingColor. Returned pointer is a static string, do not free. */
 const char *ansiColorCode(int32_t c);
+
+/* ANSI background color escape sequence (e.g. "\x1b[100m") for a given
+ * settingColor -- same palette/indices as ansiColorCode(), just the
+ * background SGR codes instead of foreground. Returns "" (not NULL,
+ * so callers can always abAppend() it unconditionally) for
+ * COLOR_TERMINAL_DEFAULT: "no background escape" IS the correct
+ * behavior there (leave the terminal's own background untouched), not
+ * an error case that needs a NULL check at every call site. */
+const char *ansiBgColorCode(int32_t c);
 
 /* Human-readable name for a settingColor (e.g. "gray"), used both when
  * writing the config file and in the F2 screen. */
