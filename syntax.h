@@ -56,7 +56,13 @@
  * "$...$"/"$$...$$") is the same case as HL_EMPHASIS_STRONG: initially
  * shared with HL_STRING (same "literal/non-prose" reasoning as code
  * spans), split into its own class on explicit request so math and
- * inline code can be told apart at a glance in documents mixing both. */
+ * inline code can be told apart at a glance in documents mixing both.
+ * HL_FUNCTION (C-like languages only, see syntaxHighlightRowGeneric()
+ * in syntax.c) marks an identifier immediately followed by '(' --
+ * covers both call sites and declarations, since the tokenizer has no
+ * real parser to tell them apart; kept as its own class since a
+ * function name is visually a different kind of thing from a
+ * keyword. */
 enum syntaxHighlight {
     HL_NORMAL = 0,
     HL_COMMENT,
@@ -65,7 +71,8 @@ enum syntaxHighlight {
     HL_NUMBER,
     HL_PREPROCESSOR,
     HL_EMPHASIS_STRONG,
-    HL_MATH
+    HL_MATH,
+    HL_FUNCTION
 };
 
 struct syntaxLang {
@@ -78,6 +85,16 @@ struct syntaxLang {
     uint8_t hash_line_is_preprocessor;
     const char *keyword_prefix_chars;
     uint8_t math_mode;
+    /* An identifier immediately followed by '(' (skipping spaces/tabs)
+     * is tagged HL_FUNCTION instead of left unhighlighted -- covers
+     * both call sites and declarations, see syntaxHighlightRowGeneric()
+     * in syntax.c. Off by default for user-defined ~/.tinyedit/syntax/
+     * languages (syntaxParseLangFile() only sets it from an explicit
+     * "highlight_function_calls = true" key) since a language where
+     * "name(" doesn't mean a function -- e.g. a math/DSL notation using
+     * parens for something else -- would get misleading highlighting
+     * otherwise; the built-in C-like languages all opt in explicitly. */
+    uint8_t highlight_function_calls;
 };
 
 /* Recomputes row->hl (allocating/resizing it to row->rsize if needed)

@@ -166,6 +166,10 @@ struct editorSettings {
      * from color_syntax_string which inline code spans/fences use --
      * see enum syntaxHighlight's HL_MATH in syntax.h. */
     int32_t color_syntax_math;
+    /* C/C++ (and any user-defined C-like language) only: color for an
+     * identifier immediately followed by '(' -- see HL_FUNCTION in
+     * syntax.h. */
+    int32_t color_syntax_function;
     /* Enables SGR mouse reporting (click to move the cursor, drag to
      * select, wheel to scroll) -- see enableMouseReporting() in
      * tinyedit.c. Default false: turning this on disables the

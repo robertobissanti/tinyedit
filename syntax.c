@@ -31,7 +31,7 @@ static const char *const cKeywords[] = {
 };
 
 static const struct syntaxLang cLang = {
-    cExtensions, cKeywords, "\"'", "//", "/*", "*/", 1, NULL, 0
+    cExtensions, cKeywords, "\"'", "//", "/*", "*/", 1, NULL, 0, 1
 };
 
 static const char *const cppExtensions[] = { "cpp", "cc", "cxx", "hpp", "hh", "hxx", NULL };
@@ -59,7 +59,7 @@ static const char *const cppKeywords[] = {
     NULL
 };
 static const struct syntaxLang cppLang = {
-    cppExtensions, cppKeywords, "\"'", "//", "/*", "*/", 1, NULL, 0
+    cppExtensions, cppKeywords, "\"'", "//", "/*", "*/", 1, NULL, 0, 1
 };
 
 static const char *const pyExtensions[] = { "py", NULL };
@@ -79,7 +79,7 @@ static const char *const pyKeywords[] = {
  * three back-to-back single-char strings rather than one block, close
  * enough for a first pass and not worth a Python-specific tokenizer. */
 static const struct syntaxLang pyLang = {
-    pyExtensions, pyKeywords, "\"'", "#", NULL, NULL, 0, NULL, 0
+    pyExtensions, pyKeywords, "\"'", "#", NULL, NULL, 0, NULL, 0, 1
 };
 
 static const char *const shExtensions[] = { "sh", "bash", "zsh", NULL };
@@ -91,7 +91,7 @@ static const char *const shKeywords[] = {
     NULL
 };
 static const struct syntaxLang shLang = {
-    shExtensions, shKeywords, "\"'", "#", NULL, NULL, 0, NULL, 0
+    shExtensions, shKeywords, "\"'", "#", NULL, NULL, 0, NULL, 0, 1
 };
 
 static const char *const jsExtensions[] = { "js", "jsx", "ts", "tsx", NULL };
@@ -107,7 +107,7 @@ static const char *const jsKeywords[] = {
     NULL
 };
 static const struct syntaxLang jsLang = {
-    jsExtensions, jsKeywords, "\"'`", "//", "/*", "*/", 0, NULL, 0
+    jsExtensions, jsKeywords, "\"'`", "//", "/*", "*/", 0, NULL, 0, 1
 };
 
 static const struct syntaxLang *const syntaxLangTable[] = {
@@ -206,6 +206,8 @@ static const struct syntaxLang *syntaxLangForFilename(const char *filename) {
  *   hash_line_is_preprocessor = true
  *   keyword_prefix_chars  = \        (e.g. LaTeX: keywords spelled "\begin")
  *   math_mode             = true     (recognizes "$...$"/"$$...$$" as HL_MATH)
+ *   highlight_function_calls = true  (identifier immediately followed by
+ *                                     '(' is tagged HL_FUNCTION)
  */
 
 static char *syntaxDupTrimmed(const char *s) {
@@ -273,6 +275,7 @@ static const struct syntaxLang *syntaxParseLangFile(const char *path) {
     uint8_t hash_line_is_preprocessor = 0;
     char *keyword_prefix_chars = NULL;
     uint8_t math_mode = 0;
+    uint8_t highlight_function_calls = 0;
 
     char line[512];
     while (fgets(line, sizeof(line), fp)) {
@@ -303,6 +306,8 @@ static const struct syntaxLang *syntaxParseLangFile(const char *path) {
             free(keyword_prefix_chars); keyword_prefix_chars = syntaxDupTrimmed(value);
         } else if (strcmp(key, "math_mode") == 0) {
             math_mode = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
+        } else if (strcmp(key, "highlight_function_calls") == 0) {
+            highlight_function_calls = (strcmp(value, "true") == 0 || strcmp(value, "1") == 0);
         }
         free(key);
         free(value);
@@ -336,6 +341,7 @@ static const struct syntaxLang *syntaxParseLangFile(const char *path) {
     lang->hash_line_is_preprocessor = hash_line_is_preprocessor;
     lang->keyword_prefix_chars = keyword_prefix_chars;
     lang->math_mode = math_mode;
+    lang->highlight_function_calls = highlight_function_calls;
     return lang;
 }
 
@@ -550,9 +556,28 @@ static void syntaxHighlightRowGeneric(erow *row, const struct syntaxLang *lang,
              * so e.g. an unrecognized "\foo" LaTeX command doesn't get
              * its '\' and "foo" evaluated separately against unrelated
              * rules on the next iterations. */
+            int32_t ident_start = i;
             i += syntaxCharLenAt(s, len, i);
             while (i < len && syntaxIsIdentifierByte(s[i], lang->keyword_prefix_chars, 0))
                 i += syntaxCharLenAt(s, len, i);
+
+            /* Function name heuristic: an identifier immediately
+             * followed by '(' (skipping spaces/tabs) is tagged
+             * HL_FUNCTION -- covers both call sites ("foo(x)") and
+             * declarations ("void foo(int x)"), since this tokenizer
+             * has no real parser to distinguish them. Only look ahead
+             * within the row: a name whose '(' is on the next line
+             * (rare, but legal C) is left unhighlighted rather than
+             * peeking past row->render, which this tokenizer never
+             * does elsewhere either. */
+            if (lang->highlight_function_calls) {
+                int32_t j = i;
+                while (j < len && (s[j] == ' ' || s[j] == '\t')) j++;
+                if (j < len && s[j] == '(') {
+                    for (int32_t k = ident_start; k < i; k++) row->hl[k] = HL_FUNCTION;
+                    continue;
+                }
+            }
             continue;
         }
 
@@ -991,6 +1016,7 @@ const char *syntaxColorFor(enum syntaxHighlight hl, const struct editorSettings 
         case HL_PREPROCESSOR: return ansiColorCode(s->color_syntax_preprocessor);
         case HL_EMPHASIS_STRONG: return ansiColorCode(s->color_syntax_emphasis_strong);
         case HL_MATH:          return ansiColorCode(s->color_syntax_math);
+        case HL_FUNCTION:      return ansiColorCode(s->color_syntax_function);
         default:              return NULL;
     }
 }

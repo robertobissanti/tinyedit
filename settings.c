@@ -140,6 +140,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, color_syntax_emphasis_strong), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_syntax_math", "Syntax: LaTeX math color (Markdown)", SETTING_ENUM,
       offsetof(struct editorSettings, color_syntax_math), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_syntax_function", "Syntax: function name color (C/C++)", SETTING_ENUM,
+      offsetof(struct editorSettings, color_syntax_function), 0, 0, colorNames, SETTING_COLOR_COUNT },
 };
 const int32_t settingDescriptorCount = (int32_t)(sizeof(settingDescriptors) / sizeof(settingDescriptors[0]));
 
@@ -181,6 +183,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_syntax_preprocessor = COLOR_YELLOW_LIGHT;
     out->color_syntax_emphasis_strong = COLOR_RED_LIGHT;
     out->color_syntax_math = COLOR_CYAN_LIGHT;
+    out->color_syntax_function = COLOR_YELLOW_LIGHT;
     out->mouse_enabled = 0;
 }
 
