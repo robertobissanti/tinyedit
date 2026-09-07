@@ -61,6 +61,8 @@ enum editorKey {
     SHIFT_ARROW_DOWN,
     SHIFT_PAGE_UP,
     SHIFT_PAGE_DOWN,
+    SHIFT_HOME,
+    SHIFT_END,
     /* Shift+Tab, sent as CSI Z ("backtab") by every terminal this
      * project targets. Only meaningful with a selection, where it
      * outdents the selected lines (see editorIndentSelection()). */

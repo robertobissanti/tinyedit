@@ -360,8 +360,8 @@ static int32_t editorReadKey(void) {
                             if (is_alt) return ALT_ARROW_LEFT;
                             if (is_shift) return SHIFT_ARROW_LEFT;
                             return ARROW_LEFT;
-                        case 'H': return HOME_KEY;
-                        case 'F': return END_KEY;
+                        case 'H': return is_shift ? SHIFT_HOME : HOME_KEY;
+                        case 'F': return is_shift ? SHIFT_END : END_KEY;
                     }
                     /* `term` didn't match a known final byte -- either
                      * because it's itself a further ';'-separated
@@ -3236,6 +3236,7 @@ static const struct helpEntry helpEntries[] = {
     { "Paste (terminal-native, e.g. Cmd+V)", "Bulk insert, no auto-close on pasted text" },
     { NULL, "Selection & clipboard" },
     { "Shift+Arrows, Shift+PageUp/Down", "Extend selection" },
+    { "Shift+Home/End", "Extend selection to start/end of line" },
     { "Mouse drag (if enabled, see F2)", "Extend selection" },
     { "Ctrl-T", "Toggle selection mode (works on every terminal)" },
     { "Ctrl-A", "Select all" },
@@ -3975,8 +3976,12 @@ static void editorProcessKeypress(void) {
     int32_t had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1;
     uint8_t had_sel = editorGetSelection(&had_sel_y0, &had_sel_x0, &had_sel_y1, &had_sel_x1);
 
-    uint8_t is_plain_arrow = (c == ARROW_UP || c == ARROW_DOWN ||
-        c == ARROW_LEFT || c == ARROW_RIGHT || c == PAGE_UP || c == PAGE_DOWN);
+    /* Unmodified movement keys: in pinned selection mode (Ctrl-T) each
+     * of these extends the selection instead of clearing it, exactly as
+     * its Shift+ variant would. */
+    uint8_t is_plain_motion = (c == ARROW_UP || c == ARROW_DOWN ||
+        c == ARROW_LEFT || c == ARROW_RIGHT || c == PAGE_UP || c == PAGE_DOWN ||
+        c == HOME_KEY || c == END_KEY);
 
     /* Tab/Shift+Tab keep the selection because with one active they
      * mean "indent/outdent these lines" (see editorIndentSelection())
@@ -3987,12 +3992,13 @@ static void editorProcessKeypress(void) {
     if (c != SHIFT_ARROW_UP && c != SHIFT_ARROW_DOWN &&
         c != SHIFT_ARROW_LEFT && c != SHIFT_ARROW_RIGHT &&
         c != SHIFT_PAGE_UP && c != SHIFT_PAGE_DOWN &&
+        c != SHIFT_HOME && c != SHIFT_END &&
         c != CTRL_KEY('a') && c != CTRL_KEY('c') &&
         c != CTRL_KEY('x') && c != CTRL_KEY('v') &&
         c != CTRL_KEY('t') && c != MOUSE_EVENT_KEY &&
         c != CTRL_KEY('s') &&
         !(had_sel && is_indent_key) &&
-        !(E.sel_pinned && is_plain_arrow))
+        !(E.sel_pinned && is_plain_motion))
         E.sel_active = 0;
 
     switch (c) {
@@ -4317,24 +4323,43 @@ static void editorProcessKeypress(void) {
             break;
 
         case HOME_KEY:
-        case END_KEY: {
+        case END_KEY:
+            if (!E.sel_pinned) E.sel_active = 0;
+            /* fall through: like the arrows below, a plain Home/End
+             * extends the selection while sel_pinned (Ctrl-T) is set. */
+        case SHIFT_HOME:
+        case SHIFT_END: {
+            uint8_t to_home = (c == HOME_KEY || c == SHIFT_HOME);
+            uint8_t extending = (c == SHIFT_HOME || c == SHIFT_END || E.sel_pinned);
+
+            if (extending && !E.sel_active) {
+                E.sel_active = 1;
+                E.sel_anchor_x = E.cx;
+                E.sel_anchor_y = E.cy;
+            }
+
             int32_t hw_wrapcols = editorSoftWrapCols();
             if (hw_wrapcols > 0 && S.home_end_visual_line && E.cy < E.numrows) {
                 int32_t seg_idx, seg_col;
                 editorRxToSegment(&E.row[E.cy], hw_wrapcols, E.rx, &seg_idx, &seg_col);
                 erow *row = &E.row[E.cy];
                 int32_t nseg = editorRowSegments(row, hw_wrapcols);
-                if (c == HOME_KEY) {
+                if (to_home) {
                     E.cx = editorSegColToCx(row, row->seg_start_rx[seg_idx], 0);
                 } else {
                     int32_t seg_to_rx = editorSegVisibleEndRx(row, nseg, row->seg_start, row->seg_start_rx, seg_idx);
                     E.cx = editorSegColToCx(row, 0, seg_to_rx);
                 }
-            } else if (c == HOME_KEY) {
+            } else if (to_home) {
                 E.cx = 0;
             } else if (E.cy < E.numrows) {
                 E.cx = E.row[E.cy].size;
             }
+
+            /* Collapsing back onto the anchor means nothing is selected
+             * any more -- same rule the arrow keys use. */
+            if (extending && E.sel_anchor_x == E.cx && E.sel_anchor_y == E.cy)
+                E.sel_active = 0;
             break;
         }
 
