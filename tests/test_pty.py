@@ -246,6 +246,50 @@ def test_invisible_colors(home):
             finish(process, master)
 
 
+def test_selection_across_tab(home):
+    """Selecting a source tab must highlight its complete rendered width."""
+    case_home = pathlib.Path(home) / "selection-tabs"
+    case_home.mkdir()
+    target = case_home / "selection.txt"
+    target.write_bytes(b"A\tBC\n")
+    for visible in (0, 1):
+        (case_home / ".tinyeditrc").write_text(
+            f"show_invisibles = {visible}\nshow_line_numbers = 0\n"
+            "show_top_bar = 0\ninsert_spaces_for_tab = 0\ntab_stop = 4\n"
+            "syntax_highlight = 0\ncolor_selection = yellow-light\n",
+            encoding="utf-8",
+        )
+        process, master = spawn_editor([str(target)], case_home)
+        try:
+            read_available(master)
+            os.write(master, b"\x14\x1b[C\x1b[C")  # Ctrl-T, select A and tab
+            output = read_available(master)
+            tab = b">  " if visible else b"   "
+            selected = b"\x1b[93m\x1b[7mA" + tab + b"\x1b[mBC"
+            assert selected in output, "selection did not cover the complete rendered tab"
+        finally:
+            finish(process, master)
+
+
+def test_eol_after_trailing_tab(home):
+    """The EOL marker follows the full visual width of a trailing tab."""
+    case_home = pathlib.Path(home) / "eol-trailing-tab"
+    case_home.mkdir()
+    target = case_home / "eol.txt"
+    source = "\t\nA\t\nAB\t\nABC\t\n"
+    target.write_text(source, encoding="utf-8")
+    (case_home / ".tinyeditrc").write_text(
+        "show_invisibles = true\nshow_line_numbers = 0\nshow_top_bar = 0\n"
+        "insert_spaces_for_tab = 0\ntab_stop = 4\nsyntax_highlight = 0\n",
+        encoding="utf-8",
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        expect_rendered_rows(read_available(master), source, True)
+    finally:
+        finish(process, master)
+
+
 def edit_setting(master, index, keys, save):
     """Edit one F2 setting, exercising either save path or discard."""
     os.write(master, b"\x1bOQ")  # F2
@@ -254,6 +298,8 @@ def edit_setting(master, index, keys, save):
     read_available(master, 0.2)
     if save == "ctrl-s":
         os.write(master, b"\x13")
+    elif save == "f2":
+        os.write(master, b"\x1bOQ")
     else:
         os.write(master, b"\x1b")
         assert b"Save changes before leaving?" in read_until(
@@ -302,9 +348,9 @@ def test_settings_refresh_rows(home, save, initially_visible):
         expect_rendered_rows(read_available(master), "X" + source, initially_visible)
 
         # Discard must preserve both the live settings and row rendering.
-        output = edit_setting(master, 14, b" ", "discard")
+        output = edit_setting(master, 15, b" ", "discard")
         expect_rendered_rows(output, "X" + source, initially_visible)
-        output = edit_setting(master, 14, b" ", save)  # Show invisible characters
+        output = edit_setting(master, 15, b" ", save)  # Show invisible characters
         visible = not initially_visible
         expect_rendered_rows(output, "X" + source, visible)
         assert f"show_invisibles = {str(visible).lower()}" in (
@@ -325,7 +371,7 @@ def test_settings_refresh_rows(home, save, initially_visible):
         os.write(master, b"\x19")
         expect_rendered_rows(read_available(master), "X" + source, visible, 8)
 
-        output = edit_setting(master, 14, b" ", save)
+        output = edit_setting(master, 15, b" ", save)
         expect_rendered_rows(output, "X" + source, initially_visible, 8)
         os.write(master, b"\x1a")
         expect_rendered_rows(read_available(master), source, initially_visible, 8)
@@ -333,7 +379,7 @@ def test_settings_refresh_rows(home, save, initially_visible):
         expect_rendered_rows(read_available(master), "X" + source, initially_visible, 8)
 
         for syntax_enabled in (False, True):
-            output = edit_setting(master, 16, b" ", save)  # Syntax highlighting
+            output = edit_setting(master, 17, b" ", save)  # Syntax highlighting
             expect_rendered_rows(output, "X" + source, initially_visible, 8)
             assert (b'\x1b[92mt\x1b[m' in output) == syntax_enabled, (
                 "syntax setting did not refresh untouched rows"
@@ -356,7 +402,9 @@ def main():
         test_ctrl_w_saves_and_closes_only_file(home)
         test_ctrl_o_discards_then_creates_named_file(home)
         test_invisible_colors(home)
-        for save in ("ctrl-s", "esc-y"):
+        test_selection_across_tab(home)
+        test_eol_after_trailing_tab(home)
+        for save in ("ctrl-s", "f2", "esc-y"):
             for initially_visible in (0, 1):
                 test_settings_refresh_rows(home, save, initially_visible)
     print("pty tests: ok")

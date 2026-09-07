@@ -23,8 +23,10 @@ static const char *const cKeywords[] = {
     "typedef", "union", "volatile", "while", "_Bool", "_Complex",
     "_Imaginary",
     "char", "double", "float", "int", "long", "short", "signed",
-    "unsigned", "void", "int8_t", "int16_t", "int32_t", "int64_t",
+    "unsigned", "void", "uint", "int8_t", "int16_t", "int32_t", "int64_t",
     "uint8_t", "uint16_t", "uint32_t", "uint64_t", "size_t", "ssize_t",
+    "intptr_t", "uintptr_t", "intmax_t", "uintmax_t", "ptrdiff_t",
+    "wchar_t",
     NULL
 };
 
@@ -43,8 +45,10 @@ static const char *const cppKeywords[] = {
     "enum", "extern", "for", "goto", "if", "inline", "return", "sizeof",
     "static", "struct", "switch", "typedef", "union", "while",
     "char", "double", "float", "int", "long", "short", "signed",
-    "unsigned", "void", "int8_t", "int16_t", "int32_t", "int64_t",
+    "unsigned", "void", "uint", "int8_t", "int16_t", "int32_t", "int64_t",
     "uint8_t", "uint16_t", "uint32_t", "uint64_t", "size_t", "ssize_t",
+    "intptr_t", "uintptr_t", "intmax_t", "uintmax_t", "ptrdiff_t",
+    "wchar_t",
     /* C++-specific */
     "auto", "bool", "catch", "class", "const_cast", "constexpr",
     "delete", "dynamic_cast", "explicit", "export", "false", "friend",

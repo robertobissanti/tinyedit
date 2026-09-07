@@ -121,6 +121,15 @@ struct editorSettings {
      * auto-inserted one skips over it instead of duplicating it. See
      * editorAutoCloseFor() in tinyedit.c for the exact pair table. */
     int32_t auto_close_pairs;
+    /* Whether auto_close_pairs above also applies to a typed "'"
+     * (single quote/apostrophe). Split out and defaulted to false
+     * unlike every other pair in editorAutoCloseTable(), because
+     * apostrophes inside contractions/possessives ("don't", "user's")
+     * are far more common in prose than a matching pair, so
+     * auto-closing it is disruptive there in a way "(" or "\"" isn't.
+     * When false, typing "'" always inserts a single "'", regardless
+     * of auto_close_pairs. */
+    int32_t auto_close_single_quote;
     /* When true, the Tab key inserts tab_stop spaces instead of a
      * literal '\t' byte. Only affects the Tab key itself -- auto_indent
      * always copies a line's existing leading whitespace verbatim

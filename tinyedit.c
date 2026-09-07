@@ -287,6 +287,50 @@ static int32_t editorReadKey(void) {
                     uint8_t term;
                     if (read(STDIN_FILENO, &term, 1) != 1) return '\x1b';
                     if (term == '~') return F3_KEY; /* common CSI F3 form: ESC[13~ */
+                } else if (seq[2] >= '0' && seq[2] <= '9') {
+                    /* CSI-u (modifyOtherKeys/fixterms) form for a plain
+                     * key with modifiers: ESC[<codepoint>;<mod>u, e.g.
+                     * Ctrl-Shift-S = ESC[115;6u (115 = lowercase 's';
+                     * Shift is folded into the modifier field, not the
+                     * codepoint). Reached here because the codepoint's
+                     * first two digits ("11" of "115") didn't match any
+                     * of the fixed 2-byte-prefix cases above -- covers
+                     * any 3-digit-or-more codepoint prefix. Digits/mod
+                     * are read as variable-width runs like the SGR
+                     * mouse report below, since CSI-u doesn't pad
+                     * fields to a fixed width. Only decoded for
+                     * codepoint 115 ('s') to recognize Ctrl-Shift-S; any
+                     * other codepoint here is a modified key this
+                     * project doesn't otherwise bind, so it's dropped
+                     * rather than mapped to something surprising. */
+                    int32_t fields[2] = {(seq[1] - '0') * 10 + (seq[2] - '0'), 0};
+                    int32_t field_idx = 0;
+                    uint8_t term = 0;
+                    uint8_t ok = 1;
+                    for (int32_t guard = 0; guard < 16; guard++) {
+                        uint8_t b;
+                        if (read(STDIN_FILENO, &b, 1) != 1) { ok = 0; break; }
+                        if (b >= '0' && b <= '9') {
+                            fields[field_idx] = fields[field_idx] * 10 + (b - '0');
+                        } else if (b == ';') {
+                            field_idx++;
+                            if (field_idx > 1) { ok = 0; break; }
+                        } else if (b == 'u') {
+                            term = b;
+                            break;
+                        } else {
+                            ok = 0;
+                            break;
+                        }
+                    }
+                    if (ok && term && field_idx == 1 && fields[0] == 115) {
+                        /* mod is a bitmask + 1 (1 = no modifiers, 2 =
+                         * Shift, 5 = Ctrl, 6 = Ctrl+Shift). */
+                        if (fields[1] == 6) return SAVE_AS_KEY;
+                    } else if (!ok) {
+                        editorDrainUnknownCsiSequence(16);
+                    }
+                    return '\x1b';
                 } else if (seq[2] == ';') {
                     /* Modified nav key. Two layouts share this prefix:
                      *   ESC [ 1 ; <mod> <letter>   e.g. Alt+Up = ESC[1;3A
@@ -408,6 +452,7 @@ static int32_t editorReadKey(void) {
                 case 'P': return F1_KEY; /* SS3 F1, ESC O P -- verified on Ghostty and Terminal.app */
                 case 'Q': return F2_KEY; /* SS3 F2, e.g. ESC O Q on Ghostty */
                 case 'R': return F3_KEY; /* SS3 F3, ESC O R */
+                case 'S': return F4_KEY; /* SS3 F4, ESC O S */
             }
         }
         return '\x1b';
@@ -548,7 +593,12 @@ static int32_t editorRowCxToRx(erow *row, int32_t cx) {
  * syntaxHighlightRow() itself no-ops (clearing row->hl) when
  * S.syntax_highlight is off or E.filename's extension isn't a
  * recognized language, so this doesn't need to check that first. */
-static void editorRehighlightFrom(int32_t from) {
+/* `force` skips the early-break below: it exists for callers where every
+ * row's hl_open_comment/hl_open_math is still its post-editorInsertRow()
+ * default of 0 rather than a value produced by a real tokenize pass (e.g.
+ * right after a "Save as" gives an untitled buffer its first filetype), so
+ * a row matching that default doesn't mean its highlighting is settled. */
+static void editorRehighlightFrom(int32_t from, uint8_t force) {
     uint8_t open_comment = from > 0 ? E.row[from - 1].hl_open_comment : 0;
     uint8_t open_math = from > 0 ? E.row[from - 1].hl_open_math : 0;
     for (int32_t i = from; i < E.numrows; i++) {
@@ -557,7 +607,7 @@ static void editorRehighlightFrom(int32_t from) {
         syntaxHighlightRow(&E.row[i], E.filename, (uint8_t)S.syntax_highlight, open_comment, open_math);
         open_comment = E.row[i].hl_open_comment;
         open_math = E.row[i].hl_open_math;
-        if (i > from && open_comment == prev_comment && open_math == prev_math) break;
+        if (!force && i > from && open_comment == prev_comment && open_math == prev_math) break;
     }
 }
 
@@ -598,7 +648,7 @@ static void editorUpdateRow(erow *row) {
     uint8_t prev_open_math = idx_in_buffer > 0 ? E.row[idx_in_buffer - 1].hl_open_math : 0;
     syntaxHighlightRow(row, E.filename, (uint8_t)S.syntax_highlight, prev_open_comment, prev_open_math);
     if (idx_in_buffer >= 0 && idx_in_buffer + 1 < E.numrows)
-        editorRehighlightFrom(idx_in_buffer + 1);
+        editorRehighlightFrom(idx_in_buffer + 1, 0);
 }
 
 /* Recomputes row->render for every row -- needed whenever a setting
@@ -652,7 +702,7 @@ static void editorDelRow(int32_t at) {
     editorFreeRow(&E.row[at]);
     memmove(&E.row[at], &E.row[at + 1], sizeof(erow) * (size_t)(E.numrows - at - 1));
     E.numrows--;
-    if (at < E.numrows) editorRehighlightFrom(at);
+    if (at < E.numrows) editorRehighlightFrom(at, 0);
     E.dirty = 1;
 }
 
@@ -1253,8 +1303,11 @@ static uint8_t editorAtomicSave(const char *filename, const char *buf, size_t le
     return ok;
 }
 
-static void editorSave(void) {
-    if (E.filename == NULL) {
+/* `force_prompt` makes an already-named buffer go through "Save as"
+ * again (F4/Ctrl-Shift-S) instead of silently overwriting E.filename,
+ * which is what a plain save (Ctrl-S) does when a name already exists. */
+static void editorSaveInternal(uint8_t force_prompt) {
+    if (E.filename == NULL || force_prompt) {
         char *name = editorPrompt("Save as: %s (Esc to cancel)");
         if (name == NULL) {
             editorSetStatusMessage("Save aborted.");
@@ -1265,7 +1318,13 @@ static void editorSave(void) {
             editorSetStatusMessage("Save aborted: empty filename.");
             return;
         }
+        free(E.filename);
         E.filename = name;
+        /* Filetype is derived from E.filename's extension, so a new
+         * name can turn on/change highlighting for rows tokenized
+         * under a different (or no) filetype -- recompute now instead
+         * of waiting for the next edit to trigger it. */
+        editorRehighlightFrom(0, 1);
     }
 
     size_t len;
@@ -1285,6 +1344,14 @@ static void editorSave(void) {
     }
     free(buf);
     editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno));
+}
+
+static void editorSave(void) {
+    editorSaveInternal(0);
+}
+
+static void editorSaveAs(void) {
+    editorSaveInternal(1);
 }
 
 /* Shared save/discard/cancel gate for every operation that would leave the
@@ -1804,7 +1871,18 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
     int32_t source_byte = 0, render_byte = 0;
     uint8_t in_sel = 0;
     for (int32_t j = 0; j < len; ) {
-        int32_t filecol = seg_from + j;
+        int32_t rendercol = seg_from + j;
+        /* Selection and search coordinates refer to bytes in chars[],
+         * while this loop walks render[]. A tab occupies several render
+         * bytes, all of which represent the same source byte. */
+        while (source_byte < row->size && render_byte < rendercol) {
+            int32_t width = row->chars[source_byte] == '\t'
+                ? S.tab_stop - render_byte % S.tab_stop : 1;
+            if (render_byte + width > rendercol) break;
+            render_byte += width;
+            source_byte++;
+        }
+        int32_t filecol = source_byte;
         size_t char_len = utf8NextCharLen(line, (size_t)j, (size_t)len);
         if (char_len == 0 || (size_t)j + char_len > (size_t)len) char_len = 1;
         int32_t emitted_len = (int32_t)char_len;
@@ -1832,18 +1910,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
             (line[j] == INVISIBLE_SPACE_GLYPH || line[j] == INVISIBLE_TAB_GLYPH) &&
             S.show_invisibles;
         if (is_invisible_glyph) {
-            /* Match the byte expansion in editorUpdateRow(), not display
-             * columns: tabs expand while UTF-8 bytes are copied unchanged.
-             * Keep the source position between candidates, including when
-             * this visual segment starts partway through a logical row. */
-            while (source_byte < row->size && render_byte < filecol) {
-                int32_t width = row->chars[source_byte] == '\t'
-                    ? S.tab_stop - render_byte % S.tab_stop : 1;
-                if (render_byte + width > filecol) break;
-                render_byte += width;
-                source_byte++;
-            }
-            is_invisible_glyph = source_byte < row->size && render_byte == filecol &&
+            is_invisible_glyph = source_byte < row->size && render_byte == rendercol &&
                 (row->chars[source_byte] == ' ' || row->chars[source_byte] == '\t');
         }
         if (is_invisible_glyph) {
@@ -1858,8 +1925,8 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
          * for this row (see editorUpdateRow()), so this is a no-op in
          * that case without an extra flag check. */
         const char *syn_color = NULL;
-        if (!should_sel && !is_invisible_glyph && row->hl && filecol < row->rsize)
-            syn_color = syntaxColorFor((enum syntaxHighlight)row->hl[filecol], &S);
+        if (!should_sel && !is_invisible_glyph && row->hl && rendercol < row->rsize)
+            syn_color = syntaxColorFor((enum syntaxHighlight)row->hl[rendercol], &S);
         if (syn_color) abAppend(ab, syn_color, (int32_t)strlen(syn_color));
 
         /* Emit the complete UTF-8 sequence before resetting the color.
@@ -1980,6 +2047,12 @@ static void editorDrawRows(struct abuf *ab) {
          * exempt from the single-byte-glyph constraint that applies
          * to in-line invisibles. */
         if (S.show_invisibles && seg == nseg - 1) {
+            /* editorSegVisibleEnd() hides the space cells that complete
+             * a tab stop. They still have visual width, so restore that
+             * width before placing the end-of-line marker; otherwise a
+             * trailing tab makes '$' appear immediately after '>'. */
+            int32_t hidden_tab_fill = row->rsize - seg_to;
+            while (hidden_tab_fill-- > 0) abAppend(ab, " ", 1);
             const char *eol_color = ansiColorCode(S.color_invisibles);
             abAppend(ab, eol_color, (int32_t)strlen(eol_color));
             abAppend(ab, "$", 1);
@@ -2873,6 +2946,30 @@ static int32_t *settingsScreenSlot(struct editorSettings *s, const struct settin
     return (int32_t *)((char *)s + d->offset);
 }
 
+static uint8_t editorSettingsIsSyntaxColor(const struct settingDescriptor *d) {
+    return strncmp(d->key, "color_syntax_", strlen("color_syntax_")) == 0;
+}
+
+/* Syntax colors are subordinate to the syntax-highlighting switch: keep
+ * them out of both the display and keyboard navigation while disabled. */
+static int32_t editorSettingsVisibleCount(const struct editorSettings *edited) {
+    int32_t count = 0;
+    for (int32_t i = 0; i < settingDescriptorCount; i++) {
+        if (edited->syntax_highlight || !editorSettingsIsSyntaxColor(&settingDescriptors[i]))
+            count++;
+    }
+    return count;
+}
+
+static int32_t editorSettingsDescriptorAt(const struct editorSettings *edited, int32_t visible_idx) {
+    for (int32_t i = 0; i < settingDescriptorCount; i++) {
+        if (!edited->syntax_highlight && editorSettingsIsSyntaxColor(&settingDescriptors[i]))
+            continue;
+        if (visible_idx-- == 0) return i;
+    }
+    return -1;
+}
+
 /* `scroll_indicator` is '^' when this row is the topmost visible one
  * and there are more settings scrolled off above, 'v' when it's the
  * bottommost visible one and there are more below, or '\0' for no
@@ -2894,8 +2991,16 @@ static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected
         snprintf(valuebuf, sizeof(valuebuf), "%s", d->enum_names[*slot]);
     }
 
-    int32_t len = snprintf(line, sizeof(line), "%c %-22s %s",
-        scroll_indicator ? scroll_indicator : ' ', d->label, valuebuf);
+    const char *label = d->label;
+    int32_t len;
+    if (editorSettingsIsSyntaxColor(d)) {
+        label += strlen("Syntax: ");
+        len = snprintf(line, sizeof(line), "%c   %-20s %s",
+            scroll_indicator ? scroll_indicator : ' ', label, valuebuf);
+    } else {
+        len = snprintf(line, sizeof(line), "%c %-22s %s",
+            scroll_indicator ? scroll_indicator : ' ', label, valuebuf);
+    }
     if (len < 0) len = 0;
     if ((size_t)len >= sizeof(line)) len = (int32_t)sizeof(line) - 1;
 
@@ -2924,7 +3029,8 @@ static const struct helpEntry helpEntries[] = {
     { NULL, "Editing" },
     { "Enter", "New line (auto-indents if enabled)" },
     { "Tab", "Indent (spaces or literal tab, see F2)" },
-    { "( { [ \" ' ` $", "Auto-close pair / skip over / wrap selection" },
+    { "( { [ \" ` $", "Auto-close pair / skip over / wrap selection" },
+    { "'", "Same, only if auto-close single quote is on (F2, off by default)" },
     { "Backspace / Delete", "Delete character (UTF-8 aware)" },
     { "Ctrl-Z / Ctrl-Y", "Undo / redo" },
     { "Paste (terminal-native, e.g. Cmd+V)", "Bulk insert, no auto-close on pasted text" },
@@ -2940,6 +3046,7 @@ static const struct helpEntry helpEntries[] = {
     { "Ctrl-R (inside search)", "Switch to search & replace" },
     { NULL, "File & editor" },
     { "Ctrl-S", "Save" },
+    { "F4 (or Ctrl-Shift-S, terminal permitting)", "Save as (always prompts for a filename)" },
     { "Ctrl-O", "Open another file (offers to save current file first)" },
     { "Ctrl-W", "Close current file without quitting" },
     { "Ctrl-Q", "Quit (offers to save first if unsaved)" },
@@ -3159,13 +3266,14 @@ static void editorSettingsRender(struct abuf *ab, const struct editorSettings *e
     rows_used += 2;
 
     int32_t visible = editorSettingsVisibleRows();
+    int32_t count = editorSettingsVisibleCount(edited);
     int32_t last_visible = scroll + visible - 1;
-    if (last_visible >= settingDescriptorCount) last_visible = settingDescriptorCount - 1;
-    for (int32_t i = scroll; i < settingDescriptorCount && i < scroll + visible; i++) {
+    if (last_visible >= count) last_visible = count - 1;
+    for (int32_t i = scroll; i < count && i < scroll + visible; i++) {
         char scroll_indicator = '\0';
         if (i == scroll && scroll > 0) scroll_indicator = '^';
-        else if (i == last_visible && last_visible < settingDescriptorCount - 1) scroll_indicator = 'v';
-        editorSettingsDrawRow(ab, i, i == cursor, edited, scroll_indicator);
+        else if (i == last_visible && last_visible < count - 1) scroll_indicator = 'v';
+        editorSettingsDrawRow(ab, editorSettingsDescriptorAt(edited, i), i == cursor, edited, scroll_indicator);
         rows_used++;
     }
 
@@ -3182,7 +3290,7 @@ static void editorSettingsRender(struct abuf *ab, const struct editorSettings *e
     char help[96];
     int32_t hlen = snprintf(help, sizeof(help),
         "  %s", (msg && msg[0]) ? msg :
-        "Up/Down select, Enter/Space/Left/Right edit, Ctrl-D reset defaults, Ctrl-S save, Esc cancel");
+        "Up/Down select, Enter/Space/Left/Right edit, Ctrl-D reset defaults, Ctrl-S/F2 save, Esc cancel");
     abAppend(ab, help, hlen);
     abAppend(ab, "\x1b[K\r\n", 5);
     rows_used++;
@@ -3241,7 +3349,7 @@ static uint8_t editorSettingsEditInt(struct editorSettings *edited, int32_t curs
     }
 }
 
-/* Both Ctrl-S and Esc -> Yes must apply the same live updates before
+/* Ctrl-S, F2 and Esc -> Yes must apply the same live updates before
  * saving. Changing only S leaves cached row rendering out of date. */
 static void editorSettingsSave(const struct editorSettings *edited) {
     struct editorSettings previous = S;
@@ -3276,6 +3384,8 @@ static void editorSettingsScreen(void) {
          * also self-corrects if settingDescriptorCount ever changes
          * or the terminal is resized while the panel is open. */
         int32_t visible = editorSettingsVisibleRows();
+        int32_t count = editorSettingsVisibleCount(&edited);
+        if (cursor >= count) cursor = count - 1;
         if (cursor < scroll) scroll = cursor;
         if (cursor >= scroll + visible) scroll = cursor - visible + 1;
 
@@ -3287,15 +3397,15 @@ static void editorSettingsScreen(void) {
         msg[0] = '\0';
 
         int32_t c = editorReadKey();
-        const struct settingDescriptor *d = &settingDescriptors[cursor];
+        const struct settingDescriptor *d = &settingDescriptors[editorSettingsDescriptorAt(&edited, cursor)];
         int32_t *slot = settingsScreenSlot(&edited, d);
 
         switch (c) {
             case ARROW_UP:
-                cursor = (cursor > 0) ? cursor - 1 : settingDescriptorCount - 1;
+                cursor = (cursor > 0) ? cursor - 1 : count - 1;
                 break;
             case ARROW_DOWN:
-                cursor = (cursor + 1) % settingDescriptorCount;
+                cursor = (cursor + 1) % count;
                 break;
 
             /* Left/Right cycle an enum value backward/forward -- only
@@ -3330,19 +3440,20 @@ static void editorSettingsScreen(void) {
                 break;
 
             case CTRL_KEY('s'):
+            case F2_KEY:
                 editorSettingsSave(&edited);
                 return;
 
             case CTRL_KEY('d'):
                 /* Resets only the local edited copy, same as any
-                 * other in-panel edit -- Ctrl-S is still required to
+                 * other in-panel edit -- Ctrl-S or F2 is still required to
                  * make it live/persist, Esc still discards it (and
                  * will now prompt, since edited != S). Doesn't touch
                  * filetype.* overrides: those aren't part of struct
                  * editorSettings / not edited here at all. */
                 settingsDefaults(&edited);
                 msg[0] = '\0';
-                snprintf(msg, sizeof(msg), "Reset to defaults (not saved yet -- Ctrl-S to keep, Esc to discard)");
+                snprintf(msg, sizeof(msg), "Reset to defaults (not saved yet -- Ctrl-S/F2 to keep, Esc to discard)");
                 break;
 
             case '\x1b': {
@@ -3390,6 +3501,12 @@ static const int32_t autoCloseTableCount =
     (int32_t)(sizeof(autoCloseTable) / sizeof(autoCloseTable[0]));
 
 static const struct autoClosePair *editorAutoCloseFor(int32_t c) {
+    /* Single quote has its own opt-in (default off, see
+     * auto_close_single_quote in settings.h) on top of the general
+     * auto_close_pairs switch -- skip it here so callers see a NULL
+     * pair and fall back to plain insertion/skip-over-nothing, exactly
+     * as if it weren't in autoCloseTable at all. */
+    if (c == '\'' && !S.auto_close_single_quote) return NULL;
     for (int32_t i = 0; i < autoCloseTableCount; i++)
         if (autoCloseTable[i].open == c) return &autoCloseTable[i];
     return NULL;
@@ -3697,6 +3814,11 @@ static void editorProcessKeypress(void) {
 
         case CTRL_KEY('s'):
             editorSave();
+            break;
+
+        case F4_KEY:
+        case SAVE_AS_KEY:
+            editorSaveAs();
             break;
 
         case CTRL_KEY('a'):

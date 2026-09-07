@@ -90,6 +90,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, show_line_numbers), 0, 0, NULL, 0 },
     { "tab_stop", "Tab width", SETTING_INT,
       offsetof(struct editorSettings, tab_stop), 1, 16, NULL, 0 },
+    { "mouse_enabled", "Mouse support (disables native terminal selection)", SETTING_BOOL,
+      offsetof(struct editorSettings, mouse_enabled), 0, 0, NULL, 0 },
     { "redo_key", "Redo key", SETTING_ENUM,
       offsetof(struct editorSettings, redo_key), 0, 0, redoKeyNames, 2 },
     { "undo_max_depth", "Undo history depth", SETTING_INT,
@@ -112,6 +114,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, auto_indent), 0, 0, NULL, 0 },
     { "auto_close_pairs", "Auto-close brackets/quotes", SETTING_BOOL,
       offsetof(struct editorSettings, auto_close_pairs), 0, 0, NULL, 0 },
+    { "auto_close_single_quote", "Auto-close single quote '", SETTING_BOOL,
+      offsetof(struct editorSettings, auto_close_single_quote), 0, 0, NULL, 0 },
     { "insert_spaces_for_tab", "Tab key inserts spaces", SETTING_BOOL,
       offsetof(struct editorSettings, insert_spaces_for_tab), 0, 0, NULL, 0 },
     { "show_invisibles", "Show invisible characters", SETTING_BOOL,
@@ -136,8 +140,6 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, color_syntax_emphasis_strong), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_syntax_math", "Syntax: LaTeX math color (Markdown)", SETTING_ENUM,
       offsetof(struct editorSettings, color_syntax_math), 0, 0, colorNames, SETTING_COLOR_COUNT },
-    { "mouse_enabled", "Mouse support (disables native terminal selection)", SETTING_BOOL,
-      offsetof(struct editorSettings, mouse_enabled), 0, 0, NULL, 0 },
 };
 const int32_t settingDescriptorCount = (int32_t)(sizeof(settingDescriptors) / sizeof(settingDescriptors[0]));
 
@@ -166,6 +168,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->backup_interval = 0;
     out->auto_indent = 1;
     out->auto_close_pairs = 1;
+    out->auto_close_single_quote = 0;
     out->insert_spaces_for_tab = 1;
     out->show_invisibles = 0;
     out->color_invisibles = COLOR_GRAY_LIGHT;
