@@ -74,6 +74,18 @@ enum settingColor {
     SETTING_COLOR_COUNT
 };
 
+/* DECSCUSR cursor shapes. */
+enum cursorStyle {
+    CURSOR_BLOCK = 0,
+    CURSOR_BAR
+};
+
+enum lineEndingMode {
+    LINE_ENDING_AUTO = 0,
+    LINE_ENDING_LF,
+    LINE_ENDING_CRLF
+};
+
 struct filetypeEntry {
     const char *ext;
     const char *name;
@@ -185,6 +197,13 @@ struct editorSettings {
      * mouse events to the foreground program instead of handling them
      * itself -- therefore this remains an explicit opt-in. */
     int32_t mouse_enabled;
+    /* Experimental Ghostty bridge for Cmd+S/F/Z/O/W. The terminal must
+     * be configured to send the documented CSI-u-style sequences. */
+    int32_t mac_command_keys;
+    /* CURSOR_BLOCK or CURSOR_BAR (I-beam). */
+    int32_t cursor_style;
+    /* Preserve detected style, or force LF/CRLF when saving. */
+    int32_t line_ending;
 };
 
 /* Which primitive type a setting's value is, for the generic

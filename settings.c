@@ -15,6 +15,8 @@
 #include <unistd.h>
 
 static const char *const redoKeyNames[] = { "ctrl-y", "ctrl-shift-z", NULL };
+static const char *const cursorStyleNames[] = { "block", "bar", NULL };
+static const char *const lineEndingNames[] = { "auto", "lf", "crlf", NULL };
 /* Order matches enum settingColor exactly -- each base hue's light,
  * dark, then dim variant. "gray" (with no suffix, from before the
  * light/dark/dim split) is kept as an alias handled separately in
@@ -92,6 +94,12 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, tab_stop), 1, 16, NULL, 0 },
     { "mouse_enabled", "Mouse support (disables native terminal selection)", SETTING_BOOL,
       offsetof(struct editorSettings, mouse_enabled), 0, 0, NULL, 0 },
+    { "mac_command_keys", "Experimental macOS Command keys (Ghostty)", SETTING_BOOL,
+      offsetof(struct editorSettings, mac_command_keys), 0, 0, NULL, 0 },
+    { "cursor_style", "Cursor shape", SETTING_ENUM,
+      offsetof(struct editorSettings, cursor_style), 0, 0, cursorStyleNames, 2 },
+    { "line_ending", "Line endings on save", SETTING_ENUM,
+      offsetof(struct editorSettings, line_ending), 0, 0, lineEndingNames, 3 },
     { "redo_key", "Redo key", SETTING_ENUM,
       offsetof(struct editorSettings, redo_key), 0, 0, redoKeyNames, 2 },
     { "undo_max_depth", "Undo history depth", SETTING_INT,
@@ -188,6 +196,9 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_syntax_function = COLOR_YELLOW_LIGHT;
     out->color_background = COLOR_TERMINAL_DEFAULT;
     out->mouse_enabled = 0;
+    out->mac_command_keys = 0;
+    out->cursor_style = CURSOR_BLOCK;
+    out->line_ending = LINE_ENDING_AUTO;
 }
 
 static const char *configPath(char *buf, size_t buflen) {

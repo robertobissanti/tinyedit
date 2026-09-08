@@ -16,6 +16,15 @@ partenza da cui il log sarà accurato in avanti.
 
 ## Fatto
 
+- [x] **Slogan casuale nello splash e nella schermata Info**
+  - _Inserito: 2026-09-08 · Completato: 2026-09-08_
+  - Selezione di 14 slogan ripuliti: rimossi riferimenti storici dubbi,
+    promesse non portabili e confronti fuorvianti con altri editor.
+  - Lo splash mostra solo il nome tinyedit e uno slogan scelto all'avvio.
+    Ogni apertura di F3 sceglie un altro slogan, escludendo quello
+    precedente. La scelta usa /dev/urandom, con fallback su rand().
+  - Verificati compilazione e rendering PTY di splash, Info e ridisegno.
+
 - _Inserito: 2026-09-04 · Completato: 2026-09-04_ (nucleo iniziale
   dell'editor, voci seguenti fino alla prima con titolo in grassetto)
 - [x] Editor a schermo intero stile kilo (raw mode, redraw, scrolling)

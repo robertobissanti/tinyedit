@@ -1,9 +1,16 @@
-# tinyedit
 
+
+<center>
+![Logo](imgs/tinyedit_logo_colore128x128.png) 
+</center>
+
+# tinyedit
+<center>
 [![GitHub release](https://img.shields.io/github/v/release/robertobissanti/tinyedit?sort=semver)](https://github.com/robertobissanti/tinyedit/releases)
 [![License](https://img.shields.io/github/license/robertobissanti/tinyedit)](LICENSE)
 [![Written in C](https://img.shields.io/github/languages/top/robertobissanti/tinyedit)](https://github.com/robertobissanti/tinyedit)
 [![Repository size](https://img.shields.io/github/repo-size/robertobissanti/tinyedit)](https://github.com/robertobissanti/tinyedit)
+</center>
 
 A small full-screen terminal text editor written in plain C (kilo-style,
 after [kilo](https://github.com/antirez/kilo) by Salvatore Sanfilippo),
@@ -109,6 +116,27 @@ Needs only a C99 compiler and a POSIX system (macOS or Linux).
 | `Ctrl-O` | Open another file by entering its path; offers to save the current file first. A missing path becomes a new file on first save. |
 | `Ctrl-W` | Close the current file without quitting tinyedit; offers to save first and leaves an empty buffer. |
 | `Ctrl-Q` | Quit (if there are unsaved changes, asks y/n/Esc: save-and-quit / quit without saving / cancel) |
+
+### Experimental macOS Command keys in Ghostty
+
+Tinyedit can optionally accept `Cmd-S`, `Cmd-F`, `Cmd-Z`, `Cmd-O`, and
+`Cmd-W` when Ghostty is configured to send its documented CSI-u-style
+bridge sequences. Enable **Experimental macOS Command keys (Ghostty)** in
+`F2`, or add `mac_command_keys = true` to `~/.tinyeditrc`.
+
+Add these bindings to Ghostty's configuration file:
+
+```ini
+keybind = super+s=text:\x1b[115;9u
+keybind = super+f=text:\x1b[102;9u
+keybind = super+z=text:\x1b[122;9u
+keybind = super+o=text:\x1b[111;9u
+keybind = super+w=text:\x1b[119;9u
+```
+
+This mode is off by default and is Ghostty-specific: terminal programs
+normally do not receive macOS Command-key events. `Cmd-C`, `Cmd-V`, and
+`Cmd-Q` intentionally remain the terminal or macOS shortcuts.
 
 ### Opening and closing files
 
@@ -252,6 +280,18 @@ each would be indistinguishable from its `-dark` twin. Note that
 `gray-dark`/`gray-dim` are plain black in this palette (the ANSI hue
 named "gray" is black at normal intensity), so they look like no
 background at all on a terminal whose own background is already dark.
+The editor resets its visual terminal state on exit, so a selected
+background does not remain active in the shell.
+
+`cursor_style` selects `block` (the default) or `bar` (I-beam). It uses
+the standard DECSCUSR terminal escape sequence; terminals without that
+extension keep their normal cursor shape.
+
+`line_ending` controls the format written on save: `auto` (default)
+preserves the first line-ending style detected when opening the file,
+while `lf` and `crlf` deliberately convert it. The status bar shows
+the effective style as `LF` or `CRLF`; a trailing `*` means the input
+file contained a mix of both styles, and auto will use the first one.
 
 When the settings list doesn't fit the screen, a column on the left
 (like the line-number gutter) shows `^` on the first visible entry if

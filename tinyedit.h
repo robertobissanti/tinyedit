@@ -190,6 +190,9 @@ struct editorConfig {
      * goes through the normal follow-the-cursor path on its very next
      * redraw -- this is a one-shot override, not a persistent mode. */
     uint8_t free_scroll;
+    /* Style detected on opening the active file. Auto save uses this. */
+    enum lineEndingMode detected_line_ending;
+    uint8_t line_endings_mixed;
     int32_t screenrows;
     int32_t screencols;
     int32_t numrows;

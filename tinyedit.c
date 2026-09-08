@@ -98,6 +98,13 @@ static void disableRawMode(void) {
         die("tcsetattr");
 }
 
+/* SGR background is terminal state, not screen content. Restore it on
+ * exit so an editor background cannot leak into the shell. DECSCUSR 0
+ * restores the terminal's cursor default. */
+static void restoreTerminalVisualState(void) {
+    write(STDOUT_FILENO, "\x1b[0m\x1b[?25h\x1b[0 q", 15);
+}
+
 static void enableRawMode(void) {
     if (tcgetattr(STDIN_FILENO, &E.orig_termios) == -1) die("tcgetattr");
     atexit(disableRawMode);
@@ -299,10 +306,12 @@ static int32_t editorReadKey(void) {
                      * are read as variable-width runs like the SGR
                      * mouse report below, since CSI-u doesn't pad
                      * fields to a fixed width. Only decoded for
-                     * codepoint 115 ('s') to recognize Ctrl-Shift-S; any
-                     * other codepoint here is a modified key this
-                     * project doesn't otherwise bind, so it's dropped
-                     * rather than mapped to something surprising. */
+                     * codepoint 115 ('s') to recognize Ctrl-Shift-S.
+                     * With mac_command_keys enabled, a separate,
+                     * documented Ghostty bridge also accepts modifier 9
+                     * (Super/Command) for S/F/Z/O/W. That bridge is
+                     * opt-in because Command is normally consumed by
+                     * macOS or the terminal emulator. */
                     int32_t fields[2] = {(seq[1] - '0') * 10 + (seq[2] - '0'), 0};
                     int32_t field_idx = 0;
                     uint8_t term = 0;
@@ -323,7 +332,16 @@ static int32_t editorReadKey(void) {
                             break;
                         }
                     }
-                    if (ok && term && field_idx == 1 && fields[0] == 115) {
+                    if (ok && term && field_idx == 1 &&
+                        fields[1] == 9 && S.mac_command_keys) {
+                        switch (fields[0]) {
+                            case 115: return CTRL_KEY('s'); /* Cmd-S */
+                            case 102: return CTRL_KEY('f'); /* Cmd-F */
+                            case 122: return CTRL_KEY('z'); /* Cmd-Z */
+                            case 111: return CTRL_KEY('o'); /* Cmd-O */
+                            case 119: return CTRL_KEY('w'); /* Cmd-W */
+                        }
+                    } else if (ok && term && field_idx == 1 && fields[0] == 115) {
                         /* mod is a bitmask + 1 (1 = no modifiers, 2 =
                          * Shift, 5 = Ctrl, 6 = Ctrl+Shift). */
                         if (fields[1] == 6) return SAVE_AS_KEY;
@@ -587,6 +605,30 @@ static int32_t editorRowCxToRx(erow *row, int32_t cx) {
         j += (int32_t)clen;
     }
     return rx;
+}
+
+/* Map a rendered display column to a source-byte cursor offset. Tabs
+ * have visual width but only one source byte, so mouse placement must
+ * use this same tab expansion as editorRowCxToRx(). */
+static int32_t editorRowRxToCx(erow *row, int32_t target_rx) {
+    int32_t rx = 0, pos = 0;
+    if (target_rx <= 0) return 0;
+    while (pos < row->size) {
+        int32_t width;
+        size_t clen;
+        if (row->chars[pos] == '\t') {
+            width = S.tab_stop - (rx % S.tab_stop);
+            clen = 1;
+        } else {
+            clen = utf8NextCharLen(row->chars, (size_t)pos, (size_t)row->size);
+            if (clen == 0) clen = 1;
+            width = utf8SingleCharWidth(row->chars + pos, clen);
+        }
+        if (rx + width > target_rx) break;
+        rx += width;
+        pos += (int32_t)clen;
+    }
+    return pos;
 }
 
 /* Placeholder glyphs for S.show_invisibles, single ASCII bytes on
@@ -966,10 +1008,18 @@ static void editorDelChar(void) {
 
 /* ---- file i/o ------------------------------------------------------------- */
 
+static enum lineEndingMode editorEffectiveLineEnding(void) {
+    if (S.line_ending == LINE_ENDING_LF || S.line_ending == LINE_ENDING_CRLF)
+        return (enum lineEndingMode)S.line_ending;
+    return E.detected_line_ending;
+}
+
 static char *editorRowsToString(size_t *buflen) {
+    enum lineEndingMode ending = editorEffectiveLineEnding();
+    size_t ending_len = ending == LINE_ENDING_CRLF ? 2 : 1;
     size_t totlen = 0;
     for (int32_t j = 0; j < E.numrows; j++)
-        totlen += (size_t)E.row[j].size + 1;
+        totlen += (size_t)E.row[j].size + ending_len;
     *buflen = totlen;
 
     char *buf = malloc(totlen);
@@ -977,8 +1027,8 @@ static char *editorRowsToString(size_t *buflen) {
     for (int32_t j = 0; j < E.numrows; j++) {
         memcpy(p, E.row[j].chars, (size_t)E.row[j].size);
         p += E.row[j].size;
-        *p = '\n';
-        p++;
+        if (ending == LINE_ENDING_CRLF) *p++ = '\r';
+        *p++ = '\n';
     }
     return buf;
 }
@@ -991,6 +1041,42 @@ static int32_t editorReadMultiByteKey(uint8_t lead, char *out);
 static void editorFreeUndoRedo(void);
 static void abAppend(struct abuf *ab, const char *s, int32_t len);
 static void abFree(struct abuf *ab);
+
+/* Prompt input is kept verbatim, but spaces/tabs are always rendered as
+ * compact placeholders so whitespace is unambiguous while searching or
+ * replacing.
+ * Newlines from a clipboard paste are displayed as "\n" so a one-line
+ * message bar remains one line, while the underlying replacement text
+ * still retains the real newline. */
+static char *editorPromptDisplayText(const char *buf, size_t len) {
+    size_t extra = 0;
+    for (size_t i = 0; i < len; i++)
+        if (buf[i] == '\n' || buf[i] == '\r') extra++;
+    char *display = malloc(len + extra + 1);
+    size_t dst = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (buf[i] == '\n' || buf[i] == '\r') {
+            display[dst++] = '\\';
+            display[dst++] = buf[i] == '\n' ? 'n' : 'r';
+        } else if (buf[i] == ' ') {
+            display[dst++] = INVISIBLE_SPACE_GLYPH;
+        } else if (buf[i] == '\t') {
+            display[dst++] = INVISIBLE_TAB_GLYPH;
+        } else {
+            display[dst++] = buf[i];
+        }
+    }
+    display[dst] = '\0';
+    return display;
+}
+
+static void editorPromptAppend(char **buf, size_t *bufsize, size_t *buflen,
+    const char *text, size_t len) {
+    while (*buflen + len + 1 > *bufsize) *bufsize *= 2;
+    memcpy(*buf + *buflen, text, len);
+    *buflen += len;
+    (*buf)[*buflen] = '\0';
+}
 
 /* Displays a prompt in the message bar and lets the user type a response
  * with basic line editing (Backspace, Enter, Esc to cancel). Returns a
@@ -1029,6 +1115,7 @@ static char *editorPromptCB(const char *prompt, const char *short_prompt,
     buf[0] = '\0';
 
     while (1) {
+        char *display = editorPromptDisplayText(buf, buflen);
         const char *active_prompt = prompt;
         if (short_prompt) {
             /* Two independent size limits, both checked: E.screencols
@@ -1048,19 +1135,35 @@ static char *editorPromptCB(const char *prompt, const char *short_prompt,
              * the long prompt can be shown at all. */
             char probe[sizeof(E.statusmsg)];
             int32_t plen;
-            if (status_fn) plen = snprintf(probe, sizeof(probe), prompt, status_fn(), buf);
-            else plen = snprintf(probe, sizeof(probe), prompt, buf);
+            if (status_fn) plen = snprintf(probe, sizeof(probe), prompt, status_fn(), display);
+            else plen = snprintf(probe, sizeof(probe), prompt, display);
             int32_t stmsg_limit = (int32_t)sizeof(E.statusmsg) - 1;
             int32_t limit = E.screencols < stmsg_limit ? E.screencols : stmsg_limit;
             if (plen > limit) active_prompt = short_prompt;
         }
-        if (status_fn) editorSetStatusMessage(active_prompt, status_fn(), buf);
-        else editorSetStatusMessage(active_prompt, buf);
+        if (status_fn) editorSetStatusMessage(active_prompt, status_fn(), display);
+        else editorSetStatusMessage(active_prompt, display);
+        free(display);
         editorRefreshScreen();
 
         int32_t c = editorReadKey();
         if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE) {
             if (buflen != 0) buf[--buflen] = '\0';
+        } else if (c == CTRL_KEY('c')) {
+            clipboardCopy(buf, buflen);
+            editorSetStatusMessage("Prompt copied");
+        } else if (c == CTRL_KEY('v')) {
+            size_t len;
+            char *text = clipboardPaste(&len);
+            if (text) {
+                editorPromptAppend(&buf, &bufsize, &buflen, text, len);
+                clipboardFree(text);
+            }
+        } else if (c == PASTE_START_KEY) {
+            size_t len;
+            char *text = editorReadPastedText(&len);
+            editorPromptAppend(&buf, &bufsize, &buflen, text, len);
+            free(text);
         } else if (c == '\x1b') {
             editorSetStatusMessage("");
             if (callback) callback(buf, c);
@@ -1073,22 +1176,12 @@ static char *editorPromptCB(const char *prompt, const char *short_prompt,
                 return buf;
             }
         } else if (c >= 32 && c < 127) {
-            if (buflen + 2 > bufsize) {
-                bufsize *= 2;
-                buf = realloc(buf, bufsize);
-            }
-            buf[buflen++] = (char)c;
-            buf[buflen] = '\0';
+            char ch = (char)c;
+            editorPromptAppend(&buf, &bufsize, &buflen, &ch, 1);
         } else if (c >= 0x80 && c <= 0xff) {
             char seq[4];
             int32_t seq_len = editorReadMultiByteKey((uint8_t)c, seq);
-            while (buflen + (size_t)seq_len + 1 > bufsize) {
-                bufsize *= 2;
-                buf = realloc(buf, bufsize);
-            }
-            memcpy(buf + buflen, seq, (size_t)seq_len);
-            buflen += (size_t)seq_len;
-            buf[buflen] = '\0';
+            editorPromptAppend(&buf, &bufsize, &buflen, seq, (size_t)seq_len);
         }
 
         if (callback) callback(buf, c);
@@ -1147,10 +1240,25 @@ static void editorOpen(const char *filename) {
         die("fopen");
     }
 
+    E.detected_line_ending = LINE_ENDING_LF;
+    E.line_endings_mixed = 0;
+    uint8_t saw_line_ending = 0;
     char *line = NULL;
     size_t linecap = 0;
     ssize_t linelen;
     while ((linelen = getline(&line, &linecap, fp)) != -1) {
+        enum lineEndingMode this_ending = LINE_ENDING_LF;
+        uint8_t has_ending = linelen > 0 && line[linelen - 1] == '\n';
+        if (has_ending && linelen > 1 && line[linelen - 2] == '\r')
+            this_ending = LINE_ENDING_CRLF;
+        if (has_ending) {
+            if (!saw_line_ending) {
+                E.detected_line_ending = this_ending;
+                saw_line_ending = 1;
+            } else if (this_ending != E.detected_line_ending) {
+                E.line_endings_mixed = 1;
+            }
+        }
         while (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r'))
             linelen--;
         editorInsertRow(E.numrows, line, (size_t)linelen);
@@ -1158,6 +1266,9 @@ static void editorOpen(const char *filename) {
     free(line);
     fclose(fp);
     E.dirty = 0;
+    if (E.line_endings_mixed)
+        editorSetStatusMessage("Mixed line endings: auto uses %s",
+            E.detected_line_ending == LINE_ENDING_CRLF ? "CRLF" : "LF");
 }
 
 /* Writes a crash-recovery backup if S.backup_interval seconds have
@@ -1452,6 +1563,8 @@ static void editorResetDocument(void) {
     E.rowoff = 0;
     E.coloff = 0;
     E.free_scroll = 0;
+    E.detected_line_ending = LINE_ENDING_LF;
+    E.line_endings_mixed = 0;
     E.dirty = 0;
     E.sel_active = 0;
     E.sel_anchor_x = 0;
@@ -1831,24 +1944,14 @@ static void editorMouseToCursor(int32_t screen_col, int32_t screen_row, int32_t 
         int32_t nseg = editorRowSegments(row, wrapcols);
         if (seg >= nseg) seg = nseg - 1;
         int32_t target_rx = row->seg_start_rx[seg] + cursor_col;
-        /* Walk the segment's characters to find the byte offset whose
-         * rendered column is closest to target_rx -- same "walk with
-         * utf8NextCharLen, never assume 1 byte == 1 column" rule as
-         * everywhere else in this codebase, since a
-         * clicked column can land in the middle of a wide/multi-byte
-         * glyph. */
-        int32_t seg_end = (seg + 1 < nseg) ? row->seg_start[seg + 1] : row->size;
-        int32_t pos = row->seg_start[seg];
-        int32_t rx = row->seg_start_rx[seg];
-        while (pos < seg_end) {
-            size_t clen = utf8NextCharLen(row->chars, (size_t)pos, (size_t)row->size);
-            if (clen == 0) clen = 1;
-            int32_t w = utf8SingleCharWidth(row->chars + pos, clen);
-            if (rx + w > target_rx) break;
-            rx += w;
-            pos += (int32_t)clen;
-        }
-        cx = pos;
+        /* Keep the full segment extent here, including the blank cells
+         * of a trailing tab. editorSegVisibleEndRx() intentionally
+         * trims them for visual End navigation, but trimming them for a
+         * click would make every cell of that tab map before the tab. */
+        int32_t seg_end_rx = (seg + 1 < nseg) ? row->seg_start_rx[seg + 1] :
+            editorRowCxToRx(row, row->size);
+        if (target_rx > seg_end_rx) target_rx = seg_end_rx;
+        cx = editorRowRxToCx(row, target_rx);
     } else {
         filerow = E.rowoff + cursor_row;
         if (filerow >= E.numrows) filerow = E.numrows > 0 ? E.numrows - 1 : 0;
@@ -1857,17 +1960,7 @@ static void editorMouseToCursor(int32_t screen_col, int32_t screen_row, int32_t 
             return;
         }
         erow *row = &E.row[filerow];
-        int32_t target_rx = E.coloff + cursor_col;
-        int32_t pos = 0, rx = 0;
-        while (pos < row->size) {
-            size_t clen = utf8NextCharLen(row->chars, (size_t)pos, (size_t)row->size);
-            if (clen == 0) clen = 1;
-            int32_t w = utf8SingleCharWidth(row->chars + pos, clen);
-            if (rx + w > target_rx) break;
-            rx += w;
-            pos += (int32_t)clen;
-        }
-        cx = pos;
+        cx = editorRowRxToCx(row, E.coloff + cursor_col);
     }
 
     *out_cy = filerow;
@@ -2004,8 +2097,17 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
          * for this row (see editorUpdateRow()), so this is a no-op in
          * that case without an extra flag check. */
         const char *syn_color = NULL;
-        if (!should_sel && !is_invisible_glyph && row->hl && rendercol < row->rsize)
-            syn_color = syntaxColorFor((enum syntaxHighlight)row->hl[rendercol], &S);
+        if (!should_sel && !is_invisible_glyph) {
+            if (row->hl && rendercol < row->rsize) {
+                syn_color = syntaxColorFor((enum syntaxHighlight)row->hl[rendercol], &S);
+            } else if (S.color_syntax_normal != COLOR_TERMINAL_DEFAULT) {
+                /* An unknown extension (and syntax highlighting turned
+                 * off) has no hl array, but its text is still normal
+                 * text. Do not make the user's normal-text color depend
+                 * on filetype detection. */
+                syn_color = ansiColorCode(S.color_syntax_normal);
+            }
+        }
         if (syn_color) abAppend(ab, syn_color, (int32_t)strlen(syn_color));
 
         /* Emit the complete UTF-8 sequence before resetting the color.
@@ -2043,8 +2145,28 @@ static void editorDrawGutter(struct abuf *ab, int32_t gutter, int32_t filerow, u
  * without knowing to press F1, but it still has to fit a small
  * terminal, so it lists the way out and the way to get help rather
  * than trying to summarize the whole keymap. */
-static const char *const splashLines[] = {
-    "tinyedit -- a small terminal text editor",
+/* Splash uses the startup choice; Info chooses again on each opening. */
+static const char *const slogans[] = {
+    "The terminal editor your fingers already know.",
+    "You already know how to exit.",
+    "No modes, no spells. Just edit.",
+    "Fast in the shell, familiar to your hands.",
+    "Text editing, not piano lessons.",
+    "Pure C. Familiar keys. Just edit.",
+    "Built for muscle memory.",
+    "Ctrl+S saves. Ctrl+Q quits.",
+    "The terminal editor that respects your desktop habits.",
+    "Desktop shortcuts at the command line.",
+    "Open a file. Start typing.",
+    "Small editor. Familiar shortcuts.",
+    "No external libraries. Familiar muscle memory.",
+    "Forget :wq. Save with Ctrl+S, quit with Ctrl+Q."
+};
+static const char *sessionSlogan;
+
+static const char *splashLines[] = {
+    "tinyedit",
+    NULL, /* session slogan, assigned at startup */
     NULL,
     "version " TE_VERSION,
     "by Roberto Bissanti",
@@ -2062,6 +2184,43 @@ static const char *const splashLines[] = {
 };
 static const int32_t splashLineCount =
     (int32_t)(sizeof(splashLines) / sizeof(splashLines[0]));
+
+static void editorChooseSlogan(void) {
+    uint32_t count = (uint32_t)(sizeof(slogans) / sizeof(slogans[0]));
+    uint32_t previous = count;
+    for (uint32_t i = 0; i < count; i++)
+        if (sessionSlogan == slogans[i]) previous = i;
+    uint32_t choices = previous < count ? count - 1 : count;
+    uint32_t sample = 0;
+    uint32_t threshold = (uint32_t)(0u - choices) % choices;
+    uint8_t sampled = 0;
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd >= 0) {
+        /* Reject the short remainder so every slogan is equally likely.
+         * Avoid the first rand() output: on macOS, related seeds and
+         * this list size gave visibly repetitive selections. */
+        do {
+            size_t used = 0;
+            while (used < sizeof(sample)) {
+                ssize_t n = read(fd, (char *)&sample + used, sizeof(sample) - used);
+                if (n < 0 && errno == EINTR) continue;
+                if (n <= 0) break;
+                used += (size_t)n;
+            }
+            sampled = used == sizeof(sample);
+        } while (sampled && sample < threshold);
+        close(fd);
+    }
+    if (!sampled) {
+        /* Best-effort fallback for systems without /dev/urandom. */
+        srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
+        for (int i = 0; i < 8; i++) sample = (uint32_t)rand();
+    }
+    uint32_t chosen = sample % choices;
+    if (previous < count && chosen >= previous) chosen++;
+    sessionSlogan = slogans[chosen];
+    if (!splashLines[1]) splashLines[1] = sessionSlogan;
+}
 
 /* Draws the splash line belonging to video row `y`, or a plain "~" when
  * that row isn't part of the block. The block is centered both ways and
@@ -2298,13 +2457,15 @@ static void editorDrawStatusBar(struct abuf *ab) {
     }
 
     const char *filetype = editorFiletypeLabel();
+    const char *ending = editorEffectiveLineEnding() == LINE_ENDING_CRLF ? "CRLF" : "LF";
+    const char *mixed = E.line_endings_mixed ? "*" : "";
     int32_t rlen;
     if (filetype)
-        rlen = snprintf(rstatus, sizeof(rstatus), "%s | %d/%d: C %d",
-            filetype, E.cy + 1, E.numrows, E.cx + 1);
+        rlen = snprintf(rstatus, sizeof(rstatus), "%s | %s%s | %d/%d: C %d",
+            filetype, ending, mixed, E.cy + 1, E.numrows, E.cx + 1);
     else
-        rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d: C %d",
-            E.cy + 1, E.numrows, E.cx + 1);
+        rlen = snprintf(rstatus, sizeof(rstatus), "%s%s | %d/%d: C %d",
+            ending, mixed, E.cy + 1, E.numrows, E.cx + 1);
     if (len > E.screencols) len = E.screencols;
     abAppend(ab, status, len);
     while (len < E.screencols) {
@@ -2364,6 +2525,7 @@ static void editorRefreshScreen(void) {
     struct abuf ab = ABUF_INIT;
 
     abAppend(&ab, "\x1b[?25l", 6);
+    abAppend(&ab, S.cursor_style == CURSOR_BAR ? "\x1b[6 q" : "\x1b[2 q", 5);
     /* Set before the clear (not after) so the cells \x1b[2J erases
      * pick up this background too, not just the rows/gutter text
      * drawn below -- \x1b[2J fills erased cells with whatever SGR
@@ -2529,7 +2691,13 @@ static void editorMoveCursor(int32_t key) {
             if (E.cy != 0) E.cy--;
             break;
         case ARROW_DOWN:
-            if (E.cy < E.numrows) E.cy++;
+            if (E.numrows > 0 && E.cy >= E.numrows - 1) {
+                /* Down at EOF is End: do not enter a phantom final row. */
+                E.cy = E.numrows - 1;
+                E.cx = E.row[E.cy].size;
+            } else if (E.cy < E.numrows) {
+                E.cy++;
+            }
             break;
     }
 
@@ -2792,6 +2960,35 @@ static char *editorDecodeRegexReplacement(const char *raw, size_t *out_len) {
     return decoded;
 }
 
+/* POSIX ERE deliberately has no portable \t/\n shorthand. Decode the
+ * familiar controls ourselves before handing the pattern to regcomp(),
+ * matching the replacement prompt's existing escape behaviour. */
+static char *editorDecodeRegexPattern(const char *raw) {
+    size_t len = strlen(raw);
+    char *decoded = malloc(len + 1);
+    size_t dst = 0;
+    for (size_t src = 0; src < len; src++) {
+        if (raw[src] == '\\' && src + 1 < len) {
+            char next = raw[src + 1];
+            /* Preserve \\ exactly. In particular, the regex \\n means
+             * a literal backslash followed by n, not an actual newline. */
+            if (next == '\\') {
+                decoded[dst++] = raw[src++];
+                decoded[dst++] = raw[src];
+                continue;
+            }
+            if (next == 't' || next == 'n' || next == 'r') {
+                src++;
+                decoded[dst++] = next == 't' ? '\t' : next == 'n' ? '\n' : '\r';
+                continue;
+            }
+        }
+        decoded[dst++] = raw[src];
+    }
+    decoded[dst] = '\0';
+    return decoded;
+}
+
 /* Finds the LAST regex match on `row` that starts at or before column
  * `limit_x` (inclusive), storing its start offset/length in *out_x/
  * *out_len. Returns 1 if any match qualifies, 0 otherwise. There is no
@@ -2866,7 +3063,10 @@ static uint8_t editorFindFrom(const char *query, int32_t from_y, int32_t from_x,
     regex_t re;
     uint8_t have_re = 0;
     if (search_regex_mode) {
-        if (regcomp(&re, query, REG_EXTENDED) != 0) {
+        char *pattern = editorDecodeRegexPattern(query);
+        int32_t compile_failed = regcomp(&re, pattern, REG_EXTENDED) != 0;
+        free(pattern);
+        if (compile_failed) {
             E.search_match_y = -1;
             return 0;
         }
@@ -3352,6 +3552,7 @@ static const struct helpEntry helpEntries[] = {
     { "'", "Same, only if auto-close single quote is on (F2, off by default)" },
     { "Backspace / Delete", "Delete character (UTF-8 aware)" },
     { "Ctrl-Z / Ctrl-Y", "Undo / redo" },
+    { "Cmd-S/F/Z/O/W (Ghostty opt-in)", "Save/find/undo/open/close; see README" },
     { "Paste (terminal-native, e.g. Cmd+V)", "Bulk insert, no auto-close on pasted text" },
     { NULL, "Selection & clipboard" },
     { "Shift+Arrows, Shift+PageUp/Down", "Extend selection" },
@@ -3506,6 +3707,7 @@ static void editorInfoAppendBlank(struct abuf *ab, int32_t *rows_used) {
  * like editorHelpScreen() any key closes it -- this only reads E/S,
  * never writes them. */
 static void editorInfoScreen(void) {
+    editorChooseSlogan();
     struct abuf ab = ABUF_INIT;
     abAppend(&ab, "\x1b[?25l\x1b[H", 9);
     int32_t rows_used = 0;
@@ -3518,6 +3720,7 @@ static void editorInfoScreen(void) {
 
     editorInfoAppendSection(&ab, &rows_used, "tinyedit");
     editorInfoAppendLine(&ab, &rows_used, "    Version   %s", TE_VERSION);
+    editorInfoAppendLine(&ab, &rows_used, "    %s", sessionSlogan);
     editorInfoAppendLine(&ab, &rows_used, "    Author    Roberto Bissanti <roberto.bissanti@gmail.com>");
     editorInfoAppendLine(&ab, &rows_used, "    License   MIT (see LICENSE; utf8.c ported from linenoise, BSD 2-Clause)");
     editorInfoAppendLine(&ab, &rows_used, "    Homepage  https://github.com/robertobissanti/tinyedit");
@@ -3675,6 +3878,9 @@ static uint8_t editorSettingsEditInt(struct editorSettings *edited, int32_t curs
 static void editorSettingsSave(const struct editorSettings *edited) {
     struct editorSettings previous = S;
     S = *edited;
+    if (previous.color_background != COLOR_TERMINAL_DEFAULT &&
+        S.color_background == COLOR_TERMINAL_DEFAULT)
+        write(STDOUT_FILENO, "\x1b[49m", 5);
     if (S.show_top_bar != previous.show_top_bar)
         winsize_changed = 1;
     if (S.tab_stop != previous.tab_stop ||
@@ -4644,6 +4850,8 @@ static void initEditor(void) {
     E.rowoff = 0;
     E.coloff = 0;
     E.free_scroll = 0;
+    E.detected_line_ending = LINE_ENDING_LF;
+    E.line_endings_mixed = 0;
     E.numrows = 0;
     E.row = NULL;
     E.dirty = 0;
@@ -4679,6 +4887,8 @@ int main(int argc, char **argv) {
     enableBracketedPaste();
     enableResizeHandling();
     initEditor();
+    editorChooseSlogan();
+    atexit(restoreTerminalVisualState);
     if (S.mouse_enabled) enableMouseReporting();
     atexit(editorFreeUndoRedo);
     if (argc >= 2) editorOpen(argv[1]);
