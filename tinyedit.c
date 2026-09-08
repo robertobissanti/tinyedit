@@ -120,11 +120,12 @@ static void disableRawMode(void) {
         die("tcsetattr");
 }
 
-/* SGR background is terminal state, not screen content. Restore it on
- * exit so an editor background cannot leak into the shell. DECSCUSR 0
- * restores the terminal's cursor default. */
+/* SGR background is terminal state, but an erase fills cells using the
+ * CURRENT background. Reset first, then clear, so the shell prompt is drawn
+ * on the terminal's real default background rather than on tinyedit's old
+ * painted cells. DECSCUSR 0 restores the terminal's cursor default. */
 static void restoreTerminalVisualState(void) {
-    write(STDOUT_FILENO, "\x1b[0m\x1b[?25h\x1b[0 q", 15);
+    write(STDOUT_FILENO, "\x1b[0m\x1b[2J\x1b[H\x1b[?25h\x1b[0 q", 22);
 }
 
 static void enableRawMode(void) {
@@ -1669,8 +1670,6 @@ static void editorQuit(void) {
      * look like evidence of a crash the next time this path is opened. */
     if (E.filename) backupRemove(E.filename);
 
-    write(STDOUT_FILENO, "\x1b[2J", 4);
-    write(STDOUT_FILENO, "\x1b[H", 3);
     exit(0);
 }
 
