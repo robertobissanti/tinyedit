@@ -130,6 +130,29 @@ typedef struct erow {
      * future language), and conflating them would silently misrender
      * whichever one lost the race. */
     uint8_t hl_open_math;
+    /* Whether this row ends inside a YAML front matter block -- the
+     * "---" delimited metadata header some Markdown dialects (Jekyll,
+     * Eleventy, Hugo) put at the top of a file. Its own bit for the
+     * same reason hl_open_math is: the Markdown tokenizer already uses
+     * hl_open_comment for fenced code blocks, and a document can
+     * contain both. Only ever set on rows near the top of the file,
+     * since front matter is recognized only when it opens on row 0. */
+    uint8_t hl_open_frontmatter;
+    /* Whether this row ends inside an unclosed Markdown emphasis span:
+     * 0 = none, 1 = italic (single marker), 2 = bold (double marker).
+     * One field with three states rather than two flags, since the two
+     * can't be open at once -- the tokenizer tracks a single innermost
+     * span, and nesting bold inside italic across lines is past what
+     * this tokenizer attempts.
+     *
+     * Unlike the three states above, an emphasis span is closed by a
+     * blank line as well as by its matching marker: a lone '*' in
+     * prose ("filetype.*", "5 * 3") is indistinguishable from an
+     * opener until the closer shows up, so bounding it at the
+     * paragraph keeps such a stray marker from recoloring the rest of
+     * the document. That also matches how Markdown itself scopes
+     * emphasis. */
+    uint8_t hl_open_emphasis;
     /* Cached soft-wrap segmentation. Byte and display-column offsets
      * are kept separately because UTF-8 makes them diverge. Rebuilt
      * when render changes or the effective wrap width changes. */

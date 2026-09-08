@@ -248,6 +248,15 @@ extern const int32_t settingDescriptorCount;
  * free, valid until the next settingsLoad() call. */
 const char *filetypeForExtension(const char *ext);
 
+/* Registers `ext` -> `name` as a filetype override, exactly as a
+ * "filetype.<ext> = <Name>" line in ~/.tinyeditrc would, replacing any
+ * existing entry for that extension. Only updates the in-memory table:
+ * call settingsSave() to persist it. Used when a user syntax .conf
+ * declares a name for an extension ~/.tinyeditrc doesn't know yet, so
+ * the extension gets recorded once instead of being re-resolved from
+ * the .conf files on every run. Ignores empty/NULL arguments. */
+void settingsSetFiletype(const char *ext, const char *name);
+
 /* Fills *out with hardcoded defaults. Always succeeds. */
 void settingsDefaults(struct editorSettings *out);
 

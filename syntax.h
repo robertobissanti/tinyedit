@@ -95,6 +95,33 @@ struct syntaxLang {
      * parens for something else -- would get misleading highlighting
      * otherwise; the built-in C-like languages all opt in explicitly. */
     uint8_t highlight_function_calls;
+    /* Human-readable language name for the status bar ("Nunjucks"),
+     * from the optional "filetype = <Name>" key. Lives here rather
+     * than only in ~/.tinyeditrc's filetype.* overrides so a shipped
+     * .conf is self-contained: one file carries both how to highlight
+     * a language and what to call it. NULL when the key is absent --
+     * the language still highlights, it just contributes no name. */
+    const char *filetype;
+    /* Which tokenizer handles this language. The generic C-like one
+     * (BASE_TOKENIZER_GENERIC) is the default and what every keyword/
+     * quote/comment field above describes. BASE_TOKENIZER_XML instead
+     * routes the language through the markup tokenizer -- for template
+     * formats that are HTML with an expression language embedded
+     * (Nunjucks, Jinja, Liquid, Twig), where the surrounding markup
+     * needs real tag/attribute highlighting the generic tokenizer
+     * can't provide. With the XML base, the keyword/comment fields are
+     * unused and `template_delimiters` takes over. */
+    enum {
+        BASE_TOKENIZER_GENERIC = 0,
+        BASE_TOKENIZER_XML
+    } base_tokenizer;
+    /* Delimiter pairs marking embedded template expressions, as a
+     * NULL-terminated array of "open close" strings ("{{ }}", "{% %}",
+     * "{# %}"...). Parsed from the `template_delimiters` key. A pair
+     * whose opener is "{#" is treated as a comment (highlighted
+     * HL_COMMENT); the rest highlight as an expression block. NULL
+     * when the language declares none. */
+    const char *const *template_delimiters;
 };
 
 /* Recomputes row->hl (allocating/resizing it to row->rsize if needed)
@@ -115,8 +142,15 @@ struct syntaxLang {
  * editorUpdateRow()/editorRehighlightFrom() in tinyedit.c). Two
  * separate in/out states (not just one combined flag) because a
  * language could in principle have both open at once. */
+/* `row_index` is the row's position in the buffer (0-based), needed
+ * because YAML front matter is only front matter when its opening
+ * "---" is the very first line -- a "---" further down a Markdown
+ * document is a horizontal rule. `prev_open_frontmatter` carries
+ * row->hl_open_frontmatter from the previous row, exactly like the two
+ * arguments above. */
 void syntaxHighlightRow(erow *row, const char *filename,
-    uint8_t syntax_highlight_enabled, uint8_t prev_open_comment, uint8_t prev_open_math);
+    uint8_t syntax_highlight_enabled, uint8_t prev_open_comment, uint8_t prev_open_math,
+    uint8_t prev_open_frontmatter, int32_t row_index, uint8_t prev_open_emphasis);
 
 /* ANSI color escape (from the shared palette, see ansiColorCode() in
  * settings.h/.c) for a given highlight class, reading
@@ -127,5 +161,30 @@ void syntaxHighlightRow(erow *row, const char *filename,
  * than an extern global, since editorConfig/editorSettings are kept
  * static to tinyedit.c. */
 const char *syntaxColorFor(enum syntaxHighlight hl, const struct editorSettings *s);
+
+/* Whether any user .conf under ~/.tinyedit/syntax claims `ext` (given
+ * without the leading dot, e.g. "njk"), i.e. whether opening such a
+ * file would actually get highlighted. Lets callers tell an extension
+ * that is known (~/.tinyeditrc names it) but whose highlight config
+ * file is missing from one that is simply unknown -- see
+ * editorFiletypeLabel() in tinyedit.c, which warns about the former.
+ * Built-in compiled-in languages are NOT considered here: this
+ * answers specifically "is there a user config file for it". */
+uint8_t syntaxUserLangHasExtension(const char *ext);
+
+/* Whether `ext` is handled by a compiled-in language or a dedicated
+ * tokenizer (C, Python, Markdown, HTML/XML, CSS, ...). Such a language
+ * needs no .conf file to highlight, so callers checking whether an
+ * extension's highlighting is actually available must accept either
+ * this or syntaxUserLangHasExtension(). */
+uint8_t syntaxHasBuiltinExtension(const char *ext);
+
+/* Language name a user .conf declares for `ext` via its "filetype"
+ * key, or NULL if no user config claims that extension or the one
+ * that does omits the key. Used to resolve a status-bar name for an
+ * extension that ~/.tinyeditrc and the built-in table don't know --
+ * see filetypeForExtension() in settings.c. Returned pointer is owned
+ * by this module; do not free. */
+const char *syntaxUserFiletypeForExtension(const char *ext);
 
 #endif /* __TE_SYNTAX_H */

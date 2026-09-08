@@ -274,6 +274,11 @@ static void addFiletypeOverride(const char *ext, const char *name) {
     filetypeOverrideCount++;
 }
 
+void settingsSetFiletype(const char *ext, const char *name) {
+    if (!ext || !*ext || !name || !*name) return;
+    addFiletypeOverride(ext, name);
+}
+
 static void freeFiletypeOverrides(void) {
     for (int32_t i = 0; i < filetypeOverrideCount; i++) {
         free((void *)filetypeOverrides[i].ext);

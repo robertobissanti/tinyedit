@@ -692,13 +692,21 @@ static int32_t editorRowRxToCx(erow *row, int32_t target_rx) {
 static void editorRehighlightFrom(int32_t from, uint8_t force) {
     uint8_t open_comment = from > 0 ? E.row[from - 1].hl_open_comment : 0;
     uint8_t open_math = from > 0 ? E.row[from - 1].hl_open_math : 0;
+    uint8_t open_frontmatter = from > 0 ? E.row[from - 1].hl_open_frontmatter : 0;
+    uint8_t open_emphasis = from > 0 ? E.row[from - 1].hl_open_emphasis : 0;
     for (int32_t i = from; i < E.numrows; i++) {
         uint8_t prev_comment = E.row[i].hl_open_comment;
         uint8_t prev_math = E.row[i].hl_open_math;
-        syntaxHighlightRow(&E.row[i], E.filename, (uint8_t)S.syntax_highlight, open_comment, open_math);
+        uint8_t prev_frontmatter = E.row[i].hl_open_frontmatter;
+        uint8_t prev_emphasis = E.row[i].hl_open_emphasis;
+        syntaxHighlightRow(&E.row[i], E.filename, (uint8_t)S.syntax_highlight, open_comment, open_math,
+            open_frontmatter, i, open_emphasis);
         open_comment = E.row[i].hl_open_comment;
         open_math = E.row[i].hl_open_math;
-        if (!force && i > from && open_comment == prev_comment && open_math == prev_math) break;
+        open_frontmatter = E.row[i].hl_open_frontmatter;
+        open_emphasis = E.row[i].hl_open_emphasis;
+        if (!force && i > from && open_comment == prev_comment && open_math == prev_math &&
+            open_frontmatter == prev_frontmatter && open_emphasis == prev_emphasis) break;
     }
 }
 
@@ -737,7 +745,12 @@ static void editorUpdateRow(erow *row) {
     int32_t idx_in_buffer = (int32_t)(row - E.row);
     uint8_t prev_open_comment = idx_in_buffer > 0 ? E.row[idx_in_buffer - 1].hl_open_comment : 0;
     uint8_t prev_open_math = idx_in_buffer > 0 ? E.row[idx_in_buffer - 1].hl_open_math : 0;
-    syntaxHighlightRow(row, E.filename, (uint8_t)S.syntax_highlight, prev_open_comment, prev_open_math);
+    uint8_t prev_open_frontmatter =
+        idx_in_buffer > 0 ? E.row[idx_in_buffer - 1].hl_open_frontmatter : 0;
+    uint8_t prev_open_emphasis =
+        idx_in_buffer > 0 ? E.row[idx_in_buffer - 1].hl_open_emphasis : 0;
+    syntaxHighlightRow(row, E.filename, (uint8_t)S.syntax_highlight, prev_open_comment, prev_open_math,
+        prev_open_frontmatter, idx_in_buffer, prev_open_emphasis);
     if (idx_in_buffer >= 0 && idx_in_buffer + 1 < E.numrows)
         editorRehighlightFrom(idx_in_buffer + 1, 0);
 }
@@ -1262,9 +1275,70 @@ static void editorLoadLines(const char *data, size_t len) {
     }
 }
 
+/* Resolves the status-bar filetype for the just-opened file's
+ * extension, in the order the two config sources are authoritative in:
+ *
+ *   1. ~/.tinyeditrc (or the built-in table) already names it. The
+ *      name is settled; the only open question is whether the syntax
+ *      .conf that would highlight it is actually installed. A built-in
+ *      language carries its own compiled-in tokenizer, so only a name
+ *      that came from a user override can be missing one -- that's the
+ *      case worth a warning, since the user sees a language name in
+ *      the status bar but no colors and would otherwise have no hint
+ *      why.
+ *   2. Nothing names it, but an installed .conf claims the extension
+ *      and declares a "filetype" key. Record it in ~/.tinyeditrc so
+ *      the extension is known from now on, and persist immediately.
+ *
+ * Anything else (no name anywhere, or a .conf without a filetype key)
+ * leaves the field absent, exactly as before.
+ *
+ * Called once per file open rather than from editorFiletypeLabel(),
+ * which runs on every status-bar redraw -- resolving and potentially
+ * writing ~/.tinyeditrc at that rate would be wasteful and would put a
+ * disk write in the render path. */
+static void editorResolveFiletype(void) {
+    if (!E.filename) return;
+    const char *dot = strrchr(E.filename, '.');
+    if (!dot || dot[1] == '\0' || dot == E.filename) return;
+    const char *ext = dot + 1;
+
+    if (filetypeForExtension(ext)) return;
+
+    const char *name = syntaxUserFiletypeForExtension(ext);
+    if (!name) return;
+
+    settingsSetFiletype(ext, name);
+    settingsSave(&S);
+}
+
+/* Warns when the open file's extension has a filetype name but no
+ * highlighting to go with it -- see editorResolveFiletype() above for
+ * why only a user-declared name can end up in that state. Split out
+ * from that function, and called after the startup hint is set, so the
+ * sticky hint doesn't immediately overwrite this message (same
+ * ordering constraint the backup-recovery message has). */
+static void editorWarnMissingHighlightConfig(void) {
+    if (!E.filename) return;
+    const char *dot = strrchr(E.filename, '.');
+    if (!dot || dot[1] == '\0' || dot == E.filename) return;
+    const char *ext = dot + 1;
+
+    const char *name = filetypeForExtension(ext);
+    if (!name) return;
+    if (syntaxUserLangHasExtension(ext) || syntaxHasBuiltinExtension(ext)) return;
+
+    editorSetStatusMessage("Filetype '%s': highlight config missing", name);
+}
+
 static void editorOpen(const char *filename) {
     free(E.filename);
     E.filename = strdup(filename);
+
+    /* Before the read, so it runs for a brand-new file too: the
+     * extension is known from the name alone, and a new .njk should
+     * get its filetype recorded just like an existing one. */
+    editorResolveFiletype();
 
     FILE *fp = fopen(filename, "r");
     if (!fp) {
@@ -4959,6 +5033,8 @@ int main(int argc, char **argv) {
         editorSetStatusMessageSticky("%s-S save | %s-O open | %s-Q quit | F1 help",
             editorPrimaryModifier(), editorPrimaryModifier(), editorPrimaryModifier());
     }
+
+    editorWarnMissingHighlightConfig();
 
     /* After the startup hint so a successful recovery's own sticky
      * message (see editorOfferBackupRecovery()) is what's left on

@@ -54,7 +54,7 @@ for real editing rather than just demonstrating how a terminal works.
 | Editing | Familiar cursor movement, word jumps, selection, cut/copy/paste, automatic indentation, block indent/outdent with Tab, configurable pair closing, and an undo history of up to 2,000 steps (200 by default). |
 | Files | Open or switch files without restarting tinyedit, start a named file before it exists, save atomically, and recover unsaved work from automatic backups after a crash. |
 | Search | Incremental literal or POSIX regular-expression search, match navigation, and interactive search and replace. |
-| Syntax highlighting | Built-in support for C/C++, Python, Shell, JavaScript/TypeScript, Markdown, HTML/XML, and CSS, including function names. Simple C-like languages can be added with a user configuration file. |
+| Syntax highlighting | Built-in support for C/C++, Python, Shell, JavaScript/TypeScript, Markdown, HTML/XML, and CSS, including function names. Simple C-like languages and HTML-based templates (Nunjucks, Jinja, Liquid, Twig) can be added with a user configuration file; ready-made ones ship in `syntax-configs/`. |
 | UTF-8 | Cursor movement, deletion, display width, wrapping, and character counts understand combining marks, CJK text, and multi-code-point emoji. |
 | Long lines | Lines wrap at the terminal edge, preferably at word boundaries. Navigation follows the visible wrapped rows, without imposing a fixed line-length limit. |
 | Clipboard | Uses the native macOS clipboard or the available Wayland/X11 clipboard tool directly, without sending commands through a shell. |
@@ -373,9 +373,40 @@ supported languages: C/C++ (`.c` `.h` `.cpp` `.cc` `.cxx` `.hpp` `.hh`
 `.hxx`), Python (`.py`), Shell (`.sh` `.bash` `.zsh`), JavaScript/
 TypeScript (`.js` `.jsx` `.ts` `.tsx`), Markdown (`.md` `.markdown` —
 headings, `` `inline code` ``, multi-line code fences, italic
-`*...*`/`_..._`, bold `**...**`/`__..._`), HTML/XML (`.html` `.htm`
+`*...*`/`_..._`, bold `**...**`/`__..._` (both may span several lines),
+links and images, YAML front matter, and
+embedded HTML tags), HTML/XML (`.html` `.htm`
 `.xml` — tags, attributes, `<!-- -->` comments), and CSS (`.css` —
 properties, values, comments).
+
+Two constructs common in static-site Markdown get their own handling.
+A YAML **front matter** block — the `---` delimited metadata header
+used by Jekyll, Eleventy and Hugo — is highlighted as structured data
+rather than prose: delimiters and the `:` as markers, keys as keywords,
+values as strings. It's recognized only when the opening `---` is the
+file's first line, so a `---` further down stays a horizontal rule.
+Blank lines inside the block don't end it.
+
+**HTML tags embedded in the document** (`<div class="box">`,
+`<strong>`) are highlighted like they would be in an `.html` file —
+tag names and attributes as keywords, quoted values as strings. The
+scanner is deliberately conservative: a `<` must be followed by a
+letter and reach a `>` on the same line, so prose like `5 < 7` is left
+alone, and a tag inside a code span (`` `<div>` ``) or a fenced block
+stays code.
+
+**Links and images** are highlighted with the label and the
+destination in different colors, so a row of badges stays readable
+instead of drowning in URL text. The nested `[![alt](img)](url)` form
+that badges use is handled, as are parentheses inside a URL. An
+unmatched `[text]` is left as prose.
+
+**Emphasis may span several lines**, which is common when a caption or
+an italic sentence is wrapped across rows. A span is closed by its
+matching marker or by a blank line — bounding it at the paragraph
+means a stray `*` in prose (`filetype.*`, `5 * 3`) can't recolor the
+rest of the document. A marker followed by whitespace isn't treated as
+an opener at all.
 
 ![Markdown editing and syntax highlighting in tinyedit](imgs/markdown-editing.png)
 
@@ -413,7 +444,8 @@ highlights `$formula$`/`$$formula$$` and the equivalent
 above) anywhere in the text, not just inside keywords —
 `\[...\]` is recognized even when its delimiters sit on separate lines
 from the formula's content (common in LaTeX); the other three forms
-stay single-line. A full LaTeX example,
+stay single-line. `filetype = <Name>` sets the status-bar language name
+for the extensions this file claims (see below). A full LaTeX example,
 `~/.tinyedit/syntax/latex.conf`:
 
 ```
@@ -432,6 +464,34 @@ math_mode = true
 *A user-defined LaTeX syntax configuration highlights commands and mathematical
 expressions without adding a compiled-in language or an external dependency.*
 
+#### Markup templates
+
+A template format like Nunjucks, Jinja, Liquid or Twig is HTML with a
+second language embedded in it, which the C-like tokenizer above can't
+express — it has no notion of a tag. Two extra keys route such a
+language through the markup tokenizer instead:
+
+```
+extensions = njk,nunjucks
+filetype = Nunjucks
+base_tokenizer = xml
+template_delimiters = {{ }}, {% %}, {\# \#}
+```
+
+`base_tokenizer = xml` highlights tags and attributes exactly as in an
+`.html` file, and `template_delimiters` lists the embedded expression
+delimiters as comma-separated `open close` pairs. Those blocks are
+highlighted as a unit — delimiters in the preprocessor color, contents
+in the function color — including inside attribute values, so
+`href="{{ url }}"` shows the dynamic part rather than one flat string.
+A pair whose opener starts with `{#` is treated as that language's
+comment and colored like every other comment.
+
+Note the `\#` escapes: `#` normally starts a comment in a `.conf` file,
+so a `#` that's part of a value has to be escaped. With
+`base_tokenizer = xml`, the `keywords` key isn't required (the markup
+tokenizer doesn't use it).
+
 Every `.conf` file in `~/.tinyedit/syntax/` gets loaded at startup
 (silently skipped if malformed, same tolerance as `~/.tinyeditrc`); a
 user file can redefine an extension already covered natively, and it
@@ -440,11 +500,70 @@ keywords/strings/comments — where prefixed keywords and math mode
 still aren't enough — (like Markdown/HTML/CSS above) can't be extended
 from an external file; they need a dedicated tokenizer in `syntax.c`.
 
+### Ready-made syntax configurations
+
+The [`syntax-configs/`](syntax-configs/) directory ships configuration
+files for a few languages that aren't compiled in, so they can be used
+without writing one from scratch: LaTeX (`.tex`, `.latex`, `.sty`,
+`.cls`), Matlab/Octave (`.m`, `.mat`), and the markup templates
+Nunjucks (`.njk`), Jinja (`.jinja`, `.j2`), Liquid (`.liquid`) and Twig
+(`.twig`). Install them by copying into the directory tinyedit scans:
+
+```bash
+mkdir -p ~/.tinyedit/syntax && cp syntax-configs/*.conf ~/.tinyedit/syntax/
+```
+
+or, equivalently, from the repository root:
+
+```bash
+make install-syntax
+```
+
+That target never overwrites a file you already have (it prints
+`skip` for those); use `make install-syntax-force` to replace them with
+the shipped versions. It's a separate target rather than part of the
+build on purpose — compiling shouldn't write into your home directory
+or clobber local edits to these files.
+
+Copy a single file instead of the whole set if you only want one. See
+[`syntax-configs/README.md`](syntax-configs/README.md) for what each one
+covers and for two non-obvious constraints of the format — comment
+delimiters being matched before keywords, and `keyword_prefix_chars`
+merging adjacent tokens — that produce wrong highlighting rather than a
+load error when you hit them.
+
 The status bar also shows the filetype detected from the extension
 (e.g. `C`, `Python`, `Markdown`) next to the line/column position. It
 covers roughly 30 common extensions; to add more or override a name,
 add `filetype.<extension> = <Name>` lines to `~/.tinyeditrc` (e.g.
 `filetype.m = Matlab/Octave`).
+
+A syntax `.conf` can also carry that name itself, with a `filetype`
+key, so one file defines both how a language is highlighted and what
+it's called:
+
+```
+filetype = Nunjucks
+```
+
+When a file is opened, the name is resolved in this order:
+
+1. **`~/.tinyeditrc` (or the built-in table) already knows the
+   extension.** That name is used. If it came from a user override but
+   no syntax `.conf` (and no compiled-in language) covers the
+   extension, the status bar reports `Filetype 'X': highlight config
+   missing` — the name shows but nothing gets colored, and this says
+   why.
+2. **Nothing knows it, but an installed `.conf` claims the extension
+   and declares `filetype`.** The name is applied, highlighting works,
+   and the entry is written to `~/.tinyeditrc` so the extension is
+   recorded from then on.
+3. **Neither.** The field is omitted, as before.
+
+Because step 2 writes to `~/.tinyeditrc` and step 1 reads it first,
+editing a `.conf`'s `filetype` afterwards won't change the name already
+recorded there — update the `filetype.<extension>` line in
+`~/.tinyeditrc` (or delete it to let the `.conf` be consulted again).
 
 ### Find and replace
 
@@ -505,10 +624,18 @@ and asks whether to restore the changes before proceeding.
 - `syntax.c` / `syntax.h` — syntax highlighting: a generic tokenizer
   for "C-like" languages driven by per-language tables (including
   ones loaded at runtime from `~/.tinyedit/syntax/*.conf`), plus
-  dedicated tokenizers for Markdown, HTML/XML, and CSS.
+  dedicated tokenizers for Markdown, HTML/XML, and CSS. A `.conf` can
+  route its language through the markup tokenizer (`base_tokenizer =
+  xml`) and declare embedded `template_delimiters`, which is how the
+  HTML-template languages are supported without compiled-in code.
 - `backup.c` / `backup.h` — periodic crash-recovery backups, saved to
   `~/.tinyedit/backup/` (never next to the original file). Wired to
   the editor via the `backup_interval` setting.
+- `syntax-configs/` — ready-made `.conf` language definitions to copy
+  into `~/.tinyedit/syntax/` (or install with `make install-syntax`):
+  LaTeX, Matlab/Octave, and the markup templates Nunjucks, Jinja,
+  Liquid and Twig. Data, not code — see its own
+  [`README.md`](syntax-configs/README.md).
 - `linenoise.c` / `linenoise.h` — linenoise's original sources
   (antirez), kept for historical reference from the first
   line-editor prototype. Not compiled into the current binary (except
