@@ -3857,7 +3857,7 @@ static void editorSettingsRender(struct abuf *ab, const struct editorSettings *e
         rows_used++;
     }
 
-    char help[96];
+    char help[128];
     if (msg && msg[0]) {
         editorShortcutText(help, sizeof(help), msg);
     } else {
