@@ -1,16 +1,21 @@
 
 
-<center>
-![Logo](imgs/tinyedit_logo_colore128x128.png) 
-</center>
+<div align="center">
+
+<img src="imgs/tinyedit_logo_colore128x128.png" alt="Logo">
+
 
 # tinyedit
-<center>
+
 [![GitHub release](https://img.shields.io/github/v/release/robertobissanti/tinyedit?sort=semver)](https://github.com/robertobissanti/tinyedit/releases)
+
 [![License](https://img.shields.io/github/license/robertobissanti/tinyedit)](LICENSE)
+
 [![Written in C](https://img.shields.io/github/languages/top/robertobissanti/tinyedit)](https://github.com/robertobissanti/tinyedit)
+
 [![Repository size](https://img.shields.io/github/repo-size/robertobissanti/tinyedit)](https://github.com/robertobissanti/tinyedit)
-</center>
+
+</div>
 
 A small full-screen terminal text editor written in plain C (kilo-style,
 after [kilo](https://github.com/antirez/kilo) by Salvatore Sanfilippo),
