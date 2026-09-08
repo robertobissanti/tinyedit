@@ -44,6 +44,28 @@
 static struct editorConfig E;
 static struct editorSettings S;
 
+/* The Ghostty Command-key bridge is opt-in. Keep the on-screen language in
+ * step with it, without changing the underlying Ctrl-based key handling. */
+static const char *editorPrimaryModifier(void) {
+    return S.mac_command_keys ? "Cmd" : "Ctrl";
+}
+
+static void editorShortcutText(char *dst, size_t dstsize, const char *src) {
+    size_t used = 0;
+    if (dstsize == 0) return;
+    while (*src && used + 1 < dstsize) {
+        if (S.mac_command_keys && strncmp(src, "Ctrl", 4) == 0) {
+            if (used + 3 >= dstsize) break;
+            memcpy(dst + used, "Cmd", 3);
+            used += 3;
+            src += 4;
+        } else {
+            dst[used++] = *src++;
+        }
+    }
+    dst[used] = '\0';
+}
+
 /* Set by the SIGWINCH handler when the terminal window is resized.
  * sig_atomic_t is the only type C guarantees is safe to write from a
  * signal handler and read from the main loop without a data race; the
@@ -340,6 +362,15 @@ static int32_t editorReadKey(void) {
                             case 122: return CTRL_KEY('z'); /* Cmd-Z */
                             case 111: return CTRL_KEY('o'); /* Cmd-O */
                             case 119: return CTRL_KEY('w'); /* Cmd-W */
+                            case 99:  return CTRL_KEY('c'); /* Cmd-C */
+                            case 120: return CTRL_KEY('x'); /* Cmd-X */
+                            case 97:  return CTRL_KEY('a'); /* Cmd-A */
+                            case 113: return CTRL_KEY('q'); /* Cmd-Q */
+                            case 103: return CTRL_KEY('g'); /* Cmd-G */
+                            case 114: return CTRL_KEY('r'); /* Cmd-R */
+                            case 116: return CTRL_KEY('t'); /* Cmd-T */
+                            case 121: return CTRL_KEY('y'); /* Cmd-Y */
+                            case 100: return CTRL_KEY('d'); /* Cmd-D */
                         }
                     } else if (ok && term && field_idx == 1 && fields[0] == 115) {
                         /* mod is a bitmask + 1 (1 = no modifiers, 2 =
@@ -1583,7 +1614,8 @@ static void editorResetDocument(void) {
 static void editorCloseFile(void) {
     if (!editorConfirmDocumentChange("closing")) return;
     editorResetDocument();
-    editorSetStatusMessageSticky("File closed. Ctrl-O open | Ctrl-Q quit | F1 help");
+    editorSetStatusMessageSticky("File closed. %s-O open | %s-Q quit | F1 help",
+        editorPrimaryModifier(), editorPrimaryModifier());
 }
 
 /* Ctrl-O switches the single active document. The current document remains
@@ -2244,6 +2276,7 @@ static void editorDrawSplashRow(struct abuf *ab, int32_t y, int32_t textcols) {
     }
 
     const char *line = splashLines[y - top];
+    char display_line[256];
     if (line == NULL) {
         abAppend(ab, "~", 1);
         return;
@@ -2256,12 +2289,15 @@ static void editorDrawSplashRow(struct abuf *ab, int32_t y, int32_t textcols) {
     int32_t widest = 0;
     for (int32_t i = 0; i < splashLineCount; i++) {
         if (!splashLines[i]) continue;
-        int32_t w = (int32_t)strlen(splashLines[i]);
+        char display[256];
+        editorShortcutText(display, sizeof(display), splashLines[i]);
+        int32_t w = (int32_t)strlen(display);
         if (w > widest) widest = w;
     }
     if (widest > textcols) widest = textcols;
 
-    int32_t len = (int32_t)strlen(line);
+    editorShortcutText(display_line, sizeof(display_line), line);
+    int32_t len = (int32_t)strlen(display_line);
     if (len > textcols) len = textcols;
     int32_t padding = (textcols - widest) / 2 + (widest - len) / 2;
     if (padding) {
@@ -2269,7 +2305,7 @@ static void editorDrawSplashRow(struct abuf *ab, int32_t y, int32_t textcols) {
         padding--;
     }
     while (padding--) abAppend(ab, " ", 1);
-    abAppend(ab, line, len);
+    abAppend(ab, display_line, len);
 }
 
 static void editorDrawRows(struct abuf *ab) {
@@ -3271,9 +3307,13 @@ static void editorFind(void) {
      * scroll-to-keep-tail-visible behavior take over. Three stages,
      * each only kicking in once the previous one runs out of room. */
     search_switch_to_replace = 0;
+    char long_prompt[128], short_prompt[32];
+    snprintf(long_prompt, sizeof(long_prompt),
+        "Find %%s (Esc cancel, Arrows jump, %s-R replace, %s-G regex): %%s",
+        editorPrimaryModifier(), editorPrimaryModifier());
+    snprintf(short_prompt, sizeof(short_prompt), "Find %%s: %%s");
     char *query = editorPromptCB(
-        "Search %s (Esc cancel, Arrows jump, Ctrl-R replace, Ctrl-G regex): %s",
-        "Search %s: %s",
+        long_prompt, short_prompt,
         editorFindModeIndicator, editorFindCallback);
 
     if (search_switch_to_replace && query) {
@@ -3552,7 +3592,7 @@ static const struct helpEntry helpEntries[] = {
     { "'", "Same, only if auto-close single quote is on (F2, off by default)" },
     { "Backspace / Delete", "Delete character (UTF-8 aware)" },
     { "Ctrl-Z / Ctrl-Y", "Undo / redo" },
-    { "Cmd-S/F/Z/O/W (Ghostty opt-in)", "Save/find/undo/open/close; see README" },
+    { "Cmd-S/F/Z/O/W/C/X/A/Q/G/R (Ghostty opt-in)", "Save/find/undo/open/close/copy/cut/select all/quit/regex/replace; see README" },
     { "Paste (terminal-native, e.g. Cmd+V)", "Bulk insert, no auto-close on pasted text" },
     { NULL, "Selection & clipboard" },
     { "Shift+Arrows, Shift+PageUp/Down", "Extend selection" },
@@ -3562,10 +3602,10 @@ static const struct helpEntry helpEntries[] = {
     { "Ctrl-T", "Toggle selection mode (works on every terminal)" },
     { "Ctrl-A", "Select all" },
     { "Ctrl-C / Ctrl-X / Ctrl-V", "Copy / cut / paste (system clipboard)" },
-    { NULL, "Search" },
-    { "Ctrl-F", "Incremental search" },
-    { "Ctrl-G (inside search)", "Toggle regex mode (POSIX extended)" },
-    { "Ctrl-R (inside search)", "Switch to search & replace" },
+    { NULL, "Find" },
+    { "Ctrl-F", "Incremental find" },
+    { "Ctrl-G (inside Find)", "Toggle regex mode (POSIX extended)" },
+    { "Ctrl-R (inside Find)", "Switch to find & replace" },
     { NULL, "File & editor" },
     { "Ctrl-S", "Save" },
     { "F4 (or Ctrl-Shift-S, terminal permitting)", "Save as (always prompts for a filename)" },
@@ -3631,9 +3671,11 @@ static void editorHelpScreen(void) {
                 abAppend(&ab, helpEntries[i].desc, (int32_t)strlen(helpEntries[i].desc));
                 abAppend(&ab, "\x1b[m\x1b[K\r\n", 8);
             } else {
-                char line[128];
+                char key[128], desc[128], line[256];
+                editorShortcutText(key, sizeof(key), helpEntries[i].key);
+                editorShortcutText(desc, sizeof(desc), helpEntries[i].desc);
                 int32_t len = snprintf(line, sizeof(line), "%c   %-38s %s",
-                    scroll_indicator, helpEntries[i].key, helpEntries[i].desc);
+                    scroll_indicator, key, desc);
                 if (len < 0) len = 0;
                 if ((size_t)len >= sizeof(line)) len = (int32_t)sizeof(line) - 1;
                 abAppend(&ab, line, len);
@@ -3720,7 +3762,11 @@ static void editorInfoScreen(void) {
 
     editorInfoAppendSection(&ab, &rows_used, "tinyedit");
     editorInfoAppendLine(&ab, &rows_used, "    Version   %s", TE_VERSION);
-    editorInfoAppendLine(&ab, &rows_used, "    %s", sessionSlogan);
+    {
+        char slogan[160];
+        editorShortcutText(slogan, sizeof(slogan), sessionSlogan);
+        editorInfoAppendLine(&ab, &rows_used, "    %s", slogan);
+    }
     editorInfoAppendLine(&ab, &rows_used, "    Author    Roberto Bissanti <roberto.bissanti@gmail.com>");
     editorInfoAppendLine(&ab, &rows_used, "    License   MIT (see LICENSE; utf8.c ported from linenoise, BSD 2-Clause)");
     editorInfoAppendLine(&ab, &rows_used, "    Homepage  https://github.com/robertobissanti/tinyedit");
@@ -3804,17 +3850,23 @@ static void editorSettingsRender(struct abuf *ab, const struct editorSettings *e
     abAppend(ab, "\x1b[K\r\n", 5);
     rows_used++;
     if (edited->redo_key == REDO_KEY_CTRL_SHIFT_Z) {
-        const char *note =
+        char note[160];
+        editorShortcutText(note, sizeof(note),
             "  Note: Ctrl-Shift-Z may not reach the editor on every "
-            "terminal; Ctrl-Y always works as a fallback.\x1b[K\r\n";
+            "terminal; Ctrl-Y always works as a fallback.\x1b[K\r\n");
         abAppend(ab, note, (int32_t)strlen(note));
         rows_used++;
     }
 
     char help[96];
-    int32_t hlen = snprintf(help, sizeof(help),
-        "  %s", (msg && msg[0]) ? msg :
-        "Up/Down select, Enter/Space/Left/Right edit, Ctrl-D reset defaults, Ctrl-S/F2 save, Esc cancel");
+    if (msg && msg[0]) {
+        editorShortcutText(help, sizeof(help), msg);
+    } else {
+        snprintf(help, sizeof(help),
+            "  Up/Down select, Enter/Space/Left/Right edit, %s-D reset defaults, %s-S/F2 save, Esc cancel",
+            editorPrimaryModifier(), editorPrimaryModifier());
+    }
+    int32_t hlen = (int32_t)strlen(help);
     abAppend(ab, help, hlen);
     abAppend(ab, "\x1b[K\r\n", 5);
     rows_used++;
@@ -4642,7 +4694,8 @@ static void editorProcessKeypress(void) {
                 E.sel_active = 1;
                 E.sel_anchor_x = E.cx;
                 E.sel_anchor_y = E.cy;
-                editorSetStatusMessage("Selection mode ON (arrows extend, Ctrl-T to stop)");
+                editorSetStatusMessage("Selection mode ON (arrows extend, %s-T to stop)",
+                    editorPrimaryModifier());
             } else {
                 E.sel_active = 0;
                 editorSetStatusMessage("Selection mode off");
@@ -4901,9 +4954,11 @@ int main(int argc, char **argv) {
     const char *term_program = getenv("TERM_PROGRAM");
     if (term_program && strcmp(term_program, "Apple_Terminal") == 0) {
         editorSetStatusMessageSticky(
-            "Terminal.app: Ctrl-T select | Ctrl-O open | Ctrl-Q quit | F1 help");
+            "Terminal.app: %s-T select | %s-O open | %s-Q quit | F1 help",
+            editorPrimaryModifier(), editorPrimaryModifier(), editorPrimaryModifier());
     } else {
-        editorSetStatusMessageSticky("Ctrl-S save | Ctrl-O open | Ctrl-Q quit | F1 help");
+        editorSetStatusMessageSticky("%s-S save | %s-O open | %s-Q quit | F1 help",
+            editorPrimaryModifier(), editorPrimaryModifier(), editorPrimaryModifier());
     }
 
     /* After the startup hint so a successful recovery's own sticky

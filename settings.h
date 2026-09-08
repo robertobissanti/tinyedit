@@ -197,7 +197,7 @@ struct editorSettings {
      * mouse events to the foreground program instead of handling them
      * itself -- therefore this remains an explicit opt-in. */
     int32_t mouse_enabled;
-    /* Experimental Ghostty bridge for Cmd+S/F/Z/O/W. The terminal must
+    /* Experimental Ghostty bridge for Cmd+S/F/Z/O/W/C/X/A/Q/G/R/T/Y/D. The terminal must
      * be configured to send the documented CSI-u-style sequences. */
     int32_t mac_command_keys;
     /* CURSOR_BLOCK or CURSOR_BAR (I-beam). */

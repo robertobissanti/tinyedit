@@ -121,8 +121,9 @@ Needs only a C99 compiler and a POSIX system (macOS or Linux).
 
 ### Experimental macOS Command keys in Ghostty
 
-Tinyedit can optionally accept `Cmd-S`, `Cmd-F`, `Cmd-Z`, `Cmd-O`, and
-`Cmd-W` when Ghostty is configured to send its documented CSI-u-style
+Tinyedit can optionally accept `Cmd-S`, `Cmd-F`, `Cmd-Z`, `Cmd-O`, `Cmd-W`,
+`Cmd-C`, `Cmd-X`, `Cmd-A`, `Cmd-Q`, `Cmd-G`, `Cmd-R`, `Cmd-T`, `Cmd-Y`, and
+`Cmd-D` when Ghostty is configured to send its documented CSI-u-style
 bridge sequences. Enable **Experimental macOS Command keys (Ghostty)** in
 `F2`, or add `mac_command_keys = true` to `~/.tinyeditrc`.
 
@@ -134,11 +135,25 @@ keybind = super+f=text:\x1b[102;9u
 keybind = super+z=text:\x1b[122;9u
 keybind = super+o=text:\x1b[111;9u
 keybind = super+w=text:\x1b[119;9u
+keybind = super+c=text:\x1b[99;9u
+keybind = super+x=text:\x1b[120;9u
+keybind = super+a=text:\x1b[97;9u
+keybind = super+q=text:\x1b[113;9u
+keybind = super+g=text:\x1b[103;9u
+keybind = super+r=text:\x1b[114;9u
+keybind = super+t=text:\x1b[116;9u
+keybind = super+y=text:\x1b[121;9u
+keybind = super+d=text:\x1b[100;9u
 ```
 
 This mode is off by default and is Ghostty-specific: terminal programs
-normally do not receive macOS Command-key events. `Cmd-C`, `Cmd-V`, and
-`Cmd-Q` intentionally remain the terminal or macOS shortcuts.
+normally do not receive macOS Command-key events. With this mode enabled,
+`Cmd-C` and `Cmd-X` operate on Tinyedit's selected text rather than the
+terminal's native selection. `Cmd-Q` asks Tinyedit to save and quit rather
+than closing Ghostty while Tinyedit is active. `Cmd-V` remains the terminal's
+native paste shortcut. Inside **Find**, `Cmd-G` toggles regex matching and
+`Cmd-R` switches to find-and-replace. `Cmd-T` toggles selection mode, `Cmd-Y`
+redoes, and `Cmd-D` resets settings while the Settings panel is open.
 
 ### Opening and closing files
 
@@ -431,9 +446,9 @@ covers roughly 30 common extensions; to add more or override a name,
 add `filetype.<extension> = <Name>` lines to `~/.tinyeditrc` (e.g.
 `filetype.m = Matlab/Octave`).
 
-### Search and replace
+### Find and replace
 
-Inside the search prompt (`Ctrl-F`), `Ctrl-G` toggles whether the
+Inside the Find prompt (`Ctrl-F`), `Ctrl-G` toggles whether the
 search string is interpreted as a POSIX extended regular expression
 (`<regex.h>` from libc, zero external dependencies) instead of a
 literal string — the prompt shows `[regex]`/`[literal]` for the
