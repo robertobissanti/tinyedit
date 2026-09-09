@@ -17,11 +17,13 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 BINARY = ROOT / "tinyedit"
 
 
-def spawn_editor(arguments, home):
+def spawn_editor(arguments, home, extra_env=None):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
     env = os.environ.copy()
     env.update({"HOME": str(home), "TERM": "xterm-256color"})
+    if extra_env:
+        env.update(extra_env)
     process = subprocess.Popen(
         [str(BINARY), *arguments], stdin=slave, stdout=slave, stderr=slave,
         cwd=ROOT, env=env, close_fds=True,
@@ -298,6 +300,36 @@ def test_bracketed_paste_replaces_selection_atomically(home):
         finish(process, master)
 
 
+def test_copy_preserves_selection(home):
+    """Copy is non-destructive and leaves the copied range selected."""
+    case_home = pathlib.Path(home) / "copy-selection"
+    case_home.mkdir()
+    target = case_home / "copy.txt"
+    empty_path = case_home / "empty-path"
+    empty_path.mkdir()
+    target.write_text("hello world\n", encoding="utf-8")
+    (case_home / ".tinyeditrc").write_text(
+        "show_line_numbers = 0\nshow_top_bar = 0\n"
+        "syntax_highlight = 0\ncolor_selection = yellow-light\n",
+        encoding="utf-8",
+    )
+    # An empty PATH forces TinyEdit's process-local clipboard backend, so the
+    # test never reads or overwrites the user's desktop clipboard.
+    process, master = spawn_editor(
+        [str(target)], case_home, {"PATH": str(empty_path)}
+    )
+    try:
+        read_available(master)
+        os.write(master, b"\x14" + b"\x1b[C" * 5)  # select "hello"
+        read_available(master, 0.2)
+        os.write(master, b"\x03")  # Ctrl-C
+        output = read_until(master, b"5 bytes copied")
+        selected = b"\x1b[93m\x1b[7mhello\x1b[m world"
+        assert selected in output, "Ctrl-C cleared the copied selection"
+    finally:
+        finish(process, master)
+
+
 def test_eol_after_trailing_tab(home):
     """The EOL marker follows the full visual width of a trailing tab."""
     case_home = pathlib.Path(home) / "eol-trailing-tab"
@@ -539,6 +571,7 @@ def main():
         test_ctrl_o_discards_then_creates_named_file(home)
         test_invisible_colors(home)
         test_selection_across_tab(home)
+        test_copy_preserves_selection(home)
         test_bracketed_paste_replaces_selection_atomically(home)
         test_eol_after_trailing_tab(home)
         test_block_indent(home)

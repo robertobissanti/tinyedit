@@ -3970,11 +3970,11 @@ static void editorProcessKeypress(void) {
                 if (c == CTRL_KEY('x')) {
                     editorDeleteRange(sy, sx, ey, ex);
                     editorSetStatusMessage("%zu bytes cut", len);
+                    E.document.selection.active = 0;
                 } else {
                     editorSetStatusMessage("%zu bytes copied", len);
                 }
                 free(text);
-                E.document.selection.active = 0;
             }
             break;
         }
