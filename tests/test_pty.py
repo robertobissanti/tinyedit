@@ -471,6 +471,16 @@ def test_block_indent(home):
     got = run("aaa\nbbb\nccc\n", select_two + [b"\t", b"\x13", b"\x1b[Z"])
     assert got == "aaa\nbbb\nccc\n", f"outdent after save: {got!r}"
 
+    # A redraw (and therefore a SIGWINCH translated to Ctrl-L) is view-only:
+    # it must not clear the selected block before the next edit.
+    got = run("aaa\nbbb\nccc\n", select_two + [b"\x0c", b"\t"])
+    assert got == "    aaa\n    bbb\nccc\n", f"selection lost on redraw: {got!r}"
+
+    # Ctrl-T initially arms a zero-width anchor. It is selection state for
+    # future motion, but not selected text for an editing command.
+    got = run("aaa\n", [b"\x14", b"\t"])
+    assert got == "    aaa\n", f"collapsed selection treated as a block: {got!r}"
+
     # Outdent stops at column 0 instead of eating the text.
     got = run("  aaa\n  bbb\n", select_two + [b"\x1b[Z", b"\x1b[Z"])
     assert got == "aaa\nbbb\n", f"outdent floor: {got!r}"

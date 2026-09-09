@@ -2325,6 +2325,10 @@ static uint8_t editorGetSelection(int32_t *start_y, int32_t *start_x, int32_t *e
 
     int32_t ay = E.sel_anchor_y, ax = E.sel_anchor_x;
     int32_t cy = E.cy, cx = E.cx;
+    /* Pinned selection mode starts with anchor == cursor so the next motion
+     * can extend from that point. Keep that internal anchor armed, but don't
+     * expose a zero-width interval as selected text to editing commands. */
+    if (ay == cy && ax == cx) return 0;
 
     if (ay < cy || (ay == cy && ax <= cx)) {
         *start_y = ay; *start_x = ax;
@@ -3905,51 +3909,28 @@ static void editorInsertCharAutoClose(int32_t c, uint8_t had_sel,
 static void editorProcessKeypress(void) {
     int32_t c = editorReadKey();
 
-    /* Captured before the selection-clearing block below runs, so the
-     * auto-close wrap-selection path (see editorInsertCharAutoClose())
-     * still knows what was selected for a plain printable keypress,
-     * which clears E.sel_active like any other non-whitelisted key. */
+    /* Immutable snapshot for actions that consume or wrap the selection.
+     * Each switch branch owns its selection transition; there is no global
+     * pre-dispatch whitelist for new keys to accidentally bypass. */
     int32_t had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1;
     uint8_t had_sel = editorGetSelection(&had_sel_y0, &had_sel_x0, &had_sel_y1, &had_sel_x1);
 
-    /* Unmodified movement keys: in pinned selection mode (Ctrl-T) each
-     * of these extends the selection instead of clearing it, exactly as
-     * its Shift+ variant would. */
-    uint8_t is_plain_motion = (c == ARROW_UP || c == ARROW_DOWN ||
-        c == ARROW_LEFT || c == ARROW_RIGHT || c == PAGE_UP || c == PAGE_DOWN ||
-        c == HOME_KEY || c == END_KEY || c == DOC_HOME || c == DOC_END);
-
-    /* Tab/Shift+Tab keep the selection because with one active they
-     * mean "indent/outdent these lines" (see editorIndentSelection())
-     * and are meant to be repeatable -- without a selection Tab falls
-     * through to inserting one indent at the cursor as usual. */
-    uint8_t is_indent_key = (c == '\t' || c == SHIFT_TAB);
-
-    if (c != SHIFT_ARROW_UP && c != SHIFT_ARROW_DOWN &&
-        c != SHIFT_ARROW_LEFT && c != SHIFT_ARROW_RIGHT &&
-        c != SHIFT_PAGE_UP && c != SHIFT_PAGE_DOWN &&
-        c != SHIFT_HOME && c != SHIFT_END &&
-        c != SHIFT_DOC_HOME && c != SHIFT_DOC_END &&
-        c != CTRL_KEY('a') && c != CTRL_KEY('c') &&
-        c != CTRL_KEY('x') && c != CTRL_KEY('v') &&
-        c != CTRL_KEY('t') && c != MOUSE_EVENT_KEY &&
-        c != CTRL_KEY('s') &&
-        !(had_sel && is_indent_key) &&
-        !(E.sel_pinned && is_plain_motion))
-        E.sel_active = 0;
-
     switch (c) {
         case '\r':
+            E.sel_active = 0;
             editorInsertNewlineAutoIndent();
             break;
 
         case '\t':
             if (had_sel) {
                 editorIndentSelection(0);
-            } else if (S.insert_spaces_for_tab) {
-                for (int32_t i = 0; i < S.tab_stop; i++) editorInsertChar(' ');
             } else {
-                editorInsertChar('\t');
+                E.sel_active = 0;
+                if (S.insert_spaces_for_tab) {
+                    for (int32_t i = 0; i < S.tab_stop; i++) editorInsertChar(' ');
+                } else {
+                    editorInsertChar('\t');
+                }
             }
             break;
 
@@ -3961,6 +3942,7 @@ static void editorProcessKeypress(void) {
             if (had_sel) {
                 editorIndentSelection(1);
             } else if (E.cy < E.numrows) {
+                E.sel_active = 0;
                 editorPushUndo(EDIT_OTHER);
                 int32_t removed = editorRowOutdent(&E.row[E.cy]);
                 E.cx -= removed;
@@ -3970,14 +3952,17 @@ static void editorProcessKeypress(void) {
             break;
 
         case CTRL_KEY('q'):
+            E.sel_active = 0;
             editorQuit();
             return;
 
         case CTRL_KEY('w'):
+            E.sel_active = 0;
             editorCloseFile();
             break;
 
         case CTRL_KEY('o'):
+            E.sel_active = 0;
             editorOpenFile();
             break;
 
@@ -3987,6 +3972,7 @@ static void editorProcessKeypress(void) {
 
         case F4_KEY:
         case SAVE_AS_KEY:
+            E.sel_active = 0;
             editorSaveAs();
             break;
 
@@ -4208,6 +4194,7 @@ static void editorProcessKeypress(void) {
         }
 
         case CTRL_KEY('z'):
+            E.sel_active = 0;
             editorUndo();
             break;
         case CTRL_KEY('y'):
@@ -4216,22 +4203,27 @@ static void editorProcessKeypress(void) {
              * from plain Ctrl-Z on a raw tty (see TODO.md), so Ctrl-Y
              * remains a reliable fallback even when the user picked
              * ctrl-shift-z in settings. */
+            E.sel_active = 0;
             editorRedo();
             break;
 
         case CTRL_KEY('f'):
+            E.sel_active = 0;
             editorFind();
             break;
 
         case F1_KEY:
+            E.sel_active = 0;
             editorHelpScreen();
             break;
 
         case F3_KEY:
+            E.sel_active = 0;
             editorInfoScreen();
             break;
 
         case F2_KEY:
+            E.sel_active = 0;
             editorSettingsScreen();
             break;
 
@@ -4327,14 +4319,15 @@ static void editorProcessKeypress(void) {
             /* With a selection, both keys delete the whole range rather
              * than one character, matching Ctrl-V/paste (which already
              * replaced the selection) and every other editor. had_sel is
-             * the copy captured before the selection-clearing block above,
-             * since neither key is whitelisted there. */
+             * the immutable copy captured before dispatch, so the handler
+             * doesn't depend on live selection state while mutating rows. */
             if (had_sel) {
                 editorDeleteRange(had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1);
             } else {
                 if (c == DEL_KEY) editorMoveCursor(ARROW_RIGHT);
                 editorDelChar();
             }
+            E.sel_active = 0;
             break;
 
         case PAGE_UP:
@@ -4343,6 +4336,8 @@ static void editorProcessKeypress(void) {
         case SHIFT_PAGE_DOWN: {
             uint8_t is_up = (c == PAGE_UP || c == SHIFT_PAGE_UP);
             uint8_t extending = (c == SHIFT_PAGE_UP || c == SHIFT_PAGE_DOWN || E.sel_pinned);
+
+            if (!extending) E.sel_active = 0;
 
             if (extending && !E.sel_active) {
                 E.sel_active = 1;
@@ -4411,13 +4406,16 @@ static void editorProcessKeypress(void) {
         }
 
         case ALT_ARROW_LEFT:
+            E.sel_active = 0;
             editorMoveCursorWord(0);
             break;
         case ALT_ARROW_RIGHT:
+            E.sel_active = 0;
             editorMoveCursorWord(1);
             break;
 
         case CTRL_KEY('l'):
+            /* Redraw/resize is not an editing action and preserves selection. */
             break;
 
         case '\x1b':
@@ -4426,10 +4424,12 @@ static void editorProcessKeypress(void) {
              * press would silently start a new selection again, since
              * sel_pinned would still be set. */
             E.sel_pinned = 0;
+            E.sel_active = 0;
             break;
 
         default:
             editorInsertCharAutoClose(c, had_sel, had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1);
+            E.sel_active = 0;
             break;
     }
 }
