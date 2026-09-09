@@ -82,11 +82,17 @@ void bufferClear(struct editorBuffer *buffer) {
 }
 
 void bufferRowInsertByte(erow *row, int32_t at, int32_t byte) {
+    char value = (char)byte;
+    bufferRowInsert(row, at, &value, 1);
+}
+
+void bufferRowInsert(erow *row, int32_t at, const char *text, size_t len) {
     if (at < 0 || at > row->size) at = row->size;
-    row->chars = teRealloc(row->chars, (size_t)row->size + 2);
-    memmove(&row->chars[at + 1], &row->chars[at], (size_t)(row->size - at + 1));
-    row->chars[at] = (char)byte;
-    row->size++;
+    row->chars = teRealloc(row->chars, (size_t)row->size + len + 1);
+    memmove(&row->chars[at + (int32_t)len], &row->chars[at],
+        (size_t)(row->size - at + 1));
+    memcpy(&row->chars[at], text, len);
+    row->size += (int32_t)len;
 }
 
 void bufferRowAppend(erow *row, const char *text, size_t len) {
@@ -97,9 +103,15 @@ void bufferRowAppend(erow *row, const char *text, size_t len) {
 }
 
 void bufferRowDeleteByte(erow *row, int32_t at) {
-    if (at < 0 || at >= row->size) return;
-    memmove(&row->chars[at], &row->chars[at + 1], (size_t)(row->size - at));
-    row->size--;
+    bufferRowDeleteRange(row, at, at + 1);
+}
+
+void bufferRowDeleteRange(erow *row, int32_t start, int32_t end) {
+    if (start < 0) start = 0;
+    if (end > row->size) end = row->size;
+    if (start >= end) return;
+    memmove(&row->chars[start], &row->chars[end], (size_t)(row->size - end + 1));
+    row->size -= end - start;
 }
 
 char *bufferSerialize(const struct editorBuffer *buffer, enum lineEndingMode ending,

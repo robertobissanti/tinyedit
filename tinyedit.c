@@ -217,6 +217,13 @@ static void editorRowInsertChar(erow *row, int32_t at, int32_t c) {
     E.document.file.dirty = 1;
 }
 
+static void editorRowInsertString(erow *row, int32_t at, const char *text, size_t len) {
+    if (len == 0) return;
+    bufferRowInsert(row, at, text, len);
+    editorUpdateRow(row);
+    E.document.file.dirty = 1;
+}
+
 static void editorRowAppendString(erow *row, char *s, size_t len) {
     bufferRowAppend(row, s, len);
     editorUpdateRow(row);
@@ -2018,19 +2025,21 @@ static char *editorSerializeRange(int32_t start_y, int32_t start_x, int32_t end_
 static void editorDeleteRangeRaw(int32_t start_y, int32_t start_x, int32_t end_y, int32_t end_x) {
     if (start_y == end_y) {
         erow *row = &E.document.buffer.rows[start_y];
-        for (int32_t i = 0; i < end_x - start_x; i++)
-            editorRowDelChar(row, start_x);
+        bufferRowDeleteRange(row, start_x, end_x);
+        editorUpdateRow(row);
     } else {
         erow *first = &E.document.buffer.rows[start_y];
         first->size = start_x;
         first->chars[first->size] = '\0';
 
         erow *last = &E.document.buffer.rows[end_y];
-        editorRowAppendString(first, &last->chars[end_x], (size_t)(last->size - end_x));
+        bufferRowAppend(first, &last->chars[end_x], (size_t)(last->size - end_x));
         editorUpdateRow(first);
 
         for (int32_t y = end_y; y > start_y; y--)
-            editorDelRow(y);
+            bufferDeleteRow(&E.document.buffer, y);
+        if (start_y + 1 < E.document.buffer.row_count)
+            editorRehighlightFrom(start_y + 1, 0);
     }
     E.document.cursor.cy = start_y;
     E.document.cursor.cx = start_x;
@@ -2045,11 +2054,20 @@ static void editorDeleteRange(int32_t start_y, int32_t start_x, int32_t end_y, i
 /* Inserts `text` (which may contain '\n') at the current cursor position,
  * splitting into new rows as needed, without taking an undo snapshot. */
 static void editorInsertTextRaw(const char *text, size_t len) {
-    for (size_t i = 0; i < len; i++) {
-        if (text[i] == '\n')
-            editorInsertNewlineRaw();
-        else
-            editorInsertCharRaw((unsigned char)text[i]);
+    size_t start = 0;
+    for (size_t i = 0; i <= len; i++) {
+        if (i == len || text[i] == '\n') {
+            size_t chunk_len = i - start;
+            if (chunk_len > 0) {
+                if (E.document.cursor.cy == E.document.buffer.row_count)
+                    editorInsertRow(E.document.buffer.row_count, "", 0);
+                editorRowInsertString(&E.document.buffer.rows[E.document.cursor.cy],
+                    E.document.cursor.cx, text + start, chunk_len);
+                E.document.cursor.cx += (int32_t)chunk_len;
+            }
+            if (i < len) editorInsertNewlineRaw();
+            start = i + 1;
+        }
     }
 }
 

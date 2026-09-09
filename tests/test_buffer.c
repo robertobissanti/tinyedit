@@ -19,6 +19,8 @@ int main(void) {
 
     bufferRowInsertByte(&buffer.rows[0], 1, '!');
     bufferRowDeleteByte(&buffer.rows[0], 1);
+    bufferRowInsert(&buffer.rows[0], 1, "XYZ", 3);
+    bufferRowDeleteRange(&buffer.rows[0], 1, 4);
     bufferRowAppend(&buffer.rows[0], "!", 1);
     if (strcmp(buffer.rows[0].chars, "A\tB!") != 0) fail("row byte mutations");
 
