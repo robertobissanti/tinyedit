@@ -3,6 +3,7 @@
 #define _DEFAULT_SOURCE
 
 #include "settings.h"
+#include "alloc.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -263,14 +264,14 @@ static void addFiletypeOverride(const char *ext, const char *name) {
     for (int32_t i = 0; i < filetypeOverrideCount; i++) {
         if (strcmp(filetypeOverrides[i].ext, ext) == 0) {
             free((void *)filetypeOverrides[i].name);
-            filetypeOverrides[i].name = strdup(name);
+            filetypeOverrides[i].name = teStrdup(name);
             return;
         }
     }
-    filetypeOverrides = realloc(filetypeOverrides,
+    filetypeOverrides = teRealloc(filetypeOverrides,
         sizeof(struct filetypeEntry) * (size_t)(filetypeOverrideCount + 1));
-    filetypeOverrides[filetypeOverrideCount].ext = strdup(ext);
-    filetypeOverrides[filetypeOverrideCount].name = strdup(name);
+    filetypeOverrides[filetypeOverrideCount].ext = teStrdup(ext);
+    filetypeOverrides[filetypeOverrideCount].name = teStrdup(name);
     filetypeOverrideCount++;
 }
 

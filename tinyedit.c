@@ -17,6 +17,7 @@
 #define _GNU_SOURCE
 
 #include "tinyedit.h"
+#include "alloc.h"
 #include "backup.h"
 #include "clipboard.h"
 #include "syntax.h"
@@ -188,7 +189,7 @@ static void editorUpdateRow(erow *row) {
     row->seg_start_rx = NULL;
     row->seg_count = 0;
     row->seg_wrapcols = -1;
-    row->render = malloc((size_t)(row->size + tabs * (S.tab_stop - 1) + 1));
+    row->render = teMalloc((size_t)(row->size + tabs * (S.tab_stop - 1) + 1));
 
     int32_t idx = 0;
     for (int32_t j = 0; j < row->size; j++) {
@@ -236,11 +237,11 @@ static void editorUpdateAllRows(void) {
 static void editorInsertRow(int32_t at, const char *s, size_t len) {
     if (at < 0 || at > E.numrows) return;
 
-    E.row = realloc(E.row, sizeof(erow) * (size_t)(E.numrows + 1));
+    E.row = teRealloc(E.row, sizeof(erow) * (size_t)(E.numrows + 1));
     memmove(&E.row[at + 1], &E.row[at], sizeof(erow) * (size_t)(E.numrows - at));
 
     E.row[at].size = (int32_t)len;
-    E.row[at].chars = malloc(len + 1);
+    E.row[at].chars = teMalloc(len + 1);
     memcpy(E.row[at].chars, s, len);
     E.row[at].chars[len] = '\0';
 
@@ -278,7 +279,7 @@ static void editorDelRow(int32_t at) {
 
 static void editorRowInsertChar(erow *row, int32_t at, int32_t c) {
     if (at < 0 || at > row->size) at = row->size;
-    row->chars = realloc(row->chars, (size_t)(row->size + 2));
+    row->chars = teRealloc(row->chars, (size_t)(row->size + 2));
     memmove(&row->chars[at + 1], &row->chars[at], (size_t)(row->size - at + 1));
     row->size++;
     row->chars[at] = (char)c;
@@ -287,7 +288,7 @@ static void editorRowInsertChar(erow *row, int32_t at, int32_t c) {
 }
 
 static void editorRowAppendString(erow *row, char *s, size_t len) {
-    row->chars = realloc(row->chars, (size_t)row->size + len + 1);
+    row->chars = teRealloc(row->chars, (size_t)row->size + len + 1);
     memcpy(&row->chars[row->size], s, len);
     row->size += (int32_t)len;
     row->chars[row->size] = '\0';
@@ -314,10 +315,10 @@ static undoSnapshot editorMakeSnapshot(void) {
     snap.numrows = E.numrows;
     snap.cx = E.cx;
     snap.cy = E.cy;
-    snap.row = malloc(sizeof(undoRow) * (size_t)E.numrows);
+    snap.row = teMalloc(sizeof(undoRow) * (size_t)E.numrows);
     for (int32_t i = 0; i < E.numrows; i++) {
         snap.row[i].size = E.row[i].size;
-        snap.row[i].chars = malloc((size_t)E.row[i].size + 1);
+        snap.row[i].chars = teMalloc((size_t)E.row[i].size + 1);
         memcpy(snap.row[i].chars, E.row[i].chars, (size_t)E.row[i].size + 1);
     }
     return snap;
@@ -361,7 +362,7 @@ static void editorPushUndo(enum undoEditType type) {
             sizeof(undoSnapshot) * (size_t)(E.undo_count - 1));
         E.undo_count--;
     }
-    E.undo_stack = realloc(E.undo_stack, sizeof(undoSnapshot) * (size_t)(E.undo_count + 1));
+    E.undo_stack = teRealloc(E.undo_stack, sizeof(undoSnapshot) * (size_t)(E.undo_count + 1));
     E.undo_stack[E.undo_count++] = editorMakeSnapshot();
 }
 
@@ -373,11 +374,11 @@ static void editorRestoreSnapshot(undoSnapshot *snap) {
     free(E.row);
 
     E.numrows = snap->numrows;
-    E.row = malloc(sizeof(erow) * (size_t)E.numrows);
+    E.row = teMalloc(sizeof(erow) * (size_t)E.numrows);
     for (int32_t i = 0; i < E.numrows; i++) {
         E.row[i].size = snap->row[i].size;
         E.row[i].rsize = 0;
-        E.row[i].chars = malloc((size_t)snap->row[i].size + 1);
+        E.row[i].chars = teMalloc((size_t)snap->row[i].size + 1);
         memcpy(E.row[i].chars, snap->row[i].chars, (size_t)snap->row[i].size + 1);
         E.row[i].render = NULL;
         E.row[i].hl = NULL;
@@ -403,13 +404,13 @@ static void editorUndo(void) {
         return;
     }
     undoSnapshot current = editorMakeSnapshot();
-    E.redo_stack = realloc(E.redo_stack, sizeof(undoSnapshot) * (size_t)(E.redo_count + 1));
+    E.redo_stack = teRealloc(E.redo_stack, sizeof(undoSnapshot) * (size_t)(E.redo_count + 1));
     E.redo_stack[E.redo_count++] = current;
 
     undoSnapshot *top = &E.undo_stack[--E.undo_count];
     editorRestoreSnapshot(top);
     editorFreeSnapshot(top);
-    E.undo_stack = realloc(E.undo_stack, sizeof(undoSnapshot) * (size_t)(E.undo_count > 0 ? E.undo_count : 1));
+    E.undo_stack = teRealloc(E.undo_stack, sizeof(undoSnapshot) * (size_t)(E.undo_count > 0 ? E.undo_count : 1));
     E.last_edit_type = EDIT_NONE;
     editorSetStatusMessage("Undo");
 }
@@ -420,13 +421,13 @@ static void editorRedo(void) {
         return;
     }
     undoSnapshot current = editorMakeSnapshot();
-    E.undo_stack = realloc(E.undo_stack, sizeof(undoSnapshot) * (size_t)(E.undo_count + 1));
+    E.undo_stack = teRealloc(E.undo_stack, sizeof(undoSnapshot) * (size_t)(E.undo_count + 1));
     E.undo_stack[E.undo_count++] = current;
 
     undoSnapshot *top = &E.redo_stack[--E.redo_count];
     editorRestoreSnapshot(top);
     editorFreeSnapshot(top);
-    E.redo_stack = realloc(E.redo_stack, sizeof(undoSnapshot) * (size_t)(E.redo_count > 0 ? E.redo_count : 1));
+    E.redo_stack = teRealloc(E.redo_stack, sizeof(undoSnapshot) * (size_t)(E.redo_count > 0 ? E.redo_count : 1));
     E.last_edit_type = EDIT_NONE;
     editorSetStatusMessage("Redo");
 }
@@ -536,7 +537,7 @@ static char *editorRowsToString(size_t *buflen) {
         totlen += (size_t)E.row[j].size + ending_len;
     *buflen = totlen;
 
-    char *buf = malloc(totlen);
+    char *buf = teMalloc(totlen);
     char *p = buf;
     for (int32_t j = 0; j < E.numrows; j++) {
         memcpy(p, E.row[j].chars, (size_t)E.row[j].size);
@@ -566,7 +567,7 @@ static char *editorPromptDisplayText(const char *buf, size_t len) {
     size_t extra = 0;
     for (size_t i = 0; i < len; i++)
         if (buf[i] == '\n' || buf[i] == '\r') extra++;
-    char *display = malloc(len + extra + 1);
+    char *display = teMalloc(len + extra + 1);
     size_t dst = 0;
     for (size_t i = 0; i < len; i++) {
         if (buf[i] == '\n' || buf[i] == '\r') {
@@ -624,7 +625,7 @@ static void editorPromptAppend(char **buf, size_t *bufsize, size_t *buflen,
 static char *editorPromptCB(const char *prompt, const char *short_prompt,
     const char *(*status_fn)(void), void (*callback)(char *, int32_t)) {
     size_t bufsize = 128;
-    char *buf = malloc(bufsize);
+    char *buf = teMalloc(bufsize);
     size_t buflen = 0;
     buf[0] = '\0';
 
@@ -802,7 +803,7 @@ static void editorWarnMissingHighlightConfig(void) {
 
 static void editorOpen(const char *filename) {
     free(E.filename);
-    E.filename = strdup(filename);
+    E.filename = teStrdup(filename);
 
     /* Before the read, so it runs for a brand-new file too: the
      * extension is known from the name alone, and a new .njk should
@@ -974,7 +975,7 @@ static uint8_t editorAtomicSave(const char *filename, const char *buf, size_t le
     const char *target = realpath(filename, resolved) ? resolved : filename;
     size_t target_len = strlen(target);
     const char suffix[] = ".tinyedit.XXXXXX";
-    char *tmppath = malloc(target_len + sizeof(suffix));
+    char *tmppath = teMalloc(target_len + sizeof(suffix));
     if (!tmppath) { errno = ENOMEM; return 0; }
     memcpy(tmppath, target, target_len);
     memcpy(tmppath + target_len, suffix, sizeof(suffix));
@@ -1083,7 +1084,7 @@ static uint8_t editorDiffersFromDisk(void) {
     if (fseek(fp, 0, SEEK_END) == 0) {
         long disklen = ftell(fp);
         if (disklen >= 0 && (size_t)disklen == buflen && fseek(fp, 0, SEEK_SET) == 0) {
-            char *disk = malloc(buflen ? buflen : 1);
+            char *disk = teMalloc(buflen ? buflen : 1);
             if (fread(disk, 1, buflen, fp) == buflen)
                 differs = (buflen > 0) && (memcmp(disk, buf, buflen) != 0);
             free(disk);
@@ -1219,7 +1220,7 @@ static void editorQuit(void) {
 /* ---- append buffer -------------------------------------------------------- */
 
 static void abAppend(struct abuf *ab, const char *s, int32_t len) {
-    char *new = realloc(ab->b, (size_t)(ab->len + len));
+    char *new = teRealloc(ab->b, (size_t)(ab->len + len));
     if (new == NULL) return;
     memcpy(&new[ab->len], s, (size_t)len);
     ab->b = new;
@@ -1322,8 +1323,8 @@ static int32_t editorRowSegments(erow *row, int32_t wrapcols) {
     row->seg_wrapcols = wrapcols;
 
     int32_t capacity = 16;
-    row->seg_start = malloc(sizeof(int32_t) * (size_t)capacity);
-    row->seg_start_rx = malloc(sizeof(int32_t) * (size_t)capacity);
+    row->seg_start = teMalloc(sizeof(int32_t) * (size_t)capacity);
+    row->seg_start_rx = teMalloc(sizeof(int32_t) * (size_t)capacity);
     if (!row->seg_start || !row->seg_start_rx) terminalDie("malloc wrap segments");
 
     if (wrapcols <= 0 || row->rsize == 0) {
@@ -1340,11 +1341,11 @@ static int32_t editorRowSegments(erow *row, int32_t wrapcols) {
     while (line_start < row->rsize) {
         if (nseg == capacity) {
             capacity *= 2;
-            int32_t *new_start = realloc(row->seg_start, sizeof(int32_t) * (size_t)capacity);
+            int32_t *new_start = teRealloc(row->seg_start, sizeof(int32_t) * (size_t)capacity);
             if (!new_start) terminalDie("realloc wrap segments");
             row->seg_start = new_start;
 
-            int32_t *new_rx = realloc(row->seg_start_rx, sizeof(int32_t) * (size_t)capacity);
+            int32_t *new_rx = teRealloc(row->seg_start_rx, sizeof(int32_t) * (size_t)capacity);
             if (!new_rx) terminalDie("realloc wrap segments");
             row->seg_start_rx = new_rx;
         }
@@ -2347,7 +2348,7 @@ static char *editorSerializeRange(int32_t start_y, int32_t start_x, int32_t end_
         if (y != end_y) totlen += 1;
     }
 
-    char *buf = malloc(totlen + 1);
+    char *buf = teMalloc(totlen + 1);
     char *p = buf;
     for (int32_t y = start_y; y <= end_y; y++) {
         int32_t from = (y == start_y) ? start_x : 0;
@@ -2530,7 +2531,7 @@ static void editorFindAndReplace(const char *query);
  * is therefore returned with an explicit byte length. */
 static char *editorDecodeRegexReplacement(const char *raw, size_t *out_len) {
     size_t raw_len = strlen(raw);
-    char *decoded = malloc(raw_len + 1);
+    char *decoded = teMalloc(raw_len + 1);
     size_t dst = 0;
 
     for (size_t src = 0; src < raw_len; src++) {
@@ -2558,7 +2559,7 @@ static char *editorDecodeRegexReplacement(const char *raw, size_t *out_len) {
  * matching the replacement prompt's existing escape behaviour. */
 static char *editorDecodeRegexPattern(const char *raw) {
     size_t len = strlen(raw);
-    char *decoded = malloc(len + 1);
+    char *decoded = teMalloc(len + 1);
     size_t dst = 0;
     for (size_t src = 0; src < len; src++) {
         if (raw[src] == '\\' && src + 1 < len) {

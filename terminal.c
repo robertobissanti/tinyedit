@@ -5,6 +5,7 @@
 #define _GNU_SOURCE
 
 #include "terminal.h"
+#include "alloc.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -456,7 +457,7 @@ int32_t terminalReadKey(uint8_t mac_command_keys) {
  * unbounded. Caller owns the returned buffer (free() it). */
 char *terminalReadPastedText(size_t *outlen) {
     size_t cap = 4096;
-    char *buf = malloc(cap);
+    char *buf = teMalloc(cap);
     size_t len = 0;
 
     /* Matches the literal bytes "ESC[201~" one at a time; `matched`
@@ -485,7 +486,7 @@ char *terminalReadPastedText(size_t *outlen) {
         if (matched > 0) {
             if (len + (size_t)matched > cap) {
                 while (len + (size_t)matched > cap) cap *= 2;
-                buf = realloc(buf, cap);
+                buf = teRealloc(buf, cap);
             }
             memcpy(&buf[len], end_marker, (size_t)matched);
             len += (size_t)matched;
@@ -501,7 +502,7 @@ char *terminalReadPastedText(size_t *outlen) {
             continue;
         }
 
-        if (len == cap) { cap *= 2; buf = realloc(buf, cap); }
+        if (len == cap) { cap *= 2; buf = teRealloc(buf, cap); }
         buf[len++] = (char)c;
     }
 
@@ -536,4 +537,3 @@ int32_t terminalGetWindowSize(int32_t *rows, int32_t *cols) {
 }
 
 /* ---- row operations ----------------------------------------------------- */
-

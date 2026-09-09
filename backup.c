@@ -3,6 +3,7 @@
 #define _DEFAULT_SOURCE
 
 #include "backup.h"
+#include "alloc.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -113,14 +114,14 @@ char *backupRead(const char *filename, size_t *outlen) {
     if (nread != 1) { close(fd); return NULL; }
 
     size_t cap = 4096, len = 0;
-    char *buf = malloc(cap);
+    char *buf = teMalloc(cap);
     if (!buf) { close(fd); return NULL; }
 
     while ((nread = read(fd, buf + len, cap - len)) > 0) {
         len += (size_t)nread;
         if (len == cap) {
             cap *= 2;
-            char *grown = realloc(buf, cap);
+            char *grown = teRealloc(buf, cap);
             if (!grown) { free(buf); close(fd); return NULL; }
             buf = grown;
         }
