@@ -22,7 +22,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <termios.h>
 #include <time.h>
 
 #include "settings.h"
@@ -240,8 +239,6 @@ struct editorConfig {
      * startup shortcut hint, which should stay until the user does
      * something that produces a real status update (e.g. saving). */
     uint8_t statusmsg_sticky;
-    struct termios orig_termios;
-
     uint8_t sel_active;
     int32_t sel_anchor_x, sel_anchor_y;
     /* When set (via Ctrl-T), plain arrow keys extend the selection just

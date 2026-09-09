@@ -2,8 +2,8 @@ CC = cc
 CFLAGS = -Wall -O2 -std=c99
 TEST_CFLAGS = -std=c99 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Wundef -Wstrict-prototypes -Wmissing-prototypes
 
-tinyedit: tinyedit.c tinyedit.h clipboard.c clipboard.h utf8.c utf8.h settings.c settings.h backup.c backup.h syntax.c syntax.h
-	$(CC) $(CFLAGS) -o tinyedit tinyedit.c clipboard.c utf8.c settings.c backup.c syntax.c
+tinyedit: tinyedit.c tinyedit.h clipboard.c clipboard.h utf8.c utf8.h settings.c settings.h backup.c backup.h syntax.c syntax.h terminal.c terminal.h
+	$(CC) $(CFLAGS) -o tinyedit tinyedit.c clipboard.c utf8.c settings.c backup.c syntax.c terminal.c
 
 # Installs the shipped syntax configurations into the directory
 # tinyedit scans at startup. Deliberately NOT a dependency of the
