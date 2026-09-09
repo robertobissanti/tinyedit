@@ -19,6 +19,7 @@
 #include "tinyedit.h"
 #include "alloc.h"
 #include "backup.h"
+#include "buffer.h"
 #include "editor_state.h"
 #include "clipboard.h"
 #include "syntax.h"
@@ -80,45 +81,14 @@ static int32_t editorReadKey(void) {
 
 
 static int32_t editorRowCxToRx(erow *row, int32_t cx) {
-    int32_t rx = 0;
-    int32_t j = 0;
-    while (j < cx) {
-        if (row->chars[j] == '\t') {
-            rx += (S.tab_stop - 1) - (rx % S.tab_stop);
-            rx++;
-            j++;
-            continue;
-        }
-        size_t clen = utf8NextCharLen(row->chars, (size_t)j, (size_t)row->size);
-        if (clen == 0) clen = 1;
-        rx += utf8SingleCharWidth(row->chars + j, clen);
-        j += (int32_t)clen;
-    }
-    return rx;
+    return bufferRowCxToRx(row, cx, S.tab_stop);
 }
 
 /* Map a rendered display column to a source-byte cursor offset. Tabs
  * have visual width but only one source byte, so mouse placement must
  * use this same tab expansion as editorRowCxToRx(). */
 static int32_t editorRowRxToCx(erow *row, int32_t target_rx) {
-    int32_t rx = 0, pos = 0;
-    if (target_rx <= 0) return 0;
-    while (pos < row->size) {
-        int32_t width;
-        size_t clen;
-        if (row->chars[pos] == '\t') {
-            width = S.tab_stop - (rx % S.tab_stop);
-            clen = 1;
-        } else {
-            clen = utf8NextCharLen(row->chars, (size_t)pos, (size_t)row->size);
-            if (clen == 0) clen = 1;
-            width = utf8SingleCharWidth(row->chars + pos, clen);
-        }
-        if (rx + width > target_rx) break;
-        rx += width;
-        pos += (int32_t)clen;
-    }
-    return pos;
+    return bufferRowRxToCx(row, target_rx, S.tab_stop);
 }
 
 /* Placeholder glyphs for S.show_invisibles, single ASCII bytes on
@@ -227,70 +197,37 @@ static void editorUpdateAllRows(void) {
 
 static void editorInsertRow(int32_t at, const char *s, size_t len) {
     if (at < 0 || at > E.document.buffer.row_count) return;
-
-    E.document.buffer.rows = teRealloc(E.document.buffer.rows, sizeof(erow) * (size_t)(E.document.buffer.row_count + 1));
-    memmove(&E.document.buffer.rows[at + 1], &E.document.buffer.rows[at], sizeof(erow) * (size_t)(E.document.buffer.row_count - at));
-
-    E.document.buffer.rows[at].size = (int32_t)len;
-    E.document.buffer.rows[at].chars = teMalloc(len + 1);
-    memcpy(E.document.buffer.rows[at].chars, s, len);
-    E.document.buffer.rows[at].chars[len] = '\0';
-
-    E.document.buffer.rows[at].rsize = 0;
-    E.document.buffer.rows[at].render = NULL;
-    E.document.buffer.rows[at].hl = NULL;
-    E.document.buffer.rows[at].hl_open_comment = 0;
-    E.document.buffer.rows[at].hl_open_math = 0;
-    E.document.buffer.rows[at].seg_start = NULL;
-    E.document.buffer.rows[at].seg_start_rx = NULL;
-    E.document.buffer.rows[at].seg_count = 0;
-    E.document.buffer.rows[at].seg_wrapcols = -1;
-    E.document.buffer.row_count++;
+    bufferInsertRow(&E.document.buffer, at, s, len);
     editorUpdateRow(&E.document.buffer.rows[at]);
-
     E.document.file.dirty = 1;
 }
 
 static void editorFreeRow(erow *row) {
-    free(row->render);
-    free(row->chars);
-    free(row->hl);
-    free(row->seg_start);
-    free(row->seg_start_rx);
+    bufferFreeRow(row);
 }
 
 static void editorDelRow(int32_t at) {
     if (at < 0 || at >= E.document.buffer.row_count) return;
-    editorFreeRow(&E.document.buffer.rows[at]);
-    memmove(&E.document.buffer.rows[at], &E.document.buffer.rows[at + 1], sizeof(erow) * (size_t)(E.document.buffer.row_count - at - 1));
-    E.document.buffer.row_count--;
+    bufferDeleteRow(&E.document.buffer, at);
     if (at < E.document.buffer.row_count) editorRehighlightFrom(at, 0);
     E.document.file.dirty = 1;
 }
 
 static void editorRowInsertChar(erow *row, int32_t at, int32_t c) {
-    if (at < 0 || at > row->size) at = row->size;
-    row->chars = teRealloc(row->chars, (size_t)(row->size + 2));
-    memmove(&row->chars[at + 1], &row->chars[at], (size_t)(row->size - at + 1));
-    row->size++;
-    row->chars[at] = (char)c;
+    bufferRowInsertByte(row, at, c);
     editorUpdateRow(row);
     E.document.file.dirty = 1;
 }
 
 static void editorRowAppendString(erow *row, char *s, size_t len) {
-    row->chars = teRealloc(row->chars, (size_t)row->size + len + 1);
-    memcpy(&row->chars[row->size], s, len);
-    row->size += (int32_t)len;
-    row->chars[row->size] = '\0';
+    bufferRowAppend(row, s, len);
     editorUpdateRow(row);
     E.document.file.dirty = 1;
 }
 
 static void editorRowDelChar(erow *row, int32_t at) {
     if (at < 0 || at >= row->size) return;
-    memmove(&row->chars[at], &row->chars[at + 1], (size_t)(row->size - at));
-    row->size--;
+    bufferRowDeleteByte(row, at);
     editorUpdateRow(row);
     E.document.file.dirty = 1;
 }
@@ -526,22 +463,7 @@ static enum lineEndingMode editorEffectiveLineEnding(void) {
 }
 
 static char *editorRowsToString(size_t *buflen) {
-    enum lineEndingMode ending = editorEffectiveLineEnding();
-    size_t ending_len = ending == LINE_ENDING_CRLF ? 2 : 1;
-    size_t totlen = 0;
-    for (int32_t j = 0; j < E.document.buffer.row_count; j++)
-        totlen += (size_t)E.document.buffer.rows[j].size + ending_len;
-    *buflen = totlen;
-
-    char *buf = teMalloc(totlen);
-    char *p = buf;
-    for (int32_t j = 0; j < E.document.buffer.row_count; j++) {
-        memcpy(p, E.document.buffer.rows[j].chars, (size_t)E.document.buffer.rows[j].size);
-        p += E.document.buffer.rows[j].size;
-        if (ending == LINE_ENDING_CRLF) *p++ = '\r';
-        *p++ = '\n';
-    }
-    return buf;
+    return bufferSerialize(&E.document.buffer, editorEffectiveLineEnding(), buflen);
 }
 
 static void editorSetStatusMessage(const char *fmt, ...);
@@ -712,10 +634,7 @@ static char *editorPrompt(const char *prompt) {
  * scratch -- e.g. replacing what editorOpen() read from disk with a
  * newer crash-recovery backup, see editorOfferBackupRecovery(). */
 static void editorClearRows(void) {
-    for (int32_t i = 0; i < E.document.buffer.row_count; i++) editorFreeRow(&E.document.buffer.rows[i]);
-    free(E.document.buffer.rows);
-    E.document.buffer.rows = NULL;
-    E.document.buffer.row_count = 0;
+    bufferClear(&E.document.buffer);
     E.document.cursor.cx = 0;
     E.document.cursor.cy = 0;
 }
@@ -2318,31 +2237,7 @@ static void editorMoveCursorWord(uint8_t forward) {
  * into a malloc'd NUL-terminated buffer, joining lines with '\n'.
  * *outlen receives the length excluding the NUL terminator. */
 static char *editorSerializeRange(int32_t start_y, int32_t start_x, int32_t end_y, int32_t end_x, size_t *outlen) {
-    size_t totlen = 0;
-    for (int32_t y = start_y; y <= end_y; y++) {
-        int32_t from = (y == start_y) ? start_x : 0;
-        int32_t to = (y == end_y) ? end_x : E.document.buffer.rows[y].size;
-        if (to > from) totlen += (size_t)(to - from);
-        if (y != end_y) totlen += 1;
-    }
-
-    char *buf = teMalloc(totlen + 1);
-    char *p = buf;
-    for (int32_t y = start_y; y <= end_y; y++) {
-        int32_t from = (y == start_y) ? start_x : 0;
-        int32_t to = (y == end_y) ? end_x : E.document.buffer.rows[y].size;
-        if (to > from) {
-            memcpy(p, &E.document.buffer.rows[y].chars[from], (size_t)(to - from));
-            p += to - from;
-        }
-        if (y != end_y) {
-            *p = '\n';
-            p++;
-        }
-    }
-    *p = '\0';
-    *outlen = totlen;
-    return buf;
+    return bufferSerializeRange(&E.document.buffer, start_y, start_x, end_y, end_x, outlen);
 }
 
 /* Deletes the given [start_y,start_x) .. [end_y,end_x) half-open range from
