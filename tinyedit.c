@@ -21,6 +21,7 @@
 #include "backup.h"
 #include "buffer.h"
 #include "editor_state.h"
+#include "history.h"
 #include "clipboard.h"
 #include "syntax.h"
 #include "terminal.h"
@@ -202,10 +203,6 @@ static void editorInsertRow(int32_t at, const char *s, size_t len) {
     E.document.file.dirty = 1;
 }
 
-static void editorFreeRow(erow *row) {
-    bufferFreeRow(row);
-}
-
 static void editorDelRow(int32_t at) {
     if (at < 0 || at >= E.document.buffer.row_count) return;
     bufferDeleteRow(&E.document.buffer, at);
@@ -236,132 +233,31 @@ static void editorRowDelChar(erow *row, int32_t at) {
 
 static void editorSetStatusMessage(const char *fmt, ...);
 
-/* Deep-copies text and cursor only. Rendering depends on the live
- * settings and must be rebuilt when a snapshot is restored. */
-static undoSnapshot editorMakeSnapshot(const struct editorDocument *document) {
-    undoSnapshot snap;
-    snap.numrows = document->buffer.row_count;
-    snap.cx = document->cursor.cx;
-    snap.cy = document->cursor.cy;
-    snap.row = teMalloc(sizeof(undoRow) * (size_t)document->buffer.row_count);
-    for (int32_t i = 0; i < document->buffer.row_count; i++) {
-        snap.row[i].size = document->buffer.rows[i].size;
-        snap.row[i].chars = teMalloc((size_t)document->buffer.rows[i].size + 1);
-        memcpy(snap.row[i].chars, document->buffer.rows[i].chars,
-            (size_t)document->buffer.rows[i].size + 1);
-    }
-    return snap;
-}
-
-static void editorFreeSnapshot(undoSnapshot *snap) {
-    for (int32_t i = 0; i < snap->numrows; i++) {
-        free(snap->row[i].chars);
-    }
-    free(snap->row);
-    snap->row = NULL;
-    snap->numrows = 0;
-}
-
-static void editorClearRedoStack(struct editorHistory *history) {
-    for (int32_t i = 0; i < history->redo_count; i++)
-        editorFreeSnapshot(&history->redo_stack[i]);
-    history->redo_count = 0;
-}
-
-/* Pushes a snapshot of the buffer as it was BEFORE the edit about to
- * happen, unless this edit can be coalesced with the previous one (same
- * type, within UNDO_COALESCE_SECS -- a rough approximation since time(NULL)
- * only has 1s resolution, but good enough to group "typing a word" into
- * one undo step without pulling in a finer clock). Any new edit clears
- * the redo stack (standard undo/redo semantics). */
 static void editorPushUndo(enum undoEditType type) {
-    time_t now = time(NULL);
-    uint8_t coalesce = (type != EDIT_OTHER) &&
-        (type == E.document.history.last_edit_type) &&
-        (now - E.document.history.last_edit_time <= UNDO_COALESCE_SECS);
-
-    editorClearRedoStack(&E.document.history);
-    E.document.history.last_edit_type = type;
-    E.document.history.last_edit_time = now;
-
-    if (coalesce) return;
-
-    if (E.document.history.undo_count >= S.undo_max_depth) {
-        editorFreeSnapshot(&E.document.history.undo_stack[0]);
-        memmove(&E.document.history.undo_stack[0], &E.document.history.undo_stack[1],
-            sizeof(undoSnapshot) * (size_t)(E.document.history.undo_count - 1));
-        E.document.history.undo_count--;
-    }
-    E.document.history.undo_stack = teRealloc(E.document.history.undo_stack, sizeof(undoSnapshot) * (size_t)(E.document.history.undo_count + 1));
-    E.document.history.undo_stack[E.document.history.undo_count++] = editorMakeSnapshot(&E.document);
-}
-
-/* Replaces the live buffer with the given snapshot's rows/cursor. Does
- * NOT free the snapshot itself -- caller owns that (it's about to be
- * pushed onto the other stack, not discarded). */
-static void editorRestoreSnapshot(struct editorDocument *document, undoSnapshot *snap) {
-    for (int32_t i = 0; i < document->buffer.row_count; i++)
-        editorFreeRow(&document->buffer.rows[i]);
-    free(document->buffer.rows);
-
-    document->buffer.row_count = snap->numrows;
-    document->buffer.rows = teMalloc(sizeof(erow) * (size_t)document->buffer.row_count);
-    for (int32_t i = 0; i < document->buffer.row_count; i++) {
-        document->buffer.rows[i].size = snap->row[i].size;
-        document->buffer.rows[i].rsize = 0;
-        document->buffer.rows[i].chars = teMalloc((size_t)snap->row[i].size + 1);
-        memcpy(document->buffer.rows[i].chars, snap->row[i].chars,
-            (size_t)snap->row[i].size + 1);
-        document->buffer.rows[i].render = NULL;
-        document->buffer.rows[i].hl = NULL;
-        document->buffer.rows[i].hl_open_comment = 0;
-        document->buffer.rows[i].hl_open_math = 0;
-        document->buffer.rows[i].seg_start = NULL;
-        document->buffer.rows[i].seg_start_rx = NULL;
-        document->buffer.rows[i].seg_count = 0;
-        document->buffer.rows[i].seg_wrapcols = -1;
-    }
-    /* Rebuild every row with the current invisibles/tab settings and
-     * syntax highlighting, including rows beyond unchanged comment state. */
-    editorUpdateAllRows();
-    document->cursor.cx = snap->cx;
-    document->cursor.cy = snap->cy;
-    if (document->cursor.cy > document->buffer.row_count)
-        document->cursor.cy = document->buffer.row_count;
-    document->file.dirty = 1;
+    historyRecordEdit(&E.document, S.undo_max_depth, type, time(NULL));
 }
 
 static void editorUndo(void) {
-    if (E.document.history.undo_count == 0) {
+    undoSnapshot snapshot;
+    if (!historyBeginUndo(&E.document, &snapshot)) {
         editorSetStatusMessage("Nothing to undo");
         return;
     }
-    undoSnapshot current = editorMakeSnapshot(&E.document);
-    E.document.history.redo_stack = teRealloc(E.document.history.redo_stack, sizeof(undoSnapshot) * (size_t)(E.document.history.redo_count + 1));
-    E.document.history.redo_stack[E.document.history.redo_count++] = current;
-
-    undoSnapshot *top = &E.document.history.undo_stack[--E.document.history.undo_count];
-    editorRestoreSnapshot(&E.document, top);
-    editorFreeSnapshot(top);
-    E.document.history.undo_stack = teRealloc(E.document.history.undo_stack, sizeof(undoSnapshot) * (size_t)(E.document.history.undo_count > 0 ? E.document.history.undo_count : 1));
-    E.document.history.last_edit_type = EDIT_NONE;
+    historyRestoreSnapshot(&E.document, &snapshot);
+    historyFreeSnapshot(&snapshot);
+    editorUpdateAllRows();
     editorSetStatusMessage("Undo");
 }
 
 static void editorRedo(void) {
-    if (E.document.history.redo_count == 0) {
+    undoSnapshot snapshot;
+    if (!historyBeginRedo(&E.document, &snapshot)) {
         editorSetStatusMessage("Nothing to redo");
         return;
     }
-    undoSnapshot current = editorMakeSnapshot(&E.document);
-    E.document.history.undo_stack = teRealloc(E.document.history.undo_stack, sizeof(undoSnapshot) * (size_t)(E.document.history.undo_count + 1));
-    E.document.history.undo_stack[E.document.history.undo_count++] = current;
-
-    undoSnapshot *top = &E.document.history.redo_stack[--E.document.history.redo_count];
-    editorRestoreSnapshot(&E.document, top);
-    editorFreeSnapshot(top);
-    E.document.history.redo_stack = teRealloc(E.document.history.redo_stack, sizeof(undoSnapshot) * (size_t)(E.document.history.redo_count > 0 ? E.document.history.redo_count : 1));
-    E.document.history.last_edit_type = EDIT_NONE;
+    historyRestoreSnapshot(&E.document, &snapshot);
+    historyFreeSnapshot(&snapshot);
+    editorUpdateAllRows();
     editorSetStatusMessage("Redo");
 }
 
@@ -4306,13 +4202,7 @@ static void editorProcessKeypress(void) {
 /* ---- init ------------------------------------------------------------------- */
 
 static void editorFreeUndoRedo(void) {
-    for (int32_t i = 0; i < E.document.history.undo_count; i++) editorFreeSnapshot(&E.document.history.undo_stack[i]);
-    free(E.document.history.undo_stack);
-    E.document.history.undo_stack = NULL;
-    E.document.history.undo_count = 0;
-    editorClearRedoStack(&E.document.history);
-    free(E.document.history.redo_stack);
-    E.document.history.redo_stack = NULL;
+    historyClear(&E.document.history);
 }
 
 static void initEditor(void) {
