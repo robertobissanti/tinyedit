@@ -1,9 +1,7 @@
 /* tinyedit.h -- shared macros, enums and data structures for tinyedit.
  *
- * tinyedit is a single translation unit (tinyedit.c); this header exists
- * so the type definitions are separated from the logic that uses them,
- * per project convention: shared types live in the header, while logic
- * remains in the implementation file.
+ * Shared editor types live here so responsibility-specific modules can
+ * operate on the narrowest state object they need.
  *
  * Type convention (applies project-wide, not just this file): every
  * row/column index, buffer length, and screen dimension is int32_t --
@@ -11,7 +9,7 @@
  * screen" family, so indices and sizes compare and subtract directly
  * without signed/unsigned casts (the code relies on -1 sentinels, e.g.
  * search_match_y, and on mixed index/size comparisons like
- * E.cx > row->size, both of which need a signed type throughout).
+ * E.document.cursor.cx > row->size, both of which need a signed type throughout).
  * Pure on/off flags are uint8_t. Raw bytes off the wire (terminal
  * input, UTF-8 code units) are uint8_t; decoded Unicode codepoints are
  * uint32_t (see utf8.h).
@@ -196,9 +194,48 @@ struct abuf {
     int32_t len;
 };
 
-struct editorConfig {
+struct editorBuffer {
+    int32_t row_count;
+    erow *rows;
+};
+
+struct editorCursor {
     int32_t cx, cy;           /* cursor position in the file (chars) */
     int32_t rx;                /* cursor position in the rendered line */
+};
+
+struct editorSelection {
+    uint8_t active;
+    int32_t anchor_x, anchor_y;
+    uint8_t pinned;
+};
+
+struct editorHistory {
+    undoSnapshot *undo_stack;
+    int32_t undo_count;
+    undoSnapshot *redo_stack;
+    int32_t redo_count;
+    enum undoEditType last_edit_type;
+    time_t last_edit_time;
+};
+
+struct editorFileState {
+    enum lineEndingMode detected_line_ending;
+    uint8_t line_endings_mixed;
+    uint8_t dirty;
+    char *filename;
+    time_t last_backup_time;
+};
+
+struct editorDocument {
+    struct editorBuffer buffer;
+    struct editorCursor cursor;
+    struct editorSelection selection;
+    struct editorHistory history;
+    struct editorFileState file;
+};
+
+struct editorView {
     int32_t rowoff;             /* row of file we are scrolled to */
     int32_t coloff;             /* column of file we are scrolled to */
     /* Set by the mouse wheel (see MOUSE_EVENT_KEY handling in
@@ -206,21 +243,17 @@ struct editorConfig {
      * cursor on screen" re-centering for exactly one redraw -- the
      * wheel scrolls the view without moving the cursor, and without
      * this flag editorScroll() would otherwise immediately snap
-     * E.rowoff back to hug the (stationary) cursor. Cleared inside
+     * E.view.rowoff back to hug the (stationary) cursor. Cleared inside
      * editorScroll() itself right after being consulted, so any
      * subsequent real cursor movement (arrow keys, click, typing, ...)
      * goes through the normal follow-the-cursor path on its very next
      * redraw -- this is a one-shot override, not a persistent mode. */
     uint8_t free_scroll;
-    /* Style detected on opening the active file. Auto save uses this. */
-    enum lineEndingMode detected_line_ending;
-    uint8_t line_endings_mixed;
     int32_t screenrows;
     int32_t screencols;
-    int32_t numrows;
-    erow *row;
-    uint8_t dirty;          /* 1 if the buffer has unsaved changes */
-    char *filename;
+};
+
+struct editorUi {
     /* 512, not a smaller round number like 80: this has to hold a
      * fully-formatted prompt (fixed instructions + live query text
      * being typed, see editorPromptCB() in tinyedit.c) without
@@ -239,28 +272,21 @@ struct editorConfig {
      * startup shortcut hint, which should stay until the user does
      * something that produces a real status update (e.g. saving). */
     uint8_t statusmsg_sticky;
-    uint8_t sel_active;
-    int32_t sel_anchor_x, sel_anchor_y;
-    /* When set (via Ctrl-T), plain arrow keys extend the selection just
-     * like Shift+Arrow does, instead of collapsing it. Universal
-     * fallback for terminals that can't report Shift+Arrow as a
-     * distinct sequence (e.g. Terminal.app on macOS). */
-    uint8_t sel_pinned;
+};
 
-    undoSnapshot *undo_stack;
-    int32_t undo_count;
-    undoSnapshot *redo_stack;
-    int32_t redo_count;
-    enum undoEditType last_edit_type;
-    time_t last_edit_time;
-
+struct editorSearch {
     int32_t search_match_y, search_match_x, search_match_len; /* match_y == -1: no match */
+    uint8_t switch_to_replace;
+    int32_t saved_cx, saved_cy, saved_rowoff, saved_coloff;
+    int32_t direction;
+    uint8_t regex_mode;
+};
 
-    /* Wall-clock time of the last crash-recovery backup write (see
-     * backup.h). Checked against S.backup_interval in the main loop
-     * to decide when the next one is due; 0 means "never written yet
-     * this session". */
-    time_t last_backup_time;
+struct editorConfig {
+    struct editorDocument document;
+    struct editorView view;
+    struct editorUi ui;
+    struct editorSearch search;
 };
 
 #endif /* __TINYEDIT_H */
