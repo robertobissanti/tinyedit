@@ -22,6 +22,7 @@
 #include "buffer.h"
 #include "editor_state.h"
 #include "history.h"
+#include "render.h"
 #include "clipboard.h"
 #include "syntax.h"
 #include "terminal.h"
@@ -1062,25 +1063,12 @@ static void abAppendReset(struct abuf *ab) {
  * padding before the text starts. Zero when gutter is disabled. Grows
  * with E.document.buffer.row_count so files with 1000+ lines still right-align cleanly. */
 static int32_t editorGutterWidth(void) {
-    if (!S.show_line_numbers) return 0;
-    int32_t digits = 3;
-    int32_t n = E.document.buffer.row_count;
-    while (n >= 1000) {
-        digits++;
-        n /= 10;
-    }
-    /* editorDrawGutter() formats into a fixed 16-byte buffer. Keeping the
-     * width bounded here preserves both the visual layout and a meaningful
-     * snprintf() bound even if a corrupted/constructed buffer reports an
-     * absurd number of rows. */
-    if (digits > 14) digits = 14;
-    return digits + 1;
+    return renderGutterWidth(&E.document.buffer, (uint8_t)S.show_line_numbers);
 }
 
 /* Usable text area width: total screen columns minus the gutter. */
 static int32_t editorTextCols(void) {
-    int32_t cols = E.view.screencols - editorGutterWidth();
-    return cols > 0 ? cols : 0;
+    return renderTextCols(&E.view, &E.document.buffer, (uint8_t)S.show_line_numbers);
 }
 
 /* Effective soft-wrap width in render columns. Wrap is always active
@@ -1091,11 +1079,8 @@ static int32_t editorTextCols(void) {
  * the window is wider than it (e.g. to keep prose readable on a wide
  * terminal), while still following the window edge on a narrower one. */
 static int32_t editorSoftWrapCols(void) {
-    int32_t textcols = editorTextCols();
-    int32_t margin = textcols - 1;
-    if (margin < 1) margin = 1;
-    if (S.soft_wrap <= 0) return margin;
-    return margin < S.soft_wrap ? margin : S.soft_wrap;
+    return renderSoftWrapCols(&E.view, &E.document.buffer,
+        (uint8_t)S.show_line_numbers, S.soft_wrap);
 }
 
 /* Splits row->render into visual segments of at most `wrapcols` render
@@ -1121,79 +1106,7 @@ static int32_t editorSoftWrapCols(void) {
  * renderer. Results are cached on the row and have no fixed segment
  * limit; a long generated line remains fully reachable. */
 static int32_t editorRowSegments(erow *row, int32_t wrapcols) {
-    if (row->seg_start && row->seg_start_rx && row->seg_wrapcols == wrapcols)
-        return row->seg_count;
-
-    free(row->seg_start);
-    free(row->seg_start_rx);
-    row->seg_start = NULL;
-    row->seg_start_rx = NULL;
-    row->seg_count = 0;
-    row->seg_wrapcols = wrapcols;
-
-    int32_t capacity = 16;
-    row->seg_start = teMalloc(sizeof(int32_t) * (size_t)capacity);
-    row->seg_start_rx = teMalloc(sizeof(int32_t) * (size_t)capacity);
-    if (!row->seg_start || !row->seg_start_rx) terminalDie("malloc wrap segments");
-
-    if (wrapcols <= 0 || row->rsize == 0) {
-        row->seg_start[0] = 0;
-        row->seg_start_rx[0] = 0;
-        row->seg_count = 1;
-        return 1;
-    }
-
-    int32_t nseg = 0;
-    int32_t line_start = 0;    /* byte offset where the current segment begins */
-    int32_t line_start_rx = 0; /* column offset of the same point */
-
-    while (line_start < row->rsize) {
-        if (nseg == capacity) {
-            capacity *= 2;
-            int32_t *new_start = teRealloc(row->seg_start, sizeof(int32_t) * (size_t)capacity);
-            if (!new_start) terminalDie("realloc wrap segments");
-            row->seg_start = new_start;
-
-            int32_t *new_rx = teRealloc(row->seg_start_rx, sizeof(int32_t) * (size_t)capacity);
-            if (!new_rx) terminalDie("realloc wrap segments");
-            row->seg_start_rx = new_rx;
-        }
-        row->seg_start[nseg] = line_start;
-        row->seg_start_rx[nseg] = line_start_rx;
-        nseg++;
-
-        int32_t col = 0;
-        int32_t pos = line_start;
-        int32_t last_space_pos = -1, last_space_col = -1;
-        while (pos < row->rsize && col < wrapcols) {
-            size_t clen = utf8NextCharLen(row->render, (size_t)pos, (size_t)row->rsize);
-            if (clen == 0) clen = 1;
-            int32_t w = utf8SingleCharWidth(row->render + pos, clen);
-            if (col + w > wrapcols) break;
-            if (row->render[pos] == ' ') { last_space_pos = pos; last_space_col = col; }
-            col += w;
-            pos += (int32_t)clen;
-        }
-
-        if (pos >= row->rsize) {
-            line_start_rx += col;
-            line_start = row->rsize;
-        } else if (last_space_pos >= 0 && last_space_pos + 1 > line_start) {
-            line_start_rx += last_space_col + 1; /* wrap after the space */
-            line_start = last_space_pos + 1;
-        } else {
-            line_start_rx += col; /* no space to break at: hard break */
-            line_start = pos;
-        }
-    }
-
-    if (nseg == 0) { /* row->rsize == 0 already handled above, kept for safety */
-        row->seg_start[nseg] = 0;
-        row->seg_start_rx[nseg] = 0;
-        nseg++;
-    }
-    row->seg_count = nseg;
-    return nseg;
+    return renderRowSegments(row, wrapcols);
 }
 
 /* Render-column just past the last visible character of segment `i`
@@ -1207,9 +1120,7 @@ static int32_t editorRowSegments(erow *row, int32_t wrapcols) {
  * the cursor (and any character typed there) one position into the
  * next visual line instead of at the end of the current one. */
 static int32_t editorSegVisibleEnd(erow *row, int32_t nseg, const int32_t *seg_start, int32_t i) {
-    int32_t end = (i + 1 < nseg) ? seg_start[i + 1] : row->rsize;
-    while (end > seg_start[i] && row->render[end - 1] == ' ') end--;
-    return end;
+    return renderSegmentVisibleEnd(row, nseg, seg_start, i);
 }
 
 /* Column equivalent of editorSegVisibleEnd() -- the render-COLUMN
@@ -1222,13 +1133,7 @@ static int32_t editorSegVisibleEnd(erow *row, int32_t nseg, const int32_t *seg_s
  * count is simply the byte count minus the number of trimmed bytes. */
 static int32_t editorSegVisibleEndRx(erow *row, int32_t nseg, const int32_t *seg_start,
     const int32_t *seg_start_rx, int32_t i) {
-    int32_t end_byte = (i + 1 < nseg) ? seg_start[i + 1] : row->rsize;
-    int32_t end_rx = (i + 1 < nseg) ? seg_start_rx[i + 1] : editorRowCxToRx(row, row->size);
-    while (end_byte > seg_start[i] && row->render[end_byte - 1] == ' ') {
-        end_byte--;
-        end_rx--;
-    }
-    return end_rx;
+    return renderSegmentVisibleEndRx(row, nseg, seg_start, seg_start_rx, i, S.tab_stop);
 }
 
 /* Finds which visual segment of `row` contains render-column `rx`, and
@@ -1236,22 +1141,11 @@ static int32_t editorSegVisibleEndRx(erow *row, int32_t nseg, const int32_t *seg
  * cursor position into (segment index, in-segment column) for
  * scrolling/rendering with wrap active. */
 static void editorRxToSegment(erow *row, int32_t wrapcols, int32_t rx, int32_t *seg_idx, int32_t *seg_col) {
-    int32_t nseg = editorRowSegments(row, wrapcols);
-    int32_t i;
-    for (i = 0; i < nseg - 1; i++) {
-        if (rx < row->seg_start_rx[i + 1]) break;
-    }
-    *seg_idx = i;
-    *seg_col = rx - row->seg_start_rx[i];
+    renderRxToSegment(row, wrapcols, rx, seg_idx, seg_col);
 }
 
 /* Number of visual (video) rows a logical file row occupies -- 1 when
  * wrap is off or the row is empty, or the wrap segment count. */
-static int32_t editorRowVideoHeight(int32_t filerow, int32_t wrapcols) {
-    if (wrapcols <= 0) return 1;
-    return editorRowSegments(&E.document.buffer.rows[filerow], wrapcols);
-}
-
 /* Converts a (filerow, segment index) pair into an absolute video-row
  * number, counting every visual segment of every row from 0 up to
  * (but not including) filerow, plus `seg` segments into filerow
@@ -1261,37 +1155,20 @@ static int32_t editorRowVideoHeight(int32_t filerow, int32_t wrapcols) {
  * fine at the scale this editor targets (see IDEAS.md on large files),
  * called at most a couple times per keypress/redraw. */
 static int32_t editorVideoRowOf(int32_t filerow, int32_t seg, int32_t wrapcols) {
-    int32_t vy = 0;
-    for (int32_t i = 0; i < filerow; i++)
-        vy += editorRowVideoHeight(i, wrapcols);
-    return vy + seg;
+    return renderVideoRowOf(&E.document.buffer, filerow, seg, wrapcols);
 }
 
 /* Inverse of editorVideoRowOf(): given an absolute video-row number,
  * finds which (filerow, segment) it falls in. Clamps to the last row
  * if `vy` is past the end of the file. */
 static void editorFileRowAtVideoRow(int32_t vy, int32_t wrapcols, int32_t *out_filerow, int32_t *out_seg) {
-    int32_t vy_left = vy;
-    for (int32_t i = 0; i < E.document.buffer.row_count; i++) {
-        int32_t h = editorRowVideoHeight(i, wrapcols);
-        if (vy_left < h) {
-            *out_filerow = i;
-            *out_seg = vy_left;
-            return;
-        }
-        vy_left -= h;
-    }
-    *out_filerow = E.document.buffer.row_count > 0 ? E.document.buffer.row_count - 1 : 0;
-    *out_seg = 0;
+    renderFileRowAtVideoRow(&E.document.buffer, vy, wrapcols, out_filerow, out_seg);
 }
 
 /* Total number of video rows across the whole file (sum of every
  * row's visual height). Used to clamp scrolling past the end. */
 static int32_t editorTotalVideoRows(int32_t wrapcols) {
-    int32_t total = 0;
-    for (int32_t i = 0; i < E.document.buffer.row_count; i++)
-        total += editorRowVideoHeight(i, wrapcols);
-    return total;
+    return renderTotalVideoRows(&E.document.buffer, wrapcols);
 }
 
 /* Converts a 1-based (screen_col, screen_row) terminal coordinate --
