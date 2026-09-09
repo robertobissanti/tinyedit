@@ -6,15 +6,14 @@ altri globali mutabili di `tinyedit.c`.
 
 ## Decisione proposta
 
-Mantenere una sola radice `editorState E`, composta da strutture più fini.
+Mantenere una sola radice editoriale `editorConfig E`, composta da strutture più fini.
 Le funzioni ricevono la struttura più piccola che rappresenta davvero il loro
 contratto; quando una funzione attraversa tre o più aree principali riceve
-direttamente `editorState *`.
+direttamente `editorConfig *`.
 
-Non conviene mantenere `S` come seconda globale indipendente: diventa
-`E.settings`. In questo modo l'applicazione ha una sola radice di stato, ma una
-funzione che usa soltanto le impostazioni può comunque ricevere
-`const struct editorSettings *`.
+Per la fase corrente `S` resta deliberatamente globale, come deciso dopo
+l'analisi. Potrà essere rivalutata separatamente senza bloccare la
+decomposizione di `E`.
 
 ## Struttura risultante
 
@@ -90,18 +89,17 @@ struct editorInput {
     int32_t pending_key;
 };
 
-struct editorState {
+struct editorConfig {
     struct editorDocument document;
     struct editorView view;
     struct editorUi ui;
     struct editorSearch search;
-    struct editorInput input;
-    struct editorSettings settings;
 };
 ```
 
-Le sei aree principali sono quindi `document`, `view`, `ui`, `search`, `input`
-e `settings`. `document` è ulteriormente scomposto perché le sue primitive
+Le quattro aree della radice sono quindi `document`, `view`, `ui` e `search`.
+Lo stato del terminale è incapsulato nel relativo modulo e `S` resta globale.
+`document` è ulteriormente scomposto perché le sue primitive
 sono quelle che beneficiano maggiormente di test C diretti.
 
 `dirty` rimane in `editorFileState`, non nel buffer: indica che il documento
@@ -116,10 +114,10 @@ Questo elimina l'effetto collaterale nascosto oggi presente in
 - Una sola area: puntatore a quella struttura.
 - Due aree realmente necessarie: due puntatori, oppure il padre naturale se
   vengono quasi sempre usate insieme.
-- Tre o più aree principali: `editorState *`.
+- Tre o più aree principali: `editorConfig *`.
 - Funzione pura o già parametrizzata completamente: nessun puntatore di stato.
 - Configurazione in sola lettura: puntatore `const`.
-- Le funzioni di orchestrazione possono ricevere sempre `editorState *`.
+- Le funzioni di orchestrazione possono ricevere sempre `editorConfig *`.
 
 ## Censimento: terminale e input
 
@@ -155,9 +153,9 @@ chiaro.
 |---|---|---|
 | `editorRowCxToRx` | riga + `tab_stop` | `erow *`, `const editorSettings *` |
 | `editorRowRxToCx` | riga + `tab_stop` | `erow *`, `const editorSettings *` |
-| `editorRehighlightFrom` | buffer, filename, syntax settings | `editorState *` |
-| `editorUpdateRow` | buffer circostante, filename, syntax/render settings | `editorState *`, `erow *` |
-| `editorUpdateAllRows` | buffer | `editorState *` perché richiama update contestuale |
+| `editorRehighlightFrom` | buffer, filename, syntax settings | `editorConfig *` |
+| `editorUpdateRow` | buffer circostante, filename, syntax/render settings | `editorConfig *`, `erow *` |
+| `editorUpdateAllRows` | buffer | `editorConfig *` perché richiama update contestuale |
 | `editorInsertRow` | buffer | `editorBuffer *` |
 | `editorFreeRow` | una riga | `erow *` già sufficiente |
 | `editorDelRow` | buffer | `editorBuffer *` |
@@ -180,15 +178,15 @@ rendering/sintassi e registra history una sola volta.
 | `editorFreeSnapshot` | snapshot ricevuto | nessuno stato |
 | `editorClearRedoStack` | history | `editorHistory *` |
 | `editorPushUndo` | history + snapshot del documento + limite setting | `editorDocument *`, `int32_t max_depth` |
-| `editorRestoreSnapshot` | buffer + cursor + dirty + rendering | `editorState *` |
-| `editorUndo` | document + rendering | `editorState *` |
-| `editorRedo` | document + rendering | `editorState *` |
+| `editorRestoreSnapshot` | buffer + cursor + dirty + rendering | `editorConfig *` |
+| `editorUndo` | document + rendering | `editorConfig *` |
+| `editorRedo` | document + rendering | `editorConfig *` |
 | `editorInsertCharRaw` | buffer + cursor | `editorDocument *` |
 | `editorInsertChar` | buffer + cursor + history + dirty | `editorDocument *` |
 | `editorInsertNewlineRaw` | buffer + cursor | `editorDocument *` |
 | `editorInsertNewlineAutoIndent` | document + settings | `editorDocument *`, `const editorSettings *` |
 | `editorDelChar` | document/history | `editorDocument *` |
-| `editorGetSelection` | selection + cursor | `const editorDocument *` |
+| `editorSelectionRange` | selection + cursor | due puntatori `const` (implementato e testato direttamente) |
 | `editorSerializeRange` | buffer | `const editorBuffer *` |
 | `editorDeleteRangeRaw` | buffer + cursor + dirty | `editorDocument *` |
 | `editorDeleteRange` | document/history | `editorDocument *` |
@@ -211,25 +209,25 @@ dall'utente. Le primitive puramente meccaniche possono scendere a
 | Funzione | Stato effettivo | Parametro consigliato |
 |---|---|---|
 | `editorEffectiveLineEnding` | file state + setting | `const editorFileState *`, `const editorSettings *` |
-| `editorResolveFiletype` | filename + settings persistenti | `editorState *` |
-| `editorWarnMissingHighlightConfig` | filename + UI status | `editorState *` |
-| `editorOpen` | intero documento, settings, UI | `editorState *` |
-| `editorMaybeBackup` | document/file + UI + setting | `editorState *` |
-| `editorOfferBackupRecovery` | document/file + UI | `editorState *` |
+| `editorResolveFiletype` | filename + settings persistenti | `editorConfig *` |
+| `editorWarnMissingHighlightConfig` | filename + UI status | `editorConfig *` |
+| `editorOpen` | intero documento, settings, UI | `editorConfig *` |
+| `editorMaybeBackup` | document/file + UI + setting | `editorConfig *` |
+| `editorOfferBackupRecovery` | document/file + UI | `editorConfig *` |
 | `editorWriteAll` | fd e byte buffer | nessuno stato |
 | `editorAtomicSave` | argomenti completi; usa filename solo per metadata | rendere esplicito l'argomento, nessuno stato |
-| `editorSaveInternal` | document/file + UI + settings | `editorState *` |
-| `editorSave` | orchestrazione | `editorState *` |
-| `editorSaveAs` | orchestrazione | `editorState *` |
-| `editorDiffersFromDisk` | buffer + file state + line ending | `const editorState *` oppure helper con argomenti espliciti |
-| `editorConfirmDocumentChange` | document + UI + input | `editorState *` |
-| `editorResetDocument` | document, view, search, UI parziale | `editorState *` |
-| `editorCloseFile` | orchestrazione | `editorState *` |
-| `editorOpenFile` | orchestrazione | `editorState *` |
-| `editorQuit` | orchestrazione/terminale/file | `editorState *` |
+| `editorSaveInternal` | document/file + UI + settings | `editorConfig *` |
+| `editorSave` | orchestrazione | `editorConfig *` |
+| `editorSaveAs` | orchestrazione | `editorConfig *` |
+| `editorDiffersFromDisk` | buffer + file state + line ending | `const editorConfig *` oppure helper con argomenti espliciti |
+| `editorConfirmDocumentChange` | document + UI + input | `editorConfig *` |
+| `editorResetDocument` | document, view, search, UI parziale | `editorConfig *` |
+| `editorCloseFile` | orchestrazione | `editorConfig *` |
+| `editorOpenFile` | orchestrazione | `editorConfig *` |
+| `editorQuit` | orchestrazione/terminale/file | `editorConfig *` |
 
 Queste funzioni non vanno artificialmente ristrette: il lifecycle del file è
-per natura trasversale e ricevere `editorState *` rende il contratto più
+per natura trasversale e ricevere `editorConfig *` rende il contratto più
 onesto di quattro puntatori separati.
 
 ## Censimento: viewport, coordinate e rendering
@@ -247,26 +245,26 @@ onesto di quattro puntatori separati.
 | `editorVideoRowOf` | buffer + wrap | `editorBuffer *`, `int32_t wrapcols` |
 | `editorFileRowAtVideoRow` | buffer + wrap | `editorBuffer *`, `int32_t wrapcols` |
 | `editorTotalVideoRows` | buffer + wrap | `editorBuffer *`, `int32_t wrapcols` |
-| `editorMouseToCursor` | document + view + settings | `editorState *` |
-| `editorScroll` | document + view + settings | `editorState *` |
+| `editorMouseToCursor` | document + view + settings | `editorConfig *` |
+| `editorScroll` | document + view + settings | `editorConfig *` |
 | `editorSegColToCx` | riga + tab setting | `erow *`, `int32_t tab_stop` |
-| `editorMoveCursorWrapped` | document + view/settings | `editorState *` |
-| `editorMoveCursor` | document + view/settings | `editorState *` |
+| `editorMoveCursorWrapped` | document + view/settings | `editorConfig *` |
+| `editorMoveCursor` | document + view/settings | `editorConfig *` |
 | `editorMoveCursorWord` | document | `editorDocument *` |
 | `abAppend` | append buffer ricevuto | nessuno stato |
 | `abFree` | append buffer ricevuto | nessuno stato |
 | `abAppendReset` | background setting | `abuf *`, `const editorSettings *` |
-| `editorDrawRowSegment` | document, selection, search, settings | `const editorState *` |
+| `editorDrawRowSegment` | document, selection, search, settings | `const editorConfig *` |
 | `editorDrawGutter` | buffer + settings | `const editorBuffer *`, `const editorSettings *` |
 | `editorChooseSlogan` | UI | `editorUi *` |
-| `editorDrawSplashRow` | view + UI/settings | `const editorState *` |
-| `editorDrawRows` | document, view, search, settings | `const editorState *` |
+| `editorDrawSplashRow` | view + UI/settings | `const editorConfig *` |
+| `editorDrawRows` | document, view, search, settings | `const editorConfig *` |
 | `editorCountChars` | buffer | `const editorBuffer *` |
 | `editorFiletypeLabel` | file state | `const editorFileState *` |
-| `editorDrawTopBar` | document/file, view, settings | `const editorState *` |
-| `editorDrawStatusBar` | document/file, view, settings | `const editorState *` |
+| `editorDrawTopBar` | document/file, view, settings | `const editorConfig *` |
+| `editorDrawStatusBar` | document/file, view, settings | `const editorConfig *` |
 | `editorDrawMessageBar` | UI + view | `const editorUi *`, `const editorView *` |
-| `editorRefreshScreen` | quasi tutte le aree | `editorState *` |
+| `editorRefreshScreen` | quasi tutte le aree | `editorConfig *` |
 | `editorSetStatusMessage` | UI | `editorUi *` |
 | `editorSetStatusMessageSticky` | UI | `editorUi *` |
 
@@ -280,16 +278,16 @@ correttamente una funzione sullo stato intero.
 |---|---|---|
 | `editorPromptDisplayText` | solo buffer del prompt | nessuno stato |
 | `editorPromptAppend` | solo buffer del prompt | nessuno stato |
-| `editorPromptCB` | UI, view, input, clipboard | `editorState *` |
-| `editorPrompt` | prompt + file state | `editorState *` |
+| `editorPromptCB` | UI, view, input, clipboard | `editorConfig *` |
+| `editorPrompt` | prompt + file state | `editorConfig *` |
 | `editorDecodeRegexReplacement` | argomento | nessuno stato |
 | `editorDecodeRegexPattern` | argomento | nessuno stato |
 | `editorRegexFindLastOnRow` | riga e limite | eliminare dipendenze residue; argomenti espliciti |
 | `editorFindFrom` | document + search | `editorDocument *`, `editorSearch *` |
-| `editorFindCallback` | document + view + search | `editorState *` |
+| `editorFindCallback` | document + view + search | `editorConfig *` |
 | `editorFindModeIndicator` | search | `const editorSearch *` |
-| `editorFind` | document + view + search + UI/input | `editorState *` |
-| `editorFindAndReplace` | document + search + UI/input/history | `editorState *` |
+| `editorFind` | document + view + search + UI/input | `editorConfig *` |
+| `editorFindAndReplace` | document + search + UI/input/history | `editorConfig *` |
 
 Gli attuali globali `search_*` devono entrare tutti in `editorSearch`; non ci
 sono motivi di ciclo di vita per lasciarli separati da `E`.
@@ -301,7 +299,7 @@ sono motivi di ciclo di vita per lasciarli separati da `E`.
 | `editorPrimaryModifier` | settings | `const editorSettings *` |
 | `editorShortcutText` | settings | `const editorSettings *` |
 | `editorRecoveryScreenLine` | view | `const editorView *` |
-| `editorRecoveryScreen` | document/file + view + input | `editorState *` |
+| `editorRecoveryScreen` | document/file + view + input | `editorConfig *` |
 | `settingsScreenSlot` | settings ricevute | nessun `E` |
 | `editorSettingsIsSyntaxColor` | descrittore | nessuno stato |
 | `editorSettingsIsColor` | descrittore | nessuno stato |
@@ -309,24 +307,24 @@ sono motivi di ciclo di vita per lasciarli separati da `E`.
 | `editorSettingsDescriptorAt` | settings ricevute | nessun `E` |
 | `editorSettingsCycleEnum` | argomenti completi | nessuno stato |
 | `editorSettingsDrawRow` | argomenti completi | nessuno stato |
-| `editorHelpScreen` | view + settings + input | `editorState *` |
+| `editorHelpScreen` | view + settings + input | `editorConfig *` |
 | `editorInfoAppendLine` | append buffer | nessuno stato |
 | `editorInfoAppendSection` | append buffer | nessuno stato |
 | `editorInfoAppendBlank` | append buffer | nessuno stato |
-| `editorInfoScreen` | document, view, settings, input | `editorState *` |
+| `editorInfoScreen` | document, view, settings, input | `editorConfig *` |
 | `editorSettingsVisibleRows` | view | `const editorView *` |
 | `editorSettingsRender` | view + settings temporanee | `const editorView *`, settings ricevute |
-| `editorSettingsEditInt` | input/UI + settings temporanee | `editorState *`, settings temporanee |
-| `editorSettingsSave` | settings vecchie/nuove + document/render/input | `editorState *`, settings temporanee |
-| `editorSettingsScreen` | settings, UI, view, input | `editorState *` |
+| `editorSettingsEditInt` | input/UI + settings temporanee | `editorConfig *`, settings temporanee |
+| `editorSettingsSave` | settings vecchie/nuove + document/render/input | `editorConfig *`, settings temporanee |
+| `editorSettingsScreen` | settings, UI, view, input | `editorConfig *` |
 
 ## Censimento: orchestrazione
 
 | Funzione | Stato effettivo | Parametro consigliato |
 |---|---|---|
-| `editorProcessKeypress` | document, view, selection, history, input, settings, UI | `editorState *` |
-| `initEditor` | inizializza ogni area | `editorState *` |
-| `main` | possiede il ciclo di vita | crea `editorState E`; può restare locale a `main` |
+| `editorProcessKeypress` | document, view, selection, history, input, settings, UI | `editorConfig *` |
+| `initEditor` | inizializza ogni area | `editorConfig *` |
+| `main` | possiede il ciclo di vita | crea `editorConfig E`; può restare locale a `main` |
 
 `editorProcessKeypress()` è esattamente il caso in cui passare `E` è giusto:
 smontarlo in molti puntatori renderebbe la firma peggiore senza ridurre
@@ -334,15 +332,20 @@ l'accoppiamento. Il disaccoppiamento del dispatch avverrà estraendo handler
 più piccoli, ai quali passare `editorDocument *`, `editorSearch *` o lo stato
 minimo appropriato.
 
-## Globali da assorbire o lasciare costanti
+## Globali assorbite e scelte deliberate
 
-Da assorbire in `E`:
+Assorbite in `E`:
 
 - tutti i `search_*` → `E.search`;
-- `mouseEventButton/Col/Row/Press` e `pending_key` → `E.input`;
-- `sessionSlogan` → `E.ui`;
-- `S` → `E.settings`;
-- `orig_termios`, già dentro l'attuale `E`, → `E.input`.
+
+Incapsulate nel modulo terminale:
+
+- `mouseEventButton/Col/Row/Press`, `pending_key` e `orig_termios`.
+
+Lasciate globali in questa fase:
+
+- `S`, per decisione esplicita;
+- `sessionSlogan`, finché non viene separato il rendering.
 
 Da lasciare globali `static const` perché sono dati immutabili, non stato:
 
@@ -370,31 +373,31 @@ successivo e separato.
 
 ### `terminal.c/.h`
 
-Contiene `editorInput`, raw mode, decoder dei tasti, bracketed paste, mouse e
-dimensioni terminale. Le sequenze terminali restano testate via PTY.
+Completato: contiene il proprio stato interno, raw mode, decoder dei tasti,
+bracketed paste, mouse e dimensioni terminale. Le sequenze restano testate via
+PTY.
 
 ### `render.c/.h`
 
 Contiene `editorView`, mapping visuale e rendering. Le funzioni di frame
-ricevono `editorState *`; le funzioni geometriche più fini ricevono riga,
+ricevono `editorConfig *`; le funzioni geometriche più fini ricevono riga,
 buffer o view.
 
 ### `tinyedit.c`
 
-Possiede `editorState`, lifecycle del documento, ricerca, overlay e dispatch.
+Possiede `editorConfig`, lifecycle del documento, ricerca, overlay e dispatch.
 Ricerca e overlay potranno essere estratti solo dopo che buffer, terminale e
 rendering hanno API stabili.
 
-## Ordine operativo raccomandato
+## Stato della sequenza operativa
 
-1. Definire le strutture annidate in `tinyedit.h` senza spostare funzioni.
-2. Convertire `S` e gli altri globali mutabili in membri di `editorState`.
-3. Aggiornare gli accessi meccanicamente, mantenendo `make test` verde.
-4. Parametrizzare prima le primitive pure di riga/buffer.
-5. Estrarre `buffer.c/.h`, poi `history.c/.h`.
-6. Estrarre `terminal.c/.h` preservando i test PTY.
-7. Estrarre `render.c/.h` dopo aver aggiunto test C diretti sul mapping UTF-8.
-8. Solo a confini stabilizzati, rifattorizzare il dispatch della selezione.
+1. Strutture annidate in `tinyedit.h`: completato.
+2. Globali di ricerca assorbite; `S` mantenuta globale: completato.
+3. Accessi aggiornati e suite verde: completato.
+4. Prime primitive parametrizzate per selection/document/history: completato.
+5. `editorSelectionRange` estratta e testata senza PTY: completato.
+6. Estrazione `buffer.c/.h` e `history.c/.h`: lavoro successivo.
+7. Estrazione `render.c/.h`: dopo test diretti sul mapping UTF-8.
 
 Ogni passaggio deve essere un commit autonomo e prevalentemente meccanico. Non
 va combinato nello stesso commit con il nuovo modello di undo o con cambi di
@@ -407,7 +410,7 @@ decomposizione produce tre categorie nette:
 
 - primitive pure: nessuno stato globale;
 - operazioni sul documento: `editorDocument *` o una sua sottostruttura;
-- rendering, lifecycle, ricerca interattiva e dispatch: `editorState *`.
+- rendering, lifecycle, ricerca interattiva e dispatch: `editorConfig *`.
 
 Questa gerarchia mantiene la comodità di una sola `E`, evita firme con molti
 puntatori e rende testabili direttamente proprio le funzioni che oggi
