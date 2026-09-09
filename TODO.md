@@ -1833,6 +1833,26 @@ partenza da cui il log sarà accurato in avanti.
 
 ## Note tecniche aperte
 
+- [x] **Bug: il bracketed paste non sostituiva più la selezione attiva**
+  - _Segnalato: 2026-09-09 · Corretto: 2026-09-09_
+  - `editorProcessKeypress()` catturava correttamente la selezione in
+    `had_sel`, ma il blocco generale di dispatch azzerava `E.sel_active`
+    prima del case `PASTE_START_KEY`. Il case interrogava nuovamente lo
+    stato ormai cancellato e inseriva quindi il testo senza eliminare la
+    selezione. `Ctrl-V` non mostrava il difetto solo perché era presente
+    nella whitelist del blocco.
+  - Entrambi i percorsi usano ora la selezione catturata prima del dispatch
+    e convergono in `editorReplaceSelectionWithText()`, eliminando la
+    dipendenza fragile dalla whitelist.
+  - Corretto anche l'undo del bulk insert: cancellazione e inserimento sono
+    una singola azione, anche con testo multilinea. Le primitive `Raw`
+    modificano il buffer senza snapshot intermedi; il chiamante crea un solo
+    snapshot per azione utente. Lo stesso principio rende atomico l'undo
+    dell'auto-indent su Invio.
+  - Test PTY: selezione di `hello`, bracketed paste multilinea, salvataggio e
+    verifica byte-per-byte; un solo `Ctrl-Z` ripristina testo e selezione
+    sostituita.
+
 - [x] **Schermata Info spostata da Ctrl-I a F3**
   - _Inserito: 2026-09-04 · Completato: 2026-09-04_
   - `Ctrl-I` non è un binding portabile: condivide il byte ASCII del Tab,

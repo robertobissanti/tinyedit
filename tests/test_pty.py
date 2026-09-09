@@ -271,6 +271,33 @@ def test_selection_across_tab(home):
             finish(process, master)
 
 
+def test_bracketed_paste_replaces_selection_atomically(home):
+    """Terminal-native paste replaces a selection and is one undo step."""
+    case_home = pathlib.Path(home) / "paste-selection"
+    case_home.mkdir()
+    target = case_home / "paste.txt"
+    (case_home / ".tinyeditrc").write_text("backup_interval = 0\n", encoding="utf-8")
+    target.write_text("hello world\nsecond line\n", encoding="utf-8")
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        # Select "hello" with TinyEdit's terminal-independent selection mode.
+        os.write(master, b"\x14" + b"\x1b[C" * 5)
+        read_available(master, 0.2)
+        os.write(master, b"\x1b[200~PASTED\nTEXT\x1b[201~")
+        assert b"pasted" in read_until(master, b"pasted")
+        os.write(master, b"\x13")
+        read_until(master, b"bytes written to disk")
+        assert target.read_text(encoding="utf-8") == "PASTED\nTEXT world\nsecond line\n"
+
+        # One undo restores both the removed selection and the inserted block.
+        os.write(master, b"\x1a\x13")
+        read_until(master, b"bytes written to disk")
+        assert target.read_text(encoding="utf-8") == "hello world\nsecond line\n"
+    finally:
+        finish(process, master)
+
+
 def test_eol_after_trailing_tab(home):
     """The EOL marker follows the full visual width of a trailing tab."""
     case_home = pathlib.Path(home) / "eol-trailing-tab"
@@ -502,6 +529,7 @@ def main():
         test_ctrl_o_discards_then_creates_named_file(home)
         test_invisible_colors(home)
         test_selection_across_tab(home)
+        test_bracketed_paste_replaces_selection_atomically(home)
         test_eol_after_trailing_tab(home)
         test_block_indent(home)
         test_no_save_prompt_when_undone(home)

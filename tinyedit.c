@@ -967,11 +967,18 @@ static void editorRedo(void) {
 
 /* ---- editor operations --------------------------------------------------- */
 
-static void editorInsertChar(int32_t c) {
-    editorPushUndo(EDIT_INSERT);
+/* Inserts one byte without taking an undo snapshot. Callers that group
+ * several mutations into one user action use this raw form after pushing
+ * exactly one snapshot themselves. */
+static void editorInsertCharRaw(int32_t c) {
     if (E.cy == E.numrows) editorInsertRow(E.numrows, "", 0);
     editorRowInsertChar(&E.row[E.cy], E.cx, c);
     E.cx++;
+}
+
+static void editorInsertChar(int32_t c) {
+    editorPushUndo(EDIT_INSERT);
+    editorInsertCharRaw(c);
 }
 
 /* Splits the current row without creating an undo snapshot. Callers that
@@ -991,13 +998,8 @@ static void editorInsertNewlineRaw(void) {
     E.cx = 0;
 }
 
-static void editorInsertNewline(void) {
-    editorPushUndo(EDIT_OTHER);
-    editorInsertNewlineRaw();
-}
-
 /* Enter as typed by the user (as opposed to a newline embedded in
- * pasted/recovered text, which goes through editorInsertNewline()
+ * pasted/recovered text, which goes through editorInsertNewlineRaw()
  * directly and must NOT be reindented -- the source already has
  * whatever indentation it has). When S.auto_indent is on, copies the
  * leading whitespace (spaces/tabs, nothing else) of the line the
@@ -1017,12 +1019,13 @@ static void editorInsertNewlineAutoIndent(void) {
         if (indent_len > E.cx) indent_len = E.cx;
     }
 
-    editorInsertNewline();
+    editorPushUndo(EDIT_OTHER);
+    editorInsertNewlineRaw();
 
     if (indent_len > 0) {
         erow *row = &E.row[src_row];
         for (int32_t i = 0; i < indent_len; i++)
-            editorInsertChar((unsigned char)row->chars[i]);
+            editorInsertCharRaw((unsigned char)row->chars[i]);
     }
 }
 
@@ -2899,8 +2902,7 @@ static char *editorSerializeRange(int32_t start_y, int32_t start_x, int32_t end_
 
 /* Deletes the given [start_y,start_x) .. [end_y,end_x) half-open range from
  * the buffer and leaves the cursor at start_y,start_x. */
-static void editorDeleteRange(int32_t start_y, int32_t start_x, int32_t end_y, int32_t end_x) {
-    editorPushUndo(EDIT_OTHER);
+static void editorDeleteRangeRaw(int32_t start_y, int32_t start_x, int32_t end_y, int32_t end_x) {
     if (start_y == end_y) {
         erow *row = &E.row[start_y];
         for (int32_t i = 0; i < end_x - start_x; i++)
@@ -2922,16 +2924,32 @@ static void editorDeleteRange(int32_t start_y, int32_t start_x, int32_t end_y, i
     E.dirty = 1;
 }
 
+static void editorDeleteRange(int32_t start_y, int32_t start_x, int32_t end_y, int32_t end_x) {
+    editorPushUndo(EDIT_OTHER);
+    editorDeleteRangeRaw(start_y, start_x, end_y, end_x);
+}
+
 /* Inserts `text` (which may contain '\n') at the current cursor position,
- * splitting into new rows as needed. Leaves the cursor at the end of the
- * inserted text. */
-static void editorInsertText(const char *text, size_t len) {
+ * splitting into new rows as needed, without taking an undo snapshot. */
+static void editorInsertTextRaw(const char *text, size_t len) {
     for (size_t i = 0; i < len; i++) {
         if (text[i] == '\n')
-            editorInsertNewline();
+            editorInsertNewlineRaw();
         else
-            editorInsertChar((unsigned char)text[i]);
+            editorInsertCharRaw((unsigned char)text[i]);
     }
+}
+
+/* Replaces the selection captured before key dispatch and keeps deletion plus
+ * insertion in one undo step. With no selection this is a plain bulk insert. */
+static void editorReplaceSelectionWithText(uint8_t had_sel,
+    int32_t sy, int32_t sx, int32_t ey, int32_t ex,
+    const char *text, size_t len) {
+    if (!had_sel && len == 0) return;
+    editorPushUndo(EDIT_OTHER);
+    if (had_sel) editorDeleteRangeRaw(sy, sx, ey, ex);
+    if (len > 0) editorInsertTextRaw(text, len);
+    E.sel_active = 0;
 }
 
 /* Removes up to one indent level's worth of leading whitespace from
@@ -4535,15 +4553,11 @@ static void editorProcessKeypress(void) {
         }
 
         case CTRL_KEY('v'): {
-            int32_t sy, sx, ey, ex;
-            if (editorGetSelection(&sy, &sx, &ey, &ex)) {
-                editorDeleteRange(sy, sx, ey, ex);
-                E.sel_active = 0;
-            }
             size_t len;
             char *text = clipboardPaste(&len);
             if (text) {
-                editorInsertText(text, len);
+                editorReplaceSelectionWithText(had_sel,
+                    had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1, text, len);
                 clipboardFree(text);
                 editorSetStatusMessage("pasted");
             }
@@ -4554,9 +4568,9 @@ static void editorProcessKeypress(void) {
          * terminal window rather than through this editor's own
          * Ctrl-V/system-clipboard path above): editorReadKey() reports
          * PASTE_START_KEY the instant it sees the ESC[200~ marker, then
-         * this reads the entire pasted block in one go via
-         * editorReadPastedText() and inserts it with editorInsertText()
-         * -- same bulk insert path Ctrl-V already uses, so a paste that
+         * this reads the entire pasted block in one go and sends it through
+         * editorReplaceSelectionWithText() -- the same bulk path Ctrl-V uses,
+         * so a paste that
          * arrives this way is both fast (one undo-snapshot/no
          * per-character redraw, vs. an editorProcessKeypress() call per
          * byte the old byte-by-byte path required) and correct
@@ -4565,14 +4579,10 @@ static void editorProcessKeypress(void) {
          * freshly typed -- see TODO.md for the bug this fixes: spurious
          * closing characters left behind after a paste). */
         case PASTE_START_KEY: {
-            int32_t sy, sx, ey, ex;
-            if (editorGetSelection(&sy, &sx, &ey, &ex)) {
-                editorDeleteRange(sy, sx, ey, ex);
-                E.sel_active = 0;
-            }
             size_t len;
             char *text = editorReadPastedText(&len);
-            editorInsertText(text, len);
+            editorReplaceSelectionWithText(had_sel,
+                had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1, text, len);
             free(text);
             editorSetStatusMessage("pasted");
             break;
