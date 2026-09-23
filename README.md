@@ -18,12 +18,12 @@ A small full-screen terminal text editor written in plain C (kilo-style,
 after [kilo](https://github.com/antirez/kilo) by Salvatore Sanfilippo),
 with no dependencies beyond the POSIX standard library.
 
-tinyedit aims to bring the familiar ease of a desktop text editor to the
-terminal. It deliberately avoids the legacy of modes, commands, and unusual
-key combinations associated with editors such as Vim, Nano, or Emacs. Those
-programs are powerful and useful, but their interaction models can feel more
-complex than the everyday editing many people expect from a modern desktop
-application.
+tinyedit brings the familiar ease of a desktop text editor to the terminal.
+Traditional terminal editors can require learning modal editing (Vim),
+memorizing non-standard key sequences (Emacs), or working around limited
+navigation and selection (Nano). tinyedit reduces that friction with familiar
+shortcuts such as `Ctrl-C`, `Ctrl-V`, `Ctrl-Z`, and `Ctrl-F`, Shift+Arrow text
+selection, and optional mouse support for clicking and scrolling.
 
 ## Why it exists
 
@@ -34,10 +34,9 @@ already know from desktop text editors and word processors. The goal is not
 to invent another editing language: it is to make opening a terminal file
 feel immediately familiar.
 
-There is still plenty to implement. Multiple buffers, for example, would make
-it possible to keep several files open in one session. Any such addition must
-earn its place, though—the program should grow without losing the simplicity
-that motivated it in the first place.
+There is still room to grow, such as adding multiple buffers to keep several
+files open in one session. Future additions will be evaluated carefully to
+keep the editor simple and focused.
 
 ![tinyedit editing a Python file with syntax highlighting](imgs/python-syntax-highlighting.png)
 
@@ -92,10 +91,9 @@ bin/tinyedit [file]
 
 ### Optional command installation
 
-The project build stays in `bin/tinyedit` and does not alter your shell
-configuration. To make `tinyedit` available from any directory, install or
-link it into a directory already in `PATH`. On this macOS setup `/usr/local/bin`
-is already in `PATH`, so no `~/.zshrc` change is needed.
+The build output stays in `bin/tinyedit` without modifying your shell
+configuration. To run `tinyedit` from any directory, install or symlink it
+into a location in your `PATH`, such as `/usr/local/bin`:
 
 ```sh
 make install PREFIX=/usr/local
@@ -108,8 +106,8 @@ make install PREFIX=/usr/local
 | Arrows, Home, End, PageUp/Down | Move cursor |
 | `Ctrl+Home` / `Ctrl+End` (or `Ctrl+PageUp` / `Ctrl+PageDown`) | Jump to the start/end of the file |
 | `Alt+←` / `Alt+→` (or `Esc b` / `Esc f`) | Jump by word |
-| `Shift+Arrows` / `Shift+PageUp` / `Shift+PageDown` / `Shift+Home` / `Shift+End` | Extend/start text selection (doesn't work on macOS Terminal.app — use `Ctrl-T` instead) |
-| `Ctrl-T` | Toggle selection mode: while on, plain arrows, PageUp/PageDown and Home/End extend the selection the way Shift would — works on every terminal, including Terminal.app |
+| `Shift+Arrows` / `Shift+PageUp` / `Shift+PageDown` / `Shift+Home` / `Shift+End` | Extend/start text selection (doesn't work on macOS Terminal.app; use `Ctrl-T` instead) |
+| `Ctrl-T` | Toggle selection mode (extends selection with plain arrows, PageUp/PageDown, and Home/End; useful in terminals such as Terminal.app where Shift+Arrows is unsupported) |
 | Enter | New line (inherits the previous line's indentation if `auto_indent` is on) |
 | Tab | Indent (spaces or a literal tab, see `insert_spaces_for_tab`); with a selection, indents every selected line one level |
 | `Shift+Tab` | Outdent the selected lines, or the current one when there's no selection |
@@ -123,7 +121,7 @@ make install PREFIX=/usr/local
 | `Ctrl-F` | Incremental search (Arrows for next/previous match, `Ctrl-G` to toggle regex search, `Ctrl-R` to switch to search & replace, Esc to cancel) |
 | `F1` | Help screen listing every shortcut (any key closes it) |
 | `F3` | Info screen: version, author, and stats about the current file |
-| `F2` | Settings panel (Up/Down to navigate, Enter/Space to edit, Left/Right to cycle a multiple-choice value back/forward, `Ctrl-D` resets to defaults, `Ctrl-S` saves and exits, Esc exits — asks for confirmation if there are unsaved changes) |
+| `F2` | Settings panel (Up/Down to navigate, Enter/Space to edit, Left/Right to cycle options, `Ctrl-D` resets defaults, `Ctrl-S` saves and exits, Esc exits with a confirmation prompt if there are unsaved changes) |
 | `Ctrl-S` | Save (asks for a filename if none is set) |
 | `F4` (or `Ctrl-Shift-S` where the terminal sends it) | Save as: always asks for a filename, even when one is already set |
 | `Ctrl-O` | Open another file by entering its path; offers to save the current file first. A missing path becomes a new file on first save. |
@@ -132,31 +130,20 @@ make install PREFIX=/usr/local
 
 ### Experimental macOS Command keys in Ghostty
 
-Tinyedit can optionally accept `Cmd-S`, `Cmd-F`, `Cmd-Z`, `Cmd-O`, `Cmd-W`,
-`Cmd-C`, `Cmd-X`, `Cmd-A`, `Cmd-Q`, `Cmd-G`, `Cmd-R`, `Cmd-T`, `Cmd-Y`, and
-`Cmd-D` through Ghostty's Kitty keyboard protocol. Enable **macOS Command
-keys (Ghostty Kitty protocol)** in `F2`, or add `mac_command_keys = true` to
-`~/.tinyeditrc`. Tinyedit enables the protocol only while it is running and
-restores Ghostty's previous keyboard mode on exit, so Command sequences do
-not leak into the shell.
+In Ghostty, tinyedit can optionally accept macOS Command shortcuts, including
+`Cmd-S`, `Cmd-Z`, `Cmd-C`, `Cmd-X`, `Cmd-F`, and `Cmd-Q`, through the Kitty
+keyboard protocol. Enable **macOS Command keys (Ghostty Kitty protocol)** in
+`F2`, or set `mac_command_keys = true` in `~/.tinyeditrc`, then reload
+Ghostty with `Cmd-Shift-,`.
 
-This mode is off by default and is Ghostty-specific: terminal programs
-normally do not receive macOS Command-key events. When enabled from `F2`,
-Tinyedit manages the `cmd+w`, `cmd+f`, and `cmd+q` Ghostty `unbind` entries
-required for those three app-level shortcuts. Disabling the setting removes
-only those managed entries, restoring Ghostty's native shortcuts. On startup
-Tinyedit synchronizes the managed block with the saved setting, and on exit
-it removes the block unconditionally. Reload Ghostty's configuration with
-`Cmd-Shift-,` for the change to take effect.
-If you previously added the old `keybind = super+…=text:\x1b[…;9u` bridge
-entries to Ghostty's configuration, remove them: they are permanent terminal
-bindings and cannot be disabled by an application. With this mode enabled,
-`Cmd-C` and `Cmd-X` operate on Tinyedit's selected text rather than the
-terminal's native selection. `Cmd-Q` asks Tinyedit to save and quit rather
-than closing Ghostty while Tinyedit is active. `Cmd-V` remains the terminal's
-native paste shortcut. Inside **Find**, `Cmd-G` toggles regex matching and
-`Cmd-R` switches to find-and-replace. `Cmd-T` toggles selection mode, `Cmd-Y`
-redoes, and `Cmd-D` resets settings while the Settings panel is open.
+This Ghostty-specific mode is off by default because terminal programs do not
+normally receive macOS Command-key events. While it is active, tinyedit
+handles application shortcuts such as `Cmd-W`, `Cmd-Q`, and `Cmd-F`, and makes
+`Cmd-C` and `Cmd-X` operate on its internal selection rather than the terminal
+buffer. `Cmd-V` remains the terminal's native paste shortcut. Keyboard state
+and the bindings managed by tinyedit are restored on exit, so no sequences
+leak into the shell. Remove any older manual `super+...` keybind bridges from
+your Ghostty configuration to avoid conflicts.
 
 ### Opening and closing files
 
@@ -186,30 +173,28 @@ inserted in one shot instead of character by character, so it's
 instant even for thousands of lines, and it doesn't trigger auto-close
 on parentheses/quotes/backticks that happen to be in the pasted text
 (which would otherwise be treated as if the user had typed them one at
-a time). This needs terminal support for the protocol — virtually
-every modern terminal has it, including Ghostty, iTerm2, and
-Terminal.app; if you're running inside `tmux`/`screen` and paste still
-feels slow, check that it's passed through there too.
+a time). This requires terminal support for the protocol, which is available
+in virtually every modern terminal, including Ghostty, iTerm2, and Terminal.app.
+If paste feels slow inside `tmux` or `screen`, ensure bracketed-paste
+passthrough is enabled in the multiplexer.
 
 ### Mouse support
 
 Mouse support (`mouse_enabled`, F2 panel, **off by default**) lets you
 click to place the cursor, drag with the left button to select text,
-and scroll with the wheel. It's opt-in because, once enabled, it takes
-over the terminal's own native selection (e.g. Cmd+C/Cmd+V on Ghostty)
-— the terminal hands mouse events to tinyedit instead of handling them
-itself for as long as the setting stays on. The change takes effect
+and scroll with the wheel. It is opt-in because it overrides the terminal's
+native text selection, such as `Cmd-C`/`Cmd-V` in Ghostty, and directs mouse
+events to tinyedit while enabled. The change takes effect
 immediately: toggling it in `F2` and pressing `Ctrl-S` applies it
 right away, no restart needed.
 
 ### Settings and appearance
 
-Line numbers (gutter), tab width, the redo key, interface colors,
-soft-wrap, the top bar, auto-indent, auto-close pairs, tabs-as-spaces,
-and invisible characters are all configurable from the `F2` panel and
-saved to `~/.tinyeditrc` — see the file itself (generated
-automatically on first launch if it doesn't already exist) for the
-exact format. Inside `F2`, `Ctrl-D` resets every setting back to its
+Line numbers (gutter), tab width, interface colors, soft-wrap, the top bar,
+auto-indent, auto-close pairs, tabs-as-spaces, and invisible characters are
+configurable from the `F2` panel and saved to `~/.tinyeditrc`. See the file
+itself, created automatically on first launch, for configuration details.
+Inside `F2`, `Ctrl-D` resets every setting back to its
 default (still needs `Ctrl-S` to actually take effect). Upgrading
 tinyedit never requires touching an existing `~/.tinyeditrc`: keys
 that aren't in the file (because they were introduced by a newer
@@ -249,20 +234,19 @@ pair instead of replacing it. The single quote `'` has its own switch,
 `auto_close_single_quote`, off by default: in prose an apostrophe
 (`don't`, `user's`) is far more common than a matching pair, so
 auto-closing it gets in the way in a manner `(` or `"` doesn't. Curly quotes (`«»`, `""`, `''`) behave
-the same way as the other pairs — even when composed via an OS
+the same way as the other pairs, even when composed via an OS
 compose sequence or pasted rather than typed directly, since none of
 them exist on a standard keyboard. `$$` (LaTeX display math, typing
 `$` four times in a row) is recognized as a special case of the `$`
-pair: it opens `$$...$$` instead of nesting a second pair — one more
+pair: it opens `$$...$$` instead of nesting a second pair. One more
 Right arrow after the sequence exits the nested structure entirely.
 The single backtick `` ` `` is the one exception to skip-over: typing
 it always opens a fresh pair instead of skipping past an existing
 closer, because in Markdown a lone backtick is also valid syntax on
 its own (inline code) typed several times in a row on the same line,
 not only as this pair's closer. The triple-backtick Markdown code
-fence (`` ``` ``) gets no special handling, by deliberate choice — VS
-Code tried exactly that and users found it more annoying than
-helpful.
+fence (`` ``` ``) is intentionally not auto-closed, as auto-closing
+multi-line fences often interferes with regular editing.
 
 ### Invisible characters and colors
 
@@ -272,14 +256,14 @@ shows a `$`, all in the color set by `color_invisibles` (same palette
 as the gutter/selection/status bar, gray by default).
 
 Gutter, selection, status bar, and invisibles colors are all picked
-from a palette of 24 (each of the 8 base hues — gray, blue, green,
-yellow, cyan, magenta, red, white — in three variants: light `-light`,
+from a palette of 24 (each of the 8 base hues, gray, blue, green,
+yellow, cyan, magenta, red, and white, in three variants: light `-light`,
 dark `-dark`, and dim `-dim`, e.g. `cyan-dim`), always plain ANSI
 codes, never 256-color or truecolor (`-dim` support is somewhat less
-consistent across terminals — some render it identically to `-dark`
-instead of actually dimming it — but it's still base ANSI). In the
+consistent across terminals; some render it identically to `-dark`
+instead of actually dimming it, but it is still base ANSI). In the
 `F2` panel, Left/Right cycle the selected color back/forward (in
-addition to Enter/Space, which only advances) — handy for jumping back
+addition to Enter/Space, which only advances). This is handy for jumping back
 a step without scrolling through the whole palette. `~/.tinyeditrc`
 files written by older versions (unsuffixed names, e.g. `color_gutter
 = cyan`) are recognized automatically on load and mapped to the
@@ -287,11 +271,9 @@ corresponding `-light` variant (the one the old palette actually
 rendered), without losing the customization.
 
 Every color row in the `F2` panel shows a live swatch of its value next
-to the name, so you can see what you picked without leaving the panel —
-otherwise, with 24 names differing only by suffix, cycling through them
-tells you very little.
+to the name, so you can preview the selection without leaving the panel.
 
-`color_background` paints the whole editor area — rows, gutter, and the
+`color_background` paints the whole editor area: rows, gutter, and the
 empty space below the text. It defaults to `terminal-default`, which
 emits no background escape at all and leaves the terminal's own
 background untouched. Its `-dim` variants are skipped while cycling:
@@ -309,7 +291,7 @@ extension keep their normal cursor shape.
 
 `line_ending` controls the format written on save: `auto` (default)
 preserves the first line-ending style detected when opening the file,
-while `lf` and `crlf` deliberately convert it. The status bar shows
+while `lf` and `crlf` force conversion to that format. The status bar shows
 the effective style as `LF` or `CRLF`; a trailing `*` means the input
 file contained a mix of both styles, and auto will use the first one.
 
@@ -322,8 +304,8 @@ there are more above, and `v` on the last one if there are more below.
 Lines too long for the screen width always wrap (soft-wrap is always
 on, there's no horizontal scrolling), breaking on a space where
 possible. `soft_wrap` (`0` by default, meaning no extra limit beyond
-the window edge) sets an optional column cap narrower than the window
-— useful for keeping text readable on very wide terminals. Up/Down and
+the window edge) sets an optional column cap narrower than the window, which
+helps keep lines readable on ultra-wide displays. Up/Down and
 PageUp/PageDown always move by *visual* row rather than file row, so
 moving down a long line advances one visual segment at a time instead
 of jumping the whole line. Home/End follow the same convention by
@@ -348,7 +330,7 @@ Full UTF-8 support (ported from
 [linenoise](https://github.com/antirez/linenoise)): code point
 decoding, grapheme cluster boundaries (emoji with modifiers, ZWJ,
 combining marks), and real display width (0/1/2 columns) for the
-cursor, backspace, and rendering — not just European accented
+cursor, backspace, and rendering, not just European accented
 characters but CJK and emoji too. The status bar's character count is
 grapheme clusters, not raw bytes (a modified emoji counts as 1
 character, not however many bytes it takes in the buffer).
@@ -365,35 +347,35 @@ Markdown bold text, kept distinct from italic which uses
 `color_syntax_keyword`, and `color_syntax_function` for function
 names), same 24-color palette as the rest of the interface. Function
 names are recognized by the same heuristic other lightweight editors
-use — an identifier immediately followed by `(` — which covers both
+use, an identifier immediately followed by `(`, which covers both
 calls and definitions. Text with no class at all (identifiers, punctuation,
 whitespace) uses `color_syntax_normal`, defaulting to
-`terminal-default` — a 25th palette entry (not a real hue, only
+`terminal-default`, a 25th palette entry (not a real hue, only
 available for this setting) meaning "no color forced, terminal's own
 foreground", the same behavior this had before the setting existed;
 set it to any real hue to recolor plain text explicitly. Natively
 supported languages: C/C++ (`.c` `.h` `.cpp` `.cc` `.cxx` `.hpp` `.hh`
 `.hxx`), Python (`.py`), Shell (`.sh` `.bash` `.zsh`), JavaScript/
-TypeScript (`.js` `.jsx` `.ts` `.tsx`), Markdown (`.md` `.markdown` —
+TypeScript (`.js` `.jsx` `.ts` `.tsx`), Markdown (`.md` `.markdown`, with
 headings, `` `inline code` ``, multi-line code fences, italic
 `*...*`/`_..._`, bold `**...**`/`__..._` (both may span several lines),
 links and images, YAML front matter, and
 embedded HTML tags), HTML/XML (`.html` `.htm`
-`.xml` — tags, attributes, `<!-- -->` comments), and CSS (`.css` —
+`.xml`, with tags, attributes, and `<!-- -->` comments), and CSS (`.css`, with
 properties, values, comments).
 
 Two constructs common in static-site Markdown get their own handling.
-A YAML **front matter** block — the `---` delimited metadata header
-used by Jekyll, Eleventy and Hugo — is highlighted as structured data
+A YAML **front matter** block, the `---` delimited metadata header
+used by Jekyll, Eleventy and Hugo, is highlighted as structured data
 rather than prose: delimiters and the `:` as markers, keys as keywords,
 values as strings. It's recognized only when the opening `---` is the
 file's first line, so a `---` further down stays a horizontal rule.
 Blank lines inside the block don't end it.
 
 **HTML tags embedded in the document** (`<div class="box">`,
-`<strong>`) are highlighted like they would be in an `.html` file —
+`<strong>`) are highlighted like they would be in an `.html` file,
 tag names and attributes as keywords, quoted values as strings. The
-scanner is deliberately conservative: a `<` must be followed by a
+scanner uses a conservative rule: a `<` must be followed by a
 letter and reach a `>` on the same line, so prose like `5 < 7` is left
 alone, and a tag inside a code span (`` `<div>` ``) or a fenced block
 stays code.
@@ -406,7 +388,7 @@ unmatched `[text]` is left as prose.
 
 **Emphasis may span several lines**, which is common when a caption or
 an italic sentence is wrapped across rows. A span is closed by its
-matching marker or by a blank line — bounding it at the paragraph
+matching marker or by a blank line. Bounding it at the paragraph
 means a stray `*` in prose (`filetype.*`, `5 * 3`) can't recolor the
 rest of the document. A marker followed by whitespace isn't treated as
 an opener at all.
@@ -420,7 +402,7 @@ wrapping, and the persistent top and status bars.*
 
 To add a "C-like" language (keywords + strings + comments, e.g.
 Matlab, Go, Rust, Java) without recompiling, drop a file at
-`~/.tinyedit/syntax/<name>.conf` — the filename itself doesn't matter,
+`~/.tinyedit/syntax/<name>.conf`; the filename itself doesn't matter,
 only its contents, in the same format as `~/.tinyeditrc` (`key =
 value`, `#` for comments):
 
@@ -439,12 +421,12 @@ optional. `hash_line_is_preprocessor = true` highlights a line
 starting with `#` in full, as a preprocessor directive (used by C/C++;
 doesn't make sense for most other languages). `keyword_prefix_chars`
 extends which characters can start a keyword beyond letters/
-underscore — useful for languages where keywords have a special
+underscore, useful for languages where keywords have a special
 prefix, e.g. LaTeX (`keyword_prefix_chars = \`, keywords like
 `\begin`, `\section`, etc.). `math_mode = true` recognizes and
 highlights `$formula$`/`$$formula$$` and the equivalent
 `\(formula\)`/`\[formula\]` forms (same mechanism used for Markdown
-above) anywhere in the text, not just inside keywords —
+above) anywhere in the text, not just inside keywords.
 `\[...\]` is recognized even when its delimiters sit on separate lines
 from the formula's content (common in LaTeX); the other three forms
 stay single-line. `filetype = <Name>` sets the status-bar language name
@@ -471,7 +453,7 @@ expressions without adding a compiled-in language or an external dependency.*
 
 A template format like Nunjucks, Jinja, Liquid or Twig is HTML with a
 second language embedded in it, which the C-like tokenizer above can't
-express — it has no notion of a tag. Two extra keys route such a
+express because it has no notion of a tag. Two extra keys route such a
 language through the markup tokenizer instead:
 
 ```
@@ -483,10 +465,11 @@ template_delimiters = {{ }}, {% %}, {\# \#}
 
 `base_tokenizer = xml` highlights tags and attributes exactly as in an
 `.html` file, and `template_delimiters` lists the embedded expression
-delimiters as comma-separated `open close` pairs. Those blocks are
-highlighted as a unit — delimiters in the preprocessor color, contents
-in the function color — including inside attribute values, so
-`href="{{ url }}"` shows the dynamic part rather than one flat string.
+delimiters as comma-separated `open close` pairs. Those blocks are highlighted
+as a unit, with delimiters in the preprocessor color and contents in the
+function color, even inside attribute values. For example,
+`href="{{ url }}"` highlights the dynamic expression rather than rendering it
+as a single string.
 A pair whose opener starts with `{#` is treated as that language's
 comment and colored like every other comment.
 
@@ -499,8 +482,8 @@ Every `.conf` file in `~/.tinyedit/syntax/` gets loaded at startup
 (silently skipped if malformed, same tolerance as `~/.tinyeditrc`); a
 user file can redefine an extension already covered natively, and it
 wins. Languages with a grammar that doesn't reduce to
-keywords/strings/comments — where prefixed keywords and math mode
-still aren't enough — (like Markdown/HTML/CSS above) can't be extended
+keywords/strings/comments, where prefixed keywords and math mode
+still are not enough, such as Markdown/HTML/CSS, cannot be extended
 from an external file; they need a dedicated tokenizer in `syntax.c`.
 
 ### Ready-made syntax configurations
@@ -524,15 +507,15 @@ make install-syntax
 
 That target never overwrites a file you already have (it prints
 `skip` for those); use `make install-syntax-force` to replace them with
-the shipped versions. It's a separate target rather than part of the
-build on purpose — compiling shouldn't write into your home directory
-or clobber local edits to these files.
+the shipped versions. Syntax installation is separate from the default build
+step so compiling the editor never touches your home directory or modifies
+your existing configurations.
 
 Copy a single file instead of the whole set if you only want one. See
 [`syntax-configs/README.md`](syntax-configs/README.md) for what each one
-covers and for two non-obvious constraints of the format — comment
-delimiters being matched before keywords, and `keyword_prefix_chars`
-merging adjacent tokens — that produce wrong highlighting rather than a
+covers and for two non-obvious constraints of the format: comment
+delimiters are matched before keywords, and `keyword_prefix_chars` can
+merge adjacent tokens. Both can produce wrong highlighting rather than a
 load error when you hit them.
 
 The status bar also shows the filetype detected from the extension
@@ -555,7 +538,7 @@ When a file is opened, the name is resolved in this order:
    extension.** That name is used. If it came from a user override but
    no syntax `.conf` (and no compiled-in language) covers the
    extension, the status bar reports `Filetype 'X': highlight config
-   missing` — the name shows but nothing gets colored, and this says
+   missing`; the name shows but nothing gets colored, and this says
    why.
 2. **Nothing knows it, but an installed `.conf` claims the extension
    and declares `filetype`.** The name is applied, highlighting works,
@@ -565,7 +548,7 @@ When a file is opened, the name is resolved in this order:
 
 Because step 2 writes to `~/.tinyeditrc` and step 1 reads it first,
 editing a `.conf`'s `filetype` afterwards won't change the name already
-recorded there — update the `filetype.<extension>` line in
+recorded there. Update the `filetype.<extension>` line in
 `~/.tinyeditrc` (or delete it to let the `.conf` be consulted again).
 
 ### Find and replace
@@ -573,7 +556,7 @@ recorded there — update the `filetype.<extension>` line in
 Inside the Find prompt (`Ctrl-F`), `Ctrl-G` toggles whether the
 search string is interpreted as a POSIX extended regular expression
 (`<regex.h>` from libc, zero external dependencies) instead of a
-literal string — the prompt shows `[regex]`/`[literal]` for the
+literal string. The prompt shows `[regex]`/`[literal]` for the
 current mode, updated the instant Ctrl-G is pressed. The mode isn't a
 persistent setting: it resets to literal on every new search
 (`Ctrl-F`). Switching to search-and-replace (`Ctrl-R`) keeps whatever
@@ -592,7 +575,7 @@ out every shortcut (`Esc cancel, Arrows jump, Ctrl-R replace, Ctrl-G
 regex`), shrinks to a short form (`Search [mode]:`) once the growing
 query wouldn't leave room for both, and if even that isn't enough the
 message bar scrolls to always show the most recent part of what's
-being typed — the message's leading part (whatever's left of the
+being typed. The message's leading part (whatever is left of the
 fixed instructions) is what disappears first.
 
 ## Backup and crash recovery
@@ -601,7 +584,7 @@ If `backup_interval` (F2 panel, off by default) is set to a nonzero
 value (5 seconds effective minimum), the editor periodically writes a
 recovery copy of the buffer while there are unsaved changes, to
 `~/.tinyedit/backup/` (never next to the original file). The copy is
-removed automatically after a successful save or a clean exit — its
+removed automatically after a successful save or a clean exit. Its
 mere presence the next time you open that file is the signal that the
 previous session didn't close cleanly (crash, kill, terminal closed).
 In that case the editor shows a full-screen warning (not just a
@@ -610,38 +593,38 @@ and asks whether to restore the changes before proceeding.
 
 ## Code layout
 
-- `src/` — C implementation files; `inc/` — their public and internal
-  headers. `Makefile` supplies `-Iinc` to every compilation.
-- `src/tinyedit.c` / `inc/tinyedit.h` — the editor itself: raw terminal mode,
-  row buffer, rendering, input handling, settings panel. Shared
-  types and macros live in the header, while implementation logic stays
+- `src/`, `inc/`: C source files and corresponding public/internal headers.
+  `Makefile` supplies `-Iinc` to every compilation.
+- `src/tinyedit.c`, `inc/tinyedit.h`: Core editor implementation, including raw
+  terminal mode, row buffer, rendering, input handling, and the settings panel.
+  Shared types and macros live in the header, while implementation logic stays
   in the `.c` file.
-- `src/clipboard.c` / `inc/clipboard.h` — system clipboard integration (macOS
+- `src/clipboard.c`, `inc/clipboard.h`: System clipboard integration (macOS
   `pbcopy`/`pbpaste`, Linux `wl-clipboard` or `xclip`), falling back
   to an internal buffer when no system backend is available. Wired to
   the editor via `Ctrl-C`/`Ctrl-X`/`Ctrl-V`.
-- `src/utf8.c` / `inc/utf8.h` — UTF-8 decoding, grapheme cluster boundaries,
+- `src/utf8.c`, `inc/utf8.h`: UTF-8 decoding, grapheme cluster boundaries,
   and terminal display-width calculation, ported from linenoise (see
   above). Used for cursor movement, backspace, and rendering.
-- `src/settings.c` / `inc/settings.h` — persistence of user settings
+- `src/settings.c`, `inc/settings.h`: Persistence of user settings
   (`~/.tinyeditrc`), a descriptor table that drives both the file
   parser and the `F2` panel.
-- `src/syntax.c` / `inc/syntax.h` — syntax highlighting: a generic tokenizer
+- `src/syntax.c`, `inc/syntax.h`: Syntax highlighting, with a generic tokenizer
   for "C-like" languages driven by per-language tables (including
   ones loaded at runtime from `~/.tinyedit/syntax/*.conf`), plus
   dedicated tokenizers for Markdown, HTML/XML, and CSS. A `.conf` can
   route its language through the markup tokenizer (`base_tokenizer =
   xml`) and declare embedded `template_delimiters`, which is how the
   HTML-template languages are supported without compiled-in code.
-- `src/backup.c` / `inc/backup.h` — periodic crash-recovery backups, saved to
+- `src/backup.c`, `inc/backup.h`: Periodic crash-recovery backups, saved to
   `~/.tinyedit/backup/` (never next to the original file). Wired to
   the editor via the `backup_interval` setting.
-- `syntax-configs/` — ready-made `.conf` language definitions to copy
+- `syntax-configs/`: Ready-made `.conf` language definitions to copy
   into `~/.tinyedit/syntax/` (or install with `make install-syntax`):
   LaTeX, Matlab/Octave, and the markup templates Nunjucks, Jinja,
-  Liquid and Twig. Data, not code — see its own
+  Liquid and Twig. They are data, not code; see its own
   [`README.md`](syntax-configs/README.md).
-- `src/linenoise.c` / `inc/linenoise.h` — linenoise's original sources
+- `src/linenoise.c`, `inc/linenoise.h`: linenoise's original sources
   (antirez), kept for historical reference from the first
   line-editor prototype. Not compiled into the current binary (except
   for the UTF-8 logic, ported separately into `utf8.c`).
@@ -654,10 +637,10 @@ See [`TODO.md`](TODO.md) for planned and in-progress work, and
 ## Author and license
 
 Copyright © 2026 Roberto Bissanti <roberto.bissanti@gmail.com>.
-Released under the MIT license — see [`LICENSE`](LICENSE). The code
+Released under the MIT license; see [`LICENSE`](LICENSE). The code
 ported from linenoise (`src/utf8.c`/`inc/utf8.h`, plus
 `src/linenoise.c`/`inc/linenoise.h` vendored for historical reference,
 see above) stays
 under Salvatore Sanfilippo and Pieter Noordhuis's original BSD
-2-Clause license — see
+2-Clause license; see
 [`LICENSE-THIRD-PARTY`](LICENSE-THIRD-PARTY).
