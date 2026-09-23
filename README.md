@@ -74,6 +74,16 @@ editor. The current version is a true full-screen editor with a freely moving
 cursor; linenoise remains in the repository for historical reference but is
 not a build dependency.
 
+
+## Homebrew (macOS / Linux)
+
+If you use Homebrew on macOS or Linux, install tinyedit with
+
+```sh
+brew install robertobissanti/tinyedit/tinyedit
+
+```
+
 ## Build
 
 ```sh
