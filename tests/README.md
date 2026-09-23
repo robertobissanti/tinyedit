@@ -10,7 +10,7 @@ The files in `fixtures/` are also intended for manual inspection in
 tinyedit. For example:
 
 ```sh
-./tinyedit tests/fixtures/demo.css
+bin/tinyedit tests/fixtures/demo.css
 ```
 
 Check comments, strings, keywords, Unicode identifiers and multi-line

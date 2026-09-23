@@ -106,6 +106,7 @@ struct editorSettings {
     int32_t color_gutter;
     int32_t color_selection;
     int32_t color_statusbar;
+    int32_t color_statusbar_text;
     int32_t show_top_bar;
     /* Wrap is always on (no horizontal scrolling): text always wraps
      * at the window edge at minimum. 0 means no extra limit beyond
@@ -197,9 +198,10 @@ struct editorSettings {
      * mouse events to the foreground program instead of handling them
      * itself -- therefore this remains an explicit opt-in. */
     int32_t mouse_enabled;
-    /* Experimental Ghostty bridge for Cmd+S/F/Z/O/W/C/X/A/Q/G/R/T/Y/D. The terminal must
-     * be configured to send the documented CSI-u-style sequences. */
+/* Ghostty's macOS Command keys are unavailable on every other platform. */
+#ifdef __APPLE__
     int32_t mac_command_keys;
+#endif
     /* CURSOR_BLOCK or CURSOR_BAR (I-beam). */
     int32_t cursor_style;
     /* Preserve detected style, or force LF/CRLF when saving. */

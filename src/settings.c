@@ -95,8 +95,10 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, tab_stop), 1, 16, NULL, 0 },
     { "mouse_enabled", "Mouse support (disables native terminal selection)", SETTING_BOOL,
       offsetof(struct editorSettings, mouse_enabled), 0, 0, NULL, 0 },
-    { "mac_command_keys", "Experimental macOS Command keys (Ghostty)", SETTING_BOOL,
+#ifdef __APPLE__
+    { "mac_command_keys", "macOS Command keys (Ghostty Kitty protocol)", SETTING_BOOL,
       offsetof(struct editorSettings, mac_command_keys), 0, 0, NULL, 0 },
+#endif
     { "cursor_style", "Cursor shape", SETTING_ENUM,
       offsetof(struct editorSettings, cursor_style), 0, 0, cursorStyleNames, 2 },
     { "line_ending", "Line endings on save", SETTING_ENUM,
@@ -111,6 +113,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, color_selection), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_statusbar", "Status bar color", SETTING_ENUM,
       offsetof(struct editorSettings, color_statusbar), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_statusbar_text", "Status bar text color", SETTING_ENUM,
+      offsetof(struct editorSettings, color_statusbar_text), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "show_top_bar", "Show top bar", SETTING_BOOL,
       offsetof(struct editorSettings, show_top_bar), 0, 0, NULL, 0 },
     { "soft_wrap", "Max wrap width (0=window edge)", SETTING_INT,
@@ -175,6 +179,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_gutter = COLOR_GRAY_LIGHT;
     out->color_selection = COLOR_WHITE_DARK;
     out->color_statusbar = COLOR_WHITE_DARK;
+    out->color_statusbar_text = COLOR_WHITE_LIGHT;
     out->show_top_bar = 0;
     out->soft_wrap = 0;
     out->home_end_visual_line = 1;
@@ -197,7 +202,9 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_syntax_function = COLOR_YELLOW_LIGHT;
     out->color_background = COLOR_TERMINAL_DEFAULT;
     out->mouse_enabled = 0;
+#ifdef __APPLE__
     out->mac_command_keys = 0;
+#endif
     out->cursor_style = CURSOR_BLOCK;
     out->line_ending = LINE_ENDING_AUTO;
 }

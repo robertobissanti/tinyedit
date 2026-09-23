@@ -9,7 +9,7 @@
  *   Ctrl-Q                                quit (asks twice if unsaved)
  *
  * Build:  make
- * Run:    ./tinyedit [filename]
+ * Run:    bin/tinyedit [filename]
  */
 
 #define _DEFAULT_SOURCE
@@ -46,22 +46,29 @@
 static struct editorConfig E;
 static struct editorSettings S;
 
-/* The Ghostty Command-key bridge is opt-in. Keep the on-screen language in
+/* The Ghostty Kitty-keyboard mode is opt-in. Keep the on-screen language in
  * step with it, without changing the underlying Ctrl-based key handling. */
 static const char *editorPrimaryModifier(void) {
+#ifdef __APPLE__
     return S.mac_command_keys ? "Cmd" : "Ctrl";
+#else
+    return "Ctrl";
+#endif
 }
 
 static void editorShortcutText(char *dst, size_t dstsize, const char *src) {
     size_t used = 0;
     if (dstsize == 0) return;
     while (*src && used + 1 < dstsize) {
+#ifdef __APPLE__
         if (S.mac_command_keys && strncmp(src, "Ctrl", 4) == 0) {
             if (used + 3 >= dstsize) break;
             memcpy(dst + used, "Cmd", 3);
             used += 3;
             src += 4;
-        } else {
+        } else
+#endif
+        {
             dst[used++] = *src++;
         }
     }
@@ -78,7 +85,11 @@ static void editorShortcutText(char *dst, size_t dstsize, const char *src) {
  * search rather than remembered across them). */
 /* ---- terminal adapter -------------------------------------------------- */
 static int32_t editorReadKey(void) {
-    return terminalReadKey((uint8_t)S.mac_command_keys);
+    return terminalReadKey(
+#ifdef __APPLE__
+        (uint8_t)S.mac_command_keys
+#endif
+    );
 }
 
 
@@ -1698,26 +1709,17 @@ static const char *editorFiletypeLabel(void) {
  * indicator. Kept separate from the bottom status bar, which shows
  * transient position/count info instead -- the top bar acts as a
  * persistent title that stays visible while scrolling. */
-/* Reverse-video (\x1b[7m) swaps whatever foreground/background is
- * currently active -- with a configured color_background, that would
- * swap it into the FOREGROUND of the bar text instead of leaving it
- * as an actual background, mixing the two color systems in a way
- * that made bar text unreadable (foreground ending up the same as
- * the editor's background). The bars always reset to no background
- * right before setting bar_color/reverse-video, so their look stays
- * exactly what it was before color_background existed regardless of
- * that setting; abAppendReset() below (after the bar) restores the
- * editor's own background for the rows that follow. Skipped entirely
- * when color_background is COLOR_TERMINAL_DEFAULT (off) so the byte
- * stream is unchanged from before this setting existed in that,
- * still-default, case. */
+/* The bars reset the editor's background before applying their own
+ * background/foreground pair. abAppendReset() restores the editor's
+ * background after each bar, so a custom bar never leaks into text rows. */
 static void editorDrawTopBar(struct abuf *ab) {
     if (!S.show_top_bar) return;
 
     if (S.color_background != COLOR_TERMINAL_DEFAULT) abAppend(ab, "\x1b[49m", 5);
-    const char *bar_color = ansiColorCode(S.color_statusbar);
-    abAppend(ab, bar_color, (int32_t)strlen(bar_color));
-    abAppend(ab, "\x1b[7m", 4);
+    const char *bar_bg = ansiBgColorCode(S.color_statusbar);
+    const char *bar_fg = ansiColorCode(S.color_statusbar_text);
+    if (bar_bg[0]) abAppend(ab, bar_bg, (int32_t)strlen(bar_bg));
+    abAppend(ab, bar_fg, (int32_t)strlen(bar_fg));
 
     char status[160];
     int32_t len = snprintf(status, sizeof(status), " %s%s",
@@ -1736,9 +1738,10 @@ static void editorDrawTopBar(struct abuf *ab) {
 
 static void editorDrawStatusBar(struct abuf *ab) {
     if (S.color_background != COLOR_TERMINAL_DEFAULT) abAppend(ab, "\x1b[49m", 5);
-    const char *bar_color = ansiColorCode(S.color_statusbar);
-    abAppend(ab, bar_color, (int32_t)strlen(bar_color));
-    abAppend(ab, "\x1b[7m", 4);
+    const char *bar_bg = ansiBgColorCode(S.color_statusbar);
+    const char *bar_fg = ansiColorCode(S.color_statusbar_text);
+    if (bar_bg[0]) abAppend(ab, bar_bg, (int32_t)strlen(bar_bg));
+    abAppend(ab, bar_fg, (int32_t)strlen(bar_fg));
     char status[96], rstatus[80];
     /* Filename only shown here when the top bar is off -- otherwise
      * it's already there, showing it in both places is redundant.
@@ -2119,14 +2122,10 @@ static void editorReplaceSelectionWithText(uint8_t had_sel,
  * has to cope with whatever indentation the file already contains, not
  * just the flavor this editor would produce. */
 static int32_t editorRowOutdent(erow *row) {
-    if (row->size > 0 && row->chars[0] == '\t') {
-        editorRowDelChar(row, 0);
-        return 1;
-    }
-    int32_t removed = 0;
-    while (removed < S.tab_stop && row->size > 0 && row->chars[0] == ' ') {
-        editorRowDelChar(row, 0);
-        removed++;
+    int32_t removed = bufferRowOutdent(row, S.tab_stop);
+    if (removed > 0) {
+        editorUpdateRow(row);
+        E.document.file.dirty = 1;
     }
     return removed;
 }
@@ -2814,6 +2813,25 @@ static uint8_t editorSettingsIsSyntaxColor(const struct settingDescriptor *d) {
     return strncmp(d->key, "color_syntax_", strlen("color_syntax_")) == 0;
 }
 
+static const char *editorSettingsSyntaxColorSample(const struct settingDescriptor *d) {
+    if (strcmp(d->key, "color_syntax_normal") == 0) return "text";
+    if (strcmp(d->key, "color_syntax_keyword") == 0) return "printf";
+    if (strcmp(d->key, "color_syntax_string") == 0) return "\"hello\"";
+    if (strcmp(d->key, "color_syntax_comment") == 0) return "// note";
+    if (strcmp(d->key, "color_syntax_number") == 0) return "42";
+    if (strcmp(d->key, "color_syntax_preprocessor") == 0) return "#include";
+    if (strcmp(d->key, "color_syntax_emphasis_strong") == 0) return "**bold**";
+    if (strcmp(d->key, "color_syntax_math") == 0) return "$x^2$";
+    if (strcmp(d->key, "color_syntax_function") == 0) return "main()";
+    return "sample";
+}
+
+static const char *editorSettingsPlainColorSample(const struct settingDescriptor *d) {
+    if (strcmp(d->key, "color_gutter") == 0) return " 42 ";
+    if (strcmp(d->key, "color_invisibles") == 0) return ". > $";
+    return NULL;
+}
+
 /* Any setting whose value is one of enum settingColor -- i.e. every
  * "color_*" key, syntax ones included. Recognized by key prefix rather
  * than by comparing d->enum_names against colorNames, since that array
@@ -2843,6 +2861,20 @@ static int32_t editorSettingsDescriptorAt(const struct editorSettings *edited, i
     return -1;
 }
 
+static int32_t editorSettingsLabelWidth(const struct editorSettings *edited) {
+    int32_t widest = 0;
+    for (int32_t i = 0; i < settingDescriptorCount; i++) {
+        const struct settingDescriptor *d = &settingDescriptors[i];
+        if (!edited->syntax_highlight && editorSettingsIsSyntaxColor(d)) continue;
+        const char *label = editorSettingsIsSyntaxColor(d) ?
+            d->label + strlen("Syntax: ") : d->label;
+        int32_t width = (int32_t)strlen(label) +
+            (editorSettingsIsSyntaxColor(d) ? 3 : 1);
+        if (width > widest) widest = width;
+    }
+    return widest;
+}
+
 /* Steps a SETTING_ENUM value by `delta` (+1/-1), wrapping at both ends.
  * On color_background it skips the 8 "-dim" hues: the dim attribute is
  * foreground-only, so as a background each renders identically to its
@@ -2851,7 +2883,8 @@ static int32_t editorSettingsDescriptorAt(const struct editorSettings *edited, i
  * -dim value already in ~/.tinyeditrc still loads and renders fine;
  * stepping away from it lands on a non-dim one and can't come back. */
 static void editorSettingsCycleEnum(const struct settingDescriptor *d, int32_t *slot, int32_t delta) {
-    uint8_t skip_dim = strcmp(d->key, "color_background") == 0;
+    uint8_t skip_dim = strcmp(d->key, "color_background") == 0 ||
+        strcmp(d->key, "color_statusbar") == 0;
     int32_t value = *slot;
     /* Bounded by enum_count: even if every remaining value were dim,
      * this stops after one full lap instead of spinning forever. */
@@ -2870,7 +2903,7 @@ static void editorSettingsCycleEnum(const struct settingDescriptor *d, int32_t *
  * indicator -- drawn in the first column (like the line-number
  * gutter) so it's visible regardless of which row is selected. */
 static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected,
-    const struct editorSettings *edited, char scroll_indicator) {
+    const struct editorSettings *edited, char scroll_indicator, int32_t label_width) {
     const struct settingDescriptor *d = &settingDescriptors[idx];
     const int32_t *slot = (const int32_t *)((const char *)edited + d->offset);
 
@@ -2885,24 +2918,24 @@ static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected
         snprintf(valuebuf, sizeof(valuebuf), "%s", d->enum_names[*slot]);
     }
 
-    const char *label = d->label;
-    int32_t len;
-    if (editorSettingsIsSyntaxColor(d)) {
-        label += strlen("Syntax: ");
-        len = snprintf(line, sizeof(line), "%c   %-20s %s",
-            scroll_indicator ? scroll_indicator : ' ', label, valuebuf);
-    } else {
-        len = snprintf(line, sizeof(line), "%c %-22s %s",
-            scroll_indicator ? scroll_indicator : ' ', label, valuebuf);
-    }
-    if (len < 0) len = 0;
-    if ((size_t)len >= sizeof(line)) len = (int32_t)sizeof(line) - 1;
+    uint8_t syntax_color = editorSettingsIsSyntaxColor(d);
+    const char *label = syntax_color ? d->label + strlen("Syntax: ") : d->label;
+    int32_t indent = syntax_color ? 3 : 1;
+    int32_t len = 0;
+    line[len++] = scroll_indicator ? scroll_indicator : ' ';
+    while (indent-- > 0 && len < (int32_t)sizeof(line) - 1) line[len++] = ' ';
+    for (int32_t i = 0; label[i] && len < (int32_t)sizeof(line) - 1; i++)
+        line[len++] = label[i];
+    int32_t dots = label_width - ((syntax_color ? 3 : 1) + (int32_t)strlen(label)) + 2;
+    while (dots-- > 0 && len < (int32_t)sizeof(line) - 1) line[len++] = '.';
+    for (int32_t i = 0; valuebuf[i] && len < (int32_t)sizeof(line) - 1; i++)
+        line[len++] = valuebuf[i];
 
     if (selected) abAppend(ab, "\x1b[7m", 4);
     abAppend(ab, line, len);
     if (selected) abAppend(ab, "\x1b[m", 3);
 
-    /* Live swatch after the value name: the palette has 24 hues whose
+    /* Live preview after the value name: the palette has 24 hues whose
      * names differ only by a "-light"/"-dark"/"-dim" suffix, and
      * stepping through them by name alone gives no way to tell what
      * you actually picked (or to notice you skipped past the variant
@@ -2913,7 +2946,45 @@ static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected
      * around it aren't printable columns and must not count toward the
      * field widths above. */
     if (editorSettingsIsColor(d)) {
-        if (strcmp(d->key, "color_background") == 0) {
+        if (editorSettingsIsSyntaxColor(d)) {
+            const char *fg = ansiColorCode(*slot);
+            const char *bg = ansiBgColorCode(edited->color_background);
+            const char *sample = editorSettingsSyntaxColorSample(d);
+            abAppend(ab, "  ", 2);
+            if (bg[0]) abAppend(ab, bg, (int32_t)strlen(bg));
+            abAppend(ab, fg, (int32_t)strlen(fg));
+            abAppend(ab, sample, (int32_t)strlen(sample));
+            abAppend(ab, "\x1b[m", 3);
+        } else if (strcmp(d->key, "color_selection") == 0) {
+            const char *fg = ansiColorCode(*slot);
+            const char *bg = ansiBgColorCode(edited->color_background);
+            abAppend(ab, "  ", 2);
+            if (bg[0]) abAppend(ab, bg, (int32_t)strlen(bg));
+            abAppend(ab, fg, (int32_t)strlen(fg));
+            abAppend(ab, "\x1b[7mselected\x1b[m", 15);
+        } else if (strcmp(d->key, "color_statusbar") == 0 ||
+            strcmp(d->key, "color_statusbar_text") == 0) {
+            int32_t bg_color = strcmp(d->key, "color_statusbar") == 0 ?
+                *slot : edited->color_statusbar;
+            int32_t fg_color = strcmp(d->key, "color_statusbar") == 0 ?
+                edited->color_statusbar_text : *slot;
+            const char *bg = ansiBgColorCode(bg_color);
+            const char *fg = ansiColorCode(fg_color);
+            abAppend(ab, "  ", 2);
+            if (bg[0]) abAppend(ab, bg, (int32_t)strlen(bg));
+            abAppend(ab, fg, (int32_t)strlen(fg));
+            abAppend(ab, " status ", 8);
+            abAppend(ab, "\x1b[m", 3);
+        } else if (editorSettingsPlainColorSample(d)) {
+            const char *fg = ansiColorCode(*slot);
+            const char *bg = ansiBgColorCode(edited->color_background);
+            const char *sample = editorSettingsPlainColorSample(d);
+            abAppend(ab, "  ", 2);
+            if (bg[0]) abAppend(ab, bg, (int32_t)strlen(bg));
+            abAppend(ab, fg, (int32_t)strlen(fg));
+            abAppend(ab, sample, (int32_t)strlen(sample));
+            abAppend(ab, "\x1b[m", 3);
+        } else if (strcmp(d->key, "color_background") == 0) {
             const char *bg = ansiBgColorCode(*slot);
             if (bg[0]) {
                 abAppend(ab, "  ", 2);
@@ -2959,7 +3030,9 @@ static const struct helpEntry helpEntries[] = {
     { "'", "Same, only if auto-close single quote is on (F2, off by default)" },
     { "Backspace / Delete", "Delete character (UTF-8 aware)" },
     { "Ctrl-Z / Ctrl-Y", "Undo / redo" },
+#ifdef __APPLE__
     { "Cmd-S/F/Z/O/W/C/X/A/Q/G/R (Ghostty opt-in)", "Save/find/undo/open/close/copy/cut/select all/quit/regex/replace; see README" },
+#endif
     { "Paste (terminal-native, e.g. Cmd+V)", "Bulk insert, no auto-close on pasted text" },
     { NULL, "Selection & clipboard" },
     { "Shift+Arrows, Shift+PageUp/Down", "Extend selection" },
@@ -3204,13 +3277,15 @@ static void editorSettingsRender(struct abuf *ab, const struct editorSettings *e
 
     int32_t visible = editorSettingsVisibleRows();
     int32_t count = editorSettingsVisibleCount(edited);
+    int32_t label_width = editorSettingsLabelWidth(edited);
     int32_t last_visible = scroll + visible - 1;
     if (last_visible >= count) last_visible = count - 1;
     for (int32_t i = scroll; i < count && i < scroll + visible; i++) {
         char scroll_indicator = '\0';
         if (i == scroll && scroll > 0) scroll_indicator = '^';
         else if (i == last_visible && last_visible < count - 1) scroll_indicator = 'v';
-        editorSettingsDrawRow(ab, editorSettingsDescriptorAt(edited, i), i == cursor, edited, scroll_indicator);
+        editorSettingsDrawRow(ab, editorSettingsDescriptorAt(edited, i), i == cursor,
+            edited, scroll_indicator, label_width);
         rows_used++;
     }
 
@@ -3296,6 +3371,9 @@ static uint8_t editorSettingsEditInt(struct editorSettings *edited, int32_t curs
  * saving. Changing only S leaves cached row rendering out of date. */
 static void editorSettingsSave(const struct editorSettings *edited) {
     struct editorSettings previous = S;
+#ifdef __APPLE__
+    uint8_t ghostty_bindings_ok = 1;
+#endif
     S = *edited;
     if (previous.color_background != COLOR_TERMINAL_DEFAULT &&
         S.color_background == COLOR_TERMINAL_DEFAULT)
@@ -3310,8 +3388,27 @@ static void editorSettingsSave(const struct editorSettings *edited) {
         if (S.mouse_enabled) terminalEnableMouseReporting();
         else terminalDisableMouseReporting();
     }
+#ifdef __APPLE__
+    if (S.mac_command_keys != previous.mac_command_keys) {
+        if (S.mac_command_keys) {
+            terminalEnableKittyKeyboard();
+            ghostty_bindings_ok = terminalConfigureGhosttyCommandBindings(1);
+        } else {
+            terminalDisableKittyKeyboard();
+            ghostty_bindings_ok = terminalConfigureGhosttyCommandBindings(0);
+        }
+    }
+#endif
     if (settingsSave(&S)) {
+#ifdef __APPLE__
+        if (ghostty_bindings_ok) {
+            editorSetStatusMessage("Settings saved to ~/.tinyeditrc");
+        } else {
+            editorSetStatusMessage("Settings saved; Ghostty config/reload failed");
+        }
+#else
         editorSetStatusMessage("Settings saved to ~/.tinyeditrc");
+#endif
     } else {
         editorSetStatusMessage("Could not write ~/.tinyeditrc");
     }
@@ -4292,6 +4389,10 @@ int main(int argc, char **argv) {
     terminalEnableBracketedPaste();
     terminalEnableResizeHandling();
     initEditor();
+#ifdef __APPLE__
+    terminalConfigureGhosttyCommandBindings((uint8_t)S.mac_command_keys);
+    if (S.mac_command_keys) terminalEnableKittyKeyboard();
+#endif
     editorChooseSlogan();
     atexit(terminalRestoreVisualState);
     if (S.mouse_enabled) terminalEnableMouseReporting();

@@ -8,13 +8,17 @@
 #include "alloc.h"
 
 #include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <termios.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static struct termios orig_termios;
@@ -23,6 +27,14 @@ int32_t mouseEventButton;
 int32_t mouseEventCol, mouseEventRow;
 uint8_t mouseEventPress;
 int32_t pending_key = -1;
+#ifdef __APPLE__
+static uint8_t kitty_keyboard_enabled = 0;
+static uint8_t kitty_keyboard_cleanup_registered = 0;
+static uint8_t ghostty_bindings_cleanup_registered = 0;
+
+static void terminalRemoveGhosttyCommandBindings(void);
+static uint8_t terminalReloadGhosttyConfiguration(void);
+#endif
 
 
 void terminalDie(const char *s) {
@@ -84,6 +96,161 @@ void terminalEnableBracketedPaste(void) {
     atexit(terminalDisableBracketedPaste);
     write(STDOUT_FILENO, "\x1b[?2004h", 8);
 }
+
+#ifdef __APPLE__
+/* Kitty's keyboard protocol keeps its mode on a terminal-managed stack.
+ * Push only the escape-disambiguation flag while tinyedit is active; pop it
+ * on exit so Command/Super events immediately return to the shell's normal
+ * behavior. Unsupported terminals ignore these private CSI-u sequences. */
+void terminalDisableKittyKeyboard(void) {
+    if (!kitty_keyboard_enabled) return;
+    write(STDOUT_FILENO, "\x1b[<u", 4);
+    kitty_keyboard_enabled = 0;
+}
+
+void terminalEnableKittyKeyboard(void) {
+    if (kitty_keyboard_enabled) return;
+    if (!kitty_keyboard_cleanup_registered) {
+        atexit(terminalDisableKittyKeyboard);
+        kitty_keyboard_cleanup_registered = 1;
+    }
+    write(STDOUT_FILENO, "\x1b[>1u", 5);
+    kitty_keyboard_enabled = 1;
+}
+
+/* Cmd-W/F/Q are intercepted by Ghostty before Kitty keyboard protocol can
+ * encode them. The sentinels make this block uniquely Tinyedit-owned: it can
+ * be replaced without duplication and deleted without touching other config. */
+uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
+    static const char *const managed_lines[] = {
+        "keybind = cmd+w=unbind\n",
+        "keybind = cmd+f=unbind\n",
+        "keybind = cmd+q=unbind\n",
+        NULL
+    };
+    static const char managed_start[] =
+        "# >>> tinyedit Ghostty Command-key bindings >>>\n";
+    static const char managed_end[] =
+        "# <<< tinyedit Ghostty Command-key bindings <<<\n";
+    static const char legacy_header[] =
+        "# Lascia passare le scorciatoie a Tinyedit tramite Kitty keyboard protocol.\n";
+    const char *home = getenv("HOME");
+    const char *xdg = getenv("XDG_CONFIG_HOME");
+    char candidates[4][PATH_MAX];
+    int32_t candidate_count = 0;
+    char path[PATH_MAX] = "";
+
+    if (!ghostty_bindings_cleanup_registered) {
+        atexit(terminalRemoveGhosttyCommandBindings);
+        ghostty_bindings_cleanup_registered = 1;
+    }
+
+    if (!home || !*home) return 0;
+    if (xdg && *xdg) {
+        snprintf(candidates[candidate_count++], PATH_MAX, "%s/ghostty/config.ghostty", xdg);
+        snprintf(candidates[candidate_count++], PATH_MAX, "%s/ghostty/config", xdg);
+    } else {
+        snprintf(candidates[candidate_count++], PATH_MAX, "%s/.config/ghostty/config.ghostty", home);
+        snprintf(candidates[candidate_count++], PATH_MAX, "%s/.config/ghostty/config", home);
+    }
+    snprintf(candidates[candidate_count++], PATH_MAX,
+        "%s/Library/Application Support/com.mitchellh.ghostty/config.ghostty", home);
+    snprintf(candidates[candidate_count++], PATH_MAX,
+        "%s/Library/Application Support/com.mitchellh.ghostty/config", home);
+
+    for (int32_t i = candidate_count - 1; i >= 0; i--) {
+        if (access(candidates[i], R_OK | W_OK) == 0) {
+            snprintf(path, sizeof(path), "%s", candidates[i]);
+            break;
+        }
+    }
+    if (!path[0]) return 0;
+
+    FILE *in = fopen(path, "r");
+    if (!in) return 0;
+    char tmppath[PATH_MAX];
+    if (snprintf(tmppath, sizeof(tmppath), "%s.tinyedit-XXXXXX", path) >= (int)sizeof(tmppath)) {
+        fclose(in);
+        return 0;
+    }
+    int fd = mkstemp(tmppath);
+    if (fd == -1) {
+        fclose(in);
+        return 0;
+    }
+    FILE *out = fdopen(fd, "w");
+    if (!out) {
+        close(fd);
+        unlink(tmppath);
+        fclose(in);
+        return 0;
+    }
+
+    uint8_t ok = 1;
+    uint8_t output_ends_newline = 1;
+    char line[4096];
+    while (fgets(line, sizeof(line), in)) {
+        uint8_t managed = strcmp(line, managed_start) == 0 ||
+                          strcmp(line, managed_end) == 0 ||
+                          strcmp(line, legacy_header) == 0;
+        for (int32_t i = 0; managed_lines[i]; i++) {
+            if (strcmp(line, managed_lines[i]) == 0) managed = 1;
+        }
+        if (!managed) {
+            if (fputs(line, out) == EOF) ok = 0;
+            output_ends_newline = line[strlen(line) - 1] == '\n';
+        }
+    }
+    if (ferror(in)) ok = 0;
+    if (enabled && ok) {
+        if (!output_ends_newline && fputc('\n', out) == EOF) ok = 0;
+        if (fputs(managed_start, out) == EOF) ok = 0;
+        for (int32_t i = 0; managed_lines[i] && ok; i++) {
+            if (fputs(managed_lines[i], out) == EOF) ok = 0;
+        }
+        if (ok && fputs(managed_end, out) == EOF) ok = 0;
+    }
+
+    struct stat st;
+    if (stat(path, &st) == 0 && fchmod(fd, st.st_mode) != 0) ok = 0;
+    if (fclose(in) != 0) ok = 0;
+    if (fclose(out) != 0) ok = 0;
+    if (ok && rename(tmppath, path) == 0)
+        return terminalReloadGhosttyConfiguration();
+    unlink(tmppath);
+    return 0;
+}
+
+/* Ghostty only applies its file changes after reload_config. AppleScript is
+ * its documented macOS automation interface; silence its diagnostic output
+ * because Tinyedit owns the terminal screen while this runs. */
+static uint8_t terminalReloadGhosttyConfiguration(void) {
+    static const char script[] =
+        "tell application \"Ghostty\" to perform action \"reload_config\" "
+        "on focused terminal of selected tab of front window";
+    pid_t pid = fork();
+    if (pid == -1) return 0;
+    if (pid == 0) {
+        int nullfd = open("/dev/null", O_WRONLY);
+        if (nullfd != -1) {
+            dup2(nullfd, STDOUT_FILENO);
+            dup2(nullfd, STDERR_FILENO);
+            close(nullfd);
+        }
+        execl("/usr/bin/osascript", "osascript", "-e", script, (char *)NULL);
+        _exit(127);
+    }
+    int status;
+    while (waitpid(pid, &status, 0) == -1) {
+        if (errno != EINTR) return 0;
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+static void terminalRemoveGhosttyCommandBindings(void) {
+    terminalConfigureGhosttyCommandBindings(0);
+}
+#endif
 
 /* Non-blocking check for whether another byte is already sitting in
  * the input stream, ready to read without waiting. Used to coalesce
@@ -164,7 +331,33 @@ static void editorDrainUnknownCsiSequence(int32_t max) {
     }
 }
 
-int32_t terminalReadKey(uint8_t mac_command_keys) {
+#ifdef __APPLE__
+static int32_t terminalCsiUSuperShortcut(int32_t codepoint) {
+    switch (codepoint) {
+        case 115: return CTRL_KEY('s'); /* Cmd-S */
+        case 102: return CTRL_KEY('f'); /* Cmd-F */
+        case 122: return CTRL_KEY('z'); /* Cmd-Z */
+        case 111: return CTRL_KEY('o'); /* Cmd-O */
+        case 119: return CTRL_KEY('w'); /* Cmd-W */
+        case 99:  return CTRL_KEY('c'); /* Cmd-C */
+        case 120: return CTRL_KEY('x'); /* Cmd-X */
+        case 97:  return CTRL_KEY('a'); /* Cmd-A */
+        case 113: return CTRL_KEY('q'); /* Cmd-Q */
+        case 103: return CTRL_KEY('g'); /* Cmd-G */
+        case 114: return CTRL_KEY('r'); /* Cmd-R */
+        case 116: return CTRL_KEY('t'); /* Cmd-T */
+        case 121: return CTRL_KEY('y'); /* Cmd-Y */
+        case 100: return CTRL_KEY('d'); /* Cmd-D */
+        default: return '\x1b';
+    }
+}
+#endif
+
+int32_t terminalReadKey(
+#ifdef __APPLE__
+    uint8_t mac_command_keys
+#endif
+) {
     if (pending_key >= 0) {
         int32_t key = pending_key;
         pending_key = -1;
@@ -190,6 +383,14 @@ int32_t terminalReadKey(uint8_t mac_command_keys) {
         if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
 
         if (seq[0] == '[') {
+            /* Kitty keyboard protocol encodes unmodified F1/F2 as the
+             * short CSI forms ESC[P and ESC[Q (not the legacy SS3 ESC OP/
+             * ESC OQ). Handle them before reading a third byte, or that
+             * byte would be the beginning of the user's next keypress. */
+            if (seq[1] == 'P') return F1_KEY;
+            if (seq[1] == 'Q') return F2_KEY;
+            if (seq[1] == 'R') return F3_KEY;
+            if (seq[1] == 'S') return F4_KEY;
             if (seq[1] >= '0' && seq[1] <= '9') {
                 if (read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
                 if (seq[2] == '~') {
@@ -235,7 +436,7 @@ int32_t terminalReadKey(uint8_t mac_command_keys) {
                     if (read(STDIN_FILENO, &term, 1) != 1) return '\x1b';
                     if (term == '~') return F3_KEY; /* common CSI F3 form: ESC[13~ */
                 } else if (seq[2] >= '0' && seq[2] <= '9') {
-                    /* CSI-u (modifyOtherKeys/fixterms) form for a plain
+                    /* CSI-u/Kitty form for a plain
                      * key with modifiers: ESC[<codepoint>;<mod>u, e.g.
                      * Ctrl-Shift-S = ESC[115;6u (115 = lowercase 's';
                      * Shift is folded into the modifier field, not the
@@ -245,13 +446,8 @@ int32_t terminalReadKey(uint8_t mac_command_keys) {
                      * any 3-digit-or-more codepoint prefix. Digits/mod
                      * are read as variable-width runs like the SGR
                      * mouse report below, since CSI-u doesn't pad
-                     * fields to a fixed width. Only decoded for
-                     * codepoint 115 ('s') to recognize Ctrl-Shift-S.
-                     * With mac_command_keys enabled, a separate,
-                     * documented Ghostty bridge also accepts modifier 9
-                     * (Super/Command) for S/F/Z/O/W. That bridge is
-                     * opt-in because Command is normally consumed by
-                     * macOS or the terminal emulator. */
+                     * fields to a fixed width. Kitty's modifier values are
+                     * bitmask + 1: Ctrl=5, Ctrl+Shift=6, Super/Command=9. */
                     int32_t fields[2] = {(seq[1] - '0') * 10 + (seq[2] - '0'), 0};
                     int32_t field_idx = 0;
                     uint8_t term = 0;
@@ -272,28 +468,16 @@ int32_t terminalReadKey(uint8_t mac_command_keys) {
                             break;
                         }
                     }
-                    if (ok && term && field_idx == 1 &&
-                        fields[1] == 9 && mac_command_keys) {
-                        switch (fields[0]) {
-                            case 115: return CTRL_KEY('s'); /* Cmd-S */
-                            case 102: return CTRL_KEY('f'); /* Cmd-F */
-                            case 122: return CTRL_KEY('z'); /* Cmd-Z */
-                            case 111: return CTRL_KEY('o'); /* Cmd-O */
-                            case 119: return CTRL_KEY('w'); /* Cmd-W */
-                            case 99:  return CTRL_KEY('c'); /* Cmd-C */
-                            case 120: return CTRL_KEY('x'); /* Cmd-X */
-                            case 97:  return CTRL_KEY('a'); /* Cmd-A */
-                            case 113: return CTRL_KEY('q'); /* Cmd-Q */
-                            case 103: return CTRL_KEY('g'); /* Cmd-G */
-                            case 114: return CTRL_KEY('r'); /* Cmd-R */
-                            case 116: return CTRL_KEY('t'); /* Cmd-T */
-                            case 121: return CTRL_KEY('y'); /* Cmd-Y */
-                            case 100: return CTRL_KEY('d'); /* Cmd-D */
-                        }
-                    } else if (ok && term && field_idx == 1 && fields[0] == 115) {
-                        /* mod is a bitmask + 1 (1 = no modifiers, 2 =
-                         * Shift, 5 = Ctrl, 6 = Ctrl+Shift). */
-                        if (fields[1] == 6) return SAVE_AS_KEY;
+                    if (ok && term && field_idx == 1) {
+#ifdef __APPLE__
+                        if (fields[1] == 9 && mac_command_keys)
+                            return terminalCsiUSuperShortcut(fields[0]);
+#endif
+                        if (fields[0] == 115 && fields[1] == 6)
+                            return SAVE_AS_KEY;
+                        if ((fields[1] == 5 || fields[1] == 6) &&
+                            fields[0] >= 'a' && fields[0] <= 'z')
+                            return CTRL_KEY(fields[0]);
                     } else if (!ok) {
                         editorDrainUnknownCsiSequence(16);
                     }
@@ -327,6 +511,10 @@ int32_t terminalReadKey(uint8_t mac_command_keys) {
                     }
 
                     switch (term) {
+                        case 'P': return F1_KEY;
+                        case 'Q': return F2_KEY;
+                        case 'R': return F3_KEY;
+                        case 'S': return F4_KEY;
                         case 'A': return is_shift ? SHIFT_ARROW_UP : ARROW_UP;
                         case 'B': return is_shift ? SHIFT_ARROW_DOWN : ARROW_DOWN;
                         case 'C':

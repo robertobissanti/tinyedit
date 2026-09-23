@@ -9,11 +9,14 @@ static int failures = 0;
 
 static void initRow(erow *row, const char *text) {
     memset(row, 0, sizeof(*row));
+    row->size = (int32_t)strlen(text);
+    row->chars = strdup(text);
     row->rsize = (int32_t)strlen(text);
     row->render = strdup(text);
 }
 
 static void freeRow(erow *row) {
+    free(row->chars);
     free(row->render);
     free(row->hl);
 }
@@ -41,6 +44,12 @@ int main(void) {
     initRow(&row, "   #include <stdint.h>");
     highlight(&row, "demo.c", 0, 0);
     expectClass(&row, 3, HL_PREPROCESSOR, "indented C preprocessor");
+    freeRow(&row);
+
+    initRow(&row, "#define LIMIT 16 /* milliseconds */");
+    highlight(&row, "demo.c", 0, 0);
+    expectClass(&row, 0, HL_PREPROCESSOR, "C preprocessor before comment");
+    expectClass(&row, 17, HL_COMMENT, "C comment after preprocessor");
     freeRow(&row);
 
     initRow(&row, "éint int value");
@@ -114,6 +123,16 @@ int main(void) {
     initRow(&row, "# Heading **bold** $x+1$");
     highlight(&row, "demo.md", 0, 0);
     expectClass(&row, 0, HL_PREPROCESSOR, "Markdown heading");
+    freeRow(&row);
+
+    /* show_invisibles replaces source spaces in render with a one-byte
+     * placeholder. Markdown still has to recognize the original space
+     * after the hash run as the ATX-heading delimiter. */
+    initRow(&row, "## Chapter");
+    strcpy(row.render, "##.Chapter");
+    highlight(&row, "demo.md", 0, 0);
+    expectClass(&row, 0, HL_PREPROCESSOR, "Markdown heading with visible spaces");
+    expectClass(&row, 3, HL_PREPROCESSOR, "Markdown heading text with visible spaces");
     freeRow(&row);
 
     initRow(&row, "def saluta(): # comment");

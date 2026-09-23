@@ -14,7 +14,7 @@ import termios
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BINARY = ROOT / "tinyedit"
+BINARY = ROOT / "bin" / "tinyedit"
 
 
 def spawn_editor(arguments, home, extra_env=None):
@@ -87,6 +87,23 @@ def test_f3(sequence, label, home):
     finish(process, master)
 
 
+def test_kitty_f1_f2(home):
+    """Ghostty emits short CSI F1/F2 forms while Kitty protocol is active."""
+    process, master = spawn_editor([], home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1b[P")
+        assert b"tinyedit -- keybindings" in read_until(master, b"tinyedit -- keybindings"), (
+            "Kitty CSI F1 did not open Help"
+        )
+        os.write(master, b"x\x1b[Q")
+        assert b"Settings" in read_until(master, b"Settings"), (
+            "Kitty CSI F2 did not open Settings"
+        )
+    finally:
+        finish(process, master)
+
+
 def test_ghostty_ctrl_i_is_drained(home):
     target = pathlib.Path(home) / "ctrl-i.txt"
     target.write_bytes(b"")
@@ -99,6 +116,28 @@ def test_ghostty_ctrl_i_is_drained(home):
     finish(process, master)
     if target.read_bytes() != b"x\n":
         raise AssertionError("obsolete Ghostty Ctrl-I sequence leaked bytes or swallowed the next key")
+
+
+def test_kitty_keyboard_mode_is_restored(home):
+    """The opt-in Ghostty mode must not remain enabled for the shell."""
+    case_home = pathlib.Path(home) / "kitty-keyboard-restore"
+    case_home.mkdir()
+    target = case_home / "empty.txt"
+    target.write_bytes(b"")
+    (case_home / ".tinyeditrc").write_text("mac_command_keys = true\n", encoding="utf-8")
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        output = read_available(master)
+        if b"\x1b[>1u" not in output:
+            raise AssertionError("Kitty keyboard mode was not enabled")
+        os.write(master, b"\x1b[113;9u")  # Cmd-Q: clean buffer exits immediately
+        output += read_available(master)
+        process.wait(timeout=2)
+        output += read_available(master)
+        if b"\x1b[<u" not in output:
+            raise AssertionError("Kitty keyboard mode was not restored on exit")
+    finally:
+        finish(process, master)
 
 
 def test_very_long_wrapped_line(home):
@@ -514,6 +553,52 @@ def test_settings_refresh_rows(home, save, initially_visible):
         finish(process, master)
 
 
+def test_settings_syntax_color_preview(home):
+    """Syntax color rows preview representative text on the chosen background."""
+    case_home = pathlib.Path(home) / "settings-syntax-preview"
+    case_home.mkdir()
+    target = case_home / "preview.c"
+    target.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+    (case_home / ".tinyeditrc").write_text(
+        "color_background = blue-dark\ncolor_syntax_keyword = cyan-light\n",
+        encoding="utf-8",
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1bOQ" + b"\x1b[B" * setting_index("color_syntax_keyword"))
+        output = read_available(master)
+        assert b"\x1b[44m\x1b[96mprintf\x1b[m" in output, (
+            "keyword preview does not use its foreground and editor background"
+        )
+        os.write(master, b"\x1b")
+    finally:
+        finish(process, master)
+
+
+def test_settings_status_bar_preview(home):
+    """Status-bar previews use their separately configured text color."""
+    case_home = pathlib.Path(home) / "settings-status-preview"
+    case_home.mkdir()
+    target = case_home / "preview.c"
+    target.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+    (case_home / ".tinyeditrc").write_text(
+        "color_statusbar = blue-dark\ncolor_statusbar_text = white-light\n",
+        encoding="utf-8",
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1bOQ" + b"\x1b[B" * setting_index("color_statusbar"))
+        output = read_available(master)
+        assert b"\x1b[44m\x1b[97m status \x1b[m" in output, (
+            "status preview does not use the separate text color"
+        )
+        os.write(master, b"\x1b")
+    finally:
+        finish(process, master)
+
+
 def test_block_indent(home):
     """Tab/Shift+Tab shift the selected lines and keep the selection."""
     case_home = pathlib.Path(home) / "block-indent"
@@ -612,7 +697,9 @@ def main():
         home = pathlib.Path(tmp)
         test_f3(b"\x1bOR", "SS3", home)
         test_f3(b"\x1b[13~", "CSI", home)
+        test_kitty_f1_f2(home)
         test_ghostty_ctrl_i_is_drained(home)
+        test_kitty_keyboard_mode_is_restored(home)
         test_very_long_wrapped_line(home)
         test_regex_replace_all_newline_finishes(home)
         test_ctrl_w_saves_and_closes_only_file(home)
@@ -626,6 +713,8 @@ def main():
         test_eol_after_trailing_tab(home)
         test_block_indent(home)
         test_no_save_prompt_when_undone(home)
+        test_settings_syntax_color_preview(home)
+        test_settings_status_bar_preview(home)
         for save in ("ctrl-s", "f2", "esc-y"):
             for initially_visible in (0, 1):
                 test_settings_refresh_rows(home, save, initially_visible)

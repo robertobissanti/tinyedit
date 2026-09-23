@@ -600,7 +600,20 @@ static void syntaxHighlightRowGeneric(erow *row, const struct syntaxLang *lang,
         }
 
         if (lang->hash_line_is_preprocessor && i == first_token && s[i] == '#') {
-            for (; i < len; i++) row->hl[i] = HL_PREPROCESSOR;
+            /* A directive owns ordinary text to its right, but not a
+             * trailing comment: leave its opener for the comment branch
+             * above, which also preserves multi-line comment state. */
+            for (; i < len; i++) {
+                uint8_t starts_line_comment = line_comment_len &&
+                    i + line_comment_len <= len &&
+                    memcmp(&s[i], lang->line_comment, (size_t)line_comment_len) == 0;
+                uint8_t starts_block_comment = block_start_len &&
+                    i + block_start_len <= len &&
+                    memcmp(&s[i], lang->block_comment_start, (size_t)block_start_len) == 0;
+                if (starts_line_comment || starts_block_comment) break;
+                row->hl[i] = HL_PREPROCESSOR;
+            }
+            if (i < len) continue;
             break;
         }
 
@@ -935,6 +948,8 @@ static void syntaxHighlightRowMarkdown(erow *row, uint8_t prev_in_fence, uint8_t
 
     const char *s = row->render;
     int32_t len = row->rsize;
+    const char *source = row->chars ? row->chars : s;
+    int32_t source_len = row->chars ? row->size : len;
 
     /* YAML front matter, before every other rule: while inside it the
      * document isn't Markdown at all. Recognized only when the opening
@@ -1053,10 +1068,10 @@ static void syntaxHighlightRowMarkdown(erow *row, uint8_t prev_in_fence, uint8_t
         return;
     }
 
-    if (len > 0 && s[0] == '#') {
+    if (source_len > 0 && source[0] == '#') {
         int32_t k = 0;
-        while (k < len && s[k] == '#') k++;
-        if (k < len && s[k] == ' ') {
+        while (k < source_len && source[k] == '#') k++;
+        if (k < source_len && source[k] == ' ') {
             for (int32_t i = 0; i < len; i++) row->hl[i] = HL_PREPROCESSOR;
             row->hl_open_comment = 0;
             row->hl_open_math = 0;

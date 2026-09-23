@@ -78,7 +78,7 @@ not a build dependency.
 ## Build
 
 ```sh
-make        # produces the ./tinyedit binary
+make        # produces the bin/tinyedit binary
 make clean  # removes it
 ```
 
@@ -87,7 +87,18 @@ Needs only a C99 compiler and a POSIX system (macOS or Linux).
 ## Usage
 
 ```sh
-./tinyedit [file]
+bin/tinyedit [file]
+```
+
+### Optional command installation
+
+The project build stays in `bin/tinyedit` and does not alter your shell
+configuration. To make `tinyedit` available from any directory, install or
+link it into a directory already in `PATH`. On this macOS setup `/usr/local/bin`
+is already in `PATH`, so no `~/.zshrc` change is needed.
+
+```sh
+make install PREFIX=/usr/local
 ```
 
 ### Keyboard shortcuts
@@ -123,31 +134,23 @@ Needs only a C99 compiler and a POSIX system (macOS or Linux).
 
 Tinyedit can optionally accept `Cmd-S`, `Cmd-F`, `Cmd-Z`, `Cmd-O`, `Cmd-W`,
 `Cmd-C`, `Cmd-X`, `Cmd-A`, `Cmd-Q`, `Cmd-G`, `Cmd-R`, `Cmd-T`, `Cmd-Y`, and
-`Cmd-D` when Ghostty is configured to send its documented CSI-u-style
-bridge sequences. Enable **Experimental macOS Command keys (Ghostty)** in
-`F2`, or add `mac_command_keys = true` to `~/.tinyeditrc`.
-
-Add these bindings to Ghostty's configuration file:
-
-```ini
-keybind = super+s=text:\x1b[115;9u
-keybind = super+f=text:\x1b[102;9u
-keybind = super+z=text:\x1b[122;9u
-keybind = super+o=text:\x1b[111;9u
-keybind = super+w=text:\x1b[119;9u
-keybind = super+c=text:\x1b[99;9u
-keybind = super+x=text:\x1b[120;9u
-keybind = super+a=text:\x1b[97;9u
-keybind = super+q=text:\x1b[113;9u
-keybind = super+g=text:\x1b[103;9u
-keybind = super+r=text:\x1b[114;9u
-keybind = super+t=text:\x1b[116;9u
-keybind = super+y=text:\x1b[121;9u
-keybind = super+d=text:\x1b[100;9u
-```
+`Cmd-D` through Ghostty's Kitty keyboard protocol. Enable **macOS Command
+keys (Ghostty Kitty protocol)** in `F2`, or add `mac_command_keys = true` to
+`~/.tinyeditrc`. Tinyedit enables the protocol only while it is running and
+restores Ghostty's previous keyboard mode on exit, so Command sequences do
+not leak into the shell.
 
 This mode is off by default and is Ghostty-specific: terminal programs
-normally do not receive macOS Command-key events. With this mode enabled,
+normally do not receive macOS Command-key events. When enabled from `F2`,
+Tinyedit manages the `cmd+w`, `cmd+f`, and `cmd+q` Ghostty `unbind` entries
+required for those three app-level shortcuts. Disabling the setting removes
+only those managed entries, restoring Ghostty's native shortcuts. On startup
+Tinyedit synchronizes the managed block with the saved setting, and on exit
+it removes the block unconditionally. Reload Ghostty's configuration with
+`Cmd-Shift-,` for the change to take effect.
+If you previously added the old `keybind = super+…=text:\x1b[…;9u` bridge
+entries to Ghostty's configuration, remove them: they are permanent terminal
+bindings and cannot be disabled by an application. With this mode enabled,
 `Cmd-C` and `Cmd-X` operate on Tinyedit's selected text rather than the
 terminal's native selection. `Cmd-Q` asks Tinyedit to save and quit rather
 than closing Ghostty while Tinyedit is active. `Cmd-V` remains the terminal's
@@ -607,28 +610,30 @@ and asks whether to restore the changes before proceeding.
 
 ## Code layout
 
-- `tinyedit.c` / `tinyedit.h` — the editor itself: raw terminal mode,
+- `src/` — C implementation files; `inc/` — their public and internal
+  headers. `Makefile` supplies `-Iinc` to every compilation.
+- `src/tinyedit.c` / `inc/tinyedit.h` — the editor itself: raw terminal mode,
   row buffer, rendering, input handling, settings panel. Shared
   types and macros live in the header, while implementation logic stays
   in the `.c` file.
-- `clipboard.c` / `clipboard.h` — system clipboard integration (macOS
+- `src/clipboard.c` / `inc/clipboard.h` — system clipboard integration (macOS
   `pbcopy`/`pbpaste`, Linux `wl-clipboard` or `xclip`), falling back
   to an internal buffer when no system backend is available. Wired to
   the editor via `Ctrl-C`/`Ctrl-X`/`Ctrl-V`.
-- `utf8.c` / `utf8.h` — UTF-8 decoding, grapheme cluster boundaries,
+- `src/utf8.c` / `inc/utf8.h` — UTF-8 decoding, grapheme cluster boundaries,
   and terminal display-width calculation, ported from linenoise (see
   above). Used for cursor movement, backspace, and rendering.
-- `settings.c` / `settings.h` — persistence of user settings
+- `src/settings.c` / `inc/settings.h` — persistence of user settings
   (`~/.tinyeditrc`), a descriptor table that drives both the file
   parser and the `F2` panel.
-- `syntax.c` / `syntax.h` — syntax highlighting: a generic tokenizer
+- `src/syntax.c` / `inc/syntax.h` — syntax highlighting: a generic tokenizer
   for "C-like" languages driven by per-language tables (including
   ones loaded at runtime from `~/.tinyedit/syntax/*.conf`), plus
   dedicated tokenizers for Markdown, HTML/XML, and CSS. A `.conf` can
   route its language through the markup tokenizer (`base_tokenizer =
   xml`) and declare embedded `template_delimiters`, which is how the
   HTML-template languages are supported without compiled-in code.
-- `backup.c` / `backup.h` — periodic crash-recovery backups, saved to
+- `src/backup.c` / `inc/backup.h` — periodic crash-recovery backups, saved to
   `~/.tinyedit/backup/` (never next to the original file). Wired to
   the editor via the `backup_interval` setting.
 - `syntax-configs/` — ready-made `.conf` language definitions to copy
@@ -636,7 +641,7 @@ and asks whether to restore the changes before proceeding.
   LaTeX, Matlab/Octave, and the markup templates Nunjucks, Jinja,
   Liquid and Twig. Data, not code — see its own
   [`README.md`](syntax-configs/README.md).
-- `linenoise.c` / `linenoise.h` — linenoise's original sources
+- `src/linenoise.c` / `inc/linenoise.h` — linenoise's original sources
   (antirez), kept for historical reference from the first
   line-editor prototype. Not compiled into the current binary (except
   for the UTF-8 logic, ported separately into `utf8.c`).
@@ -650,8 +655,9 @@ See [`TODO.md`](TODO.md) for planned and in-progress work, and
 
 Copyright © 2026 Roberto Bissanti <roberto.bissanti@gmail.com>.
 Released under the MIT license — see [`LICENSE`](LICENSE). The code
-ported from linenoise (`utf8.c`/`utf8.h`, plus `linenoise.c`/
-`linenoise.h` vendored for historical reference, see above) stays
+ported from linenoise (`src/utf8.c`/`inc/utf8.h`, plus
+`src/linenoise.c`/`inc/linenoise.h` vendored for historical reference,
+see above) stays
 under Salvatore Sanfilippo and Pieter Noordhuis's original BSD
 2-Clause license — see
 [`LICENSE-THIRD-PARTY`](LICENSE-THIRD-PARTY).

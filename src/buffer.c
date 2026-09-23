@@ -114,6 +114,18 @@ void bufferRowDeleteRange(erow *row, int32_t start, int32_t end) {
     row->size -= end - start;
 }
 
+int32_t bufferRowOutdent(erow *row, int32_t tab_stop) {
+    if (row->size > 0 && row->chars[0] == '\t') {
+        bufferRowDeleteRange(row, 0, 1);
+        return 1;
+    }
+    int32_t removed = 0;
+    while (removed < tab_stop && removed < row->size && row->chars[removed] == ' ')
+        removed++;
+    bufferRowDeleteRange(row, 0, removed);
+    return removed;
+}
+
 char *bufferSerialize(const struct editorBuffer *buffer, enum lineEndingMode ending,
     size_t *out_len) {
     size_t ending_len = ending == LINE_ENDING_CRLF ? 2 : 1, total = 0;

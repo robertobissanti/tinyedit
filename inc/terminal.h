@@ -21,13 +21,21 @@ void terminalDisableRawMode(void);
 void terminalRestoreVisualState(void);
 void terminalEnableBracketedPaste(void);
 void terminalDisableBracketedPaste(void);
+#ifdef __APPLE__
+void terminalEnableKittyKeyboard(void);
+void terminalDisableKittyKeyboard(void);
+uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled);
+#endif
 uint8_t terminalInputReady(void);
 void terminalEnableMouseReporting(void);
 void terminalDisableMouseReporting(void);
 void terminalEnableResizeHandling(void);
-int32_t terminalReadKey(uint8_t mac_command_keys);
+int32_t terminalReadKey(
+#ifdef __APPLE__
+    uint8_t mac_command_keys
+#endif
+);
 char *terminalReadPastedText(size_t *outlen);
 int32_t terminalGetWindowSize(int32_t *rows, int32_t *cols);
 
 #endif /* __TE_TERMINAL_H */
-
