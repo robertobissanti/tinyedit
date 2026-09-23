@@ -444,7 +444,7 @@ def setting_index(key):
     when a new setting is inserted above it -- hardcoded indices
     silently start editing the wrong row instead.
     """
-    source = (ROOT / "settings.c").read_text(encoding="utf-8")
+    source = (ROOT / "src" / "settings.c").read_text(encoding="utf-8")
     table = source.split("settingDescriptors[] = {", 1)[1].split("\n};", 1)[0]
     keys = re.findall(r'\{\s*"([^"]+)"', table)
     assert key in keys, f"setting {key!r} not found in settings.c"
