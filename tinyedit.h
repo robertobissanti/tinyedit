@@ -276,6 +276,7 @@ struct editorUi {
 
 struct editorSearch {
     int32_t search_match_y, search_match_x, search_match_len; /* match_y == -1: no match */
+    int32_t search_match_end_y, search_match_end_x;
     uint8_t switch_to_replace;
     int32_t saved_cx, saved_cy, saved_rowoff, saved_coloff;
     int32_t direction;

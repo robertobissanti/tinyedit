@@ -968,6 +968,8 @@ static void editorResetDocument(void) {
     E.search.search_match_y = -1;
     E.search.search_match_x = 0;
     E.search.search_match_len = 0;
+    E.search.search_match_end_y = -1;
+    E.search.search_match_end_x = 0;
     E.document.file.last_backup_time = 0;
     E.document.history.last_edit_type = EDIT_NONE;
     E.document.history.last_edit_time = 0;
@@ -1303,9 +1305,9 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
     }
 
     int32_t match_start = -1, match_end = -1;
-    if (E.search.search_match_y == filerow) {
-        match_start = E.search.search_match_x;
-        match_end = E.search.search_match_x + E.search.search_match_len;
+    if (E.search.search_match_y <= filerow && filerow <= E.search.search_match_end_y) {
+        match_start = filerow == E.search.search_match_y ? E.search.search_match_x : 0;
+        match_end = filerow == E.search.search_match_end_y ? E.search.search_match_end_x : row->size;
     }
 
     int32_t source_byte = 0, render_byte = 0;
@@ -1389,6 +1391,24 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
         j += emitted_len;
     }
     if (in_sel) abAppendReset(ab);
+}
+
+/* A logical newline lives between two rows, rather than in either row's
+ * chars buffer. Give it one visible cell when a selection or regex match
+ * crosses it, so blank selected rows and \n matches don't disappear. */
+static uint8_t editorRowTerminatorHighlighted(int32_t filerow, uint8_t has_sel,
+    int32_t sel_y0, int32_t sel_y1) {
+    if (has_sel && filerow >= sel_y0 && filerow < sel_y1) return 1;
+    return E.search.search_match_y >= 0 &&
+        filerow >= E.search.search_match_y && filerow < E.search.search_match_end_y;
+}
+
+static void editorDrawHighlightedTerminator(struct abuf *ab) {
+    const char *sel_color = ansiColorCode(S.color_selection);
+    abAppend(ab, sel_color, (int32_t)strlen(sel_color));
+    abAppend(ab, "\x1b[7m", 4);
+    abAppend(ab, S.show_invisibles ? "$" : " ", 1);
+    abAppendReset(ab);
 }
 
 static void editorDrawGutter(struct abuf *ab, int32_t gutter, int32_t filerow, uint8_t is_continuation) {
@@ -1568,6 +1588,8 @@ static void editorDrawRows(struct abuf *ab) {
                 if (len > textcols) len = textcols;
                 editorDrawRowSegment(ab, filerow, E.view.coloff, E.view.coloff + len,
                     has_sel, sel_y0, sel_x0, sel_y1, sel_x1);
+                if (editorRowTerminatorHighlighted(filerow, has_sel, sel_y0, sel_y1))
+                    editorDrawHighlightedTerminator(ab);
             }
 
             abAppend(ab, "\x1b[K", 3);
@@ -1612,7 +1634,11 @@ static void editorDrawRows(struct abuf *ab) {
          * substituted into render (see editorUpdateRow()), so it's
          * exempt from the single-byte-glyph constraint that applies
          * to in-line invisibles. */
-        if (S.show_invisibles && seg == nseg - 1) {
+        uint8_t terminator_highlighted = seg == nseg - 1 &&
+            editorRowTerminatorHighlighted(filerow, has_sel, sel_y0, sel_y1);
+        if (terminator_highlighted) {
+            editorDrawHighlightedTerminator(ab);
+        } else if (S.show_invisibles && seg == nseg - 1) {
             /* editorSegVisibleEnd() hides the space cells that complete
              * a tab stop. They still have visual width, so restore that
              * width before placing the end-of-line marker; otherwise a
@@ -2237,7 +2263,9 @@ static char *editorDecodeRegexPattern(const char *raw) {
             }
             if (next == 't' || next == 'n' || next == 'r') {
                 src++;
-                decoded[dst++] = next == 't' ? '\t' : next == 'n' ? '\n' : '\r';
+                /* The document normalizes CRLF and LF to the same logical
+                 * row boundary, so both regex spellings denote that boundary. */
+                decoded[dst++] = next == 't' ? '\t' : next == 'n' ? '\n' : '\n';
                 continue;
             }
         }
@@ -2245,6 +2273,68 @@ static char *editorDecodeRegexPattern(const char *raw) {
     }
     decoded[dst] = '\0';
     return decoded;
+}
+
+/* Joins only the in-document row boundaries: unlike bufferSerialize(), this
+ * deliberately omits the implicit final newline added when a file is saved.
+ * Search must operate on the text the user can address in the editor. */
+static char *editorSearchText(size_t *out_len) {
+    size_t total = 0;
+    for (int32_t y = 0; y < E.document.buffer.row_count; y++)
+        total += (size_t)E.document.buffer.rows[y].size +
+            (y + 1 < E.document.buffer.row_count ? 1 : 0);
+    char *text = teMalloc(total + 1);
+    char *dst = text;
+    for (int32_t y = 0; y < E.document.buffer.row_count; y++) {
+        erow *row = &E.document.buffer.rows[y];
+        memcpy(dst, row->chars, (size_t)row->size);
+        dst += row->size;
+        if (y + 1 < E.document.buffer.row_count) *dst++ = '\n';
+    }
+    *dst = '\0';
+    *out_len = total;
+    return text;
+}
+
+static size_t editorSearchOffsetForPosition(int32_t y, int32_t x) {
+    size_t offset = 0;
+    for (int32_t row = 0; row < y; row++)
+        offset += (size_t)E.document.buffer.rows[row].size + 1;
+    return offset + (size_t)x;
+}
+
+static void editorSearchPositionForOffset(size_t offset, int32_t *out_y, int32_t *out_x) {
+    for (int32_t y = 0; y < E.document.buffer.row_count; y++) {
+        int32_t size = E.document.buffer.rows[y].size;
+        if (offset <= (size_t)size) {
+            *out_y = y;
+            *out_x = (int32_t)offset;
+            return;
+        }
+        offset -= (size_t)size + 1;
+    }
+    *out_y = E.document.buffer.row_count - 1;
+    *out_x = E.document.buffer.rows[*out_y].size;
+}
+
+static uint8_t editorRegexFindLastInText(const regex_t *re, const char *text,
+    size_t len, size_t limit, size_t *out_start, size_t *out_len) {
+    uint8_t found = 0;
+    size_t search_from = 0;
+    while (search_from <= len) {
+        regmatch_t m;
+        if (regexec(re, text + search_from, 1, &m,
+                search_from > 0 ? REG_NOTBOL : 0) != 0)
+            break;
+        size_t start = search_from + (size_t)m.rm_so;
+        size_t match_len = (size_t)(m.rm_eo - m.rm_so);
+        if (start > limit) break;
+        *out_start = start;
+        *out_len = match_len;
+        found = 1;
+        search_from = start + (match_len > 0 ? match_len : 1);
+    }
+    return found;
 }
 
 /* Finds the LAST regex match on `row` that starts at or before column
@@ -2315,20 +2405,66 @@ static uint8_t editorFindFrom(const char *query, int32_t from_y, int32_t from_x,
     size_t qlen = strlen(query);
     if (qlen == 0 || E.document.buffer.row_count == 0) {
         E.search.search_match_y = -1;
+        E.search.search_match_end_y = -1;
         return 0;
     }
 
     regex_t re;
     uint8_t have_re = 0;
+    uint8_t cross_row_regex = 0;
     if (E.search.regex_mode) {
         char *pattern = editorDecodeRegexPattern(query);
-        int32_t compile_failed = regcomp(&re, pattern, REG_EXTENDED) != 0;
+        cross_row_regex = strchr(pattern, '\n') != NULL;
+        int32_t compile_failed = regcomp(&re, pattern, REG_EXTENDED | REG_NEWLINE) != 0;
         free(pattern);
         if (compile_failed) {
             E.search.search_match_y = -1;
+            E.search.search_match_end_y = -1;
             return 0;
         }
         have_re = 1;
+    }
+
+    if (cross_row_regex) {
+        size_t text_len;
+        char *text = editorSearchText(&text_len);
+        size_t from = editorSearchOffsetForPosition(from_y, from_x);
+        if (from > text_len) from = text_len;
+        size_t start = 0, match_len = 0;
+        uint8_t found = 0;
+
+        if (dir == 1) {
+            regmatch_t m;
+            if (regexec(&re, text + from, 1, &m, from > 0 ? REG_NOTBOL : 0) == 0) {
+                start = from + (size_t)m.rm_so;
+                match_len = (size_t)(m.rm_eo - m.rm_so);
+                found = 1;
+            }
+            if (!found && wrap && regexec(&re, text, 1, &m, 0) == 0) {
+                start = (size_t)m.rm_so;
+                match_len = (size_t)(m.rm_eo - m.rm_so);
+                found = 1;
+            }
+        } else {
+            found = editorRegexFindLastInText(&re, text, text_len, from, &start, &match_len);
+            if (!found && wrap)
+                found = editorRegexFindLastInText(&re, text, text_len, text_len, &start, &match_len);
+        }
+
+        if (found) {
+            editorSearchPositionForOffset(start, &E.document.cursor.cy, &E.document.cursor.cx);
+            E.search.search_match_y = E.document.cursor.cy;
+            E.search.search_match_x = E.document.cursor.cx;
+            E.search.search_match_len = (int32_t)match_len;
+            editorSearchPositionForOffset(start + match_len,
+                &E.search.search_match_end_y, &E.search.search_match_end_x);
+        } else {
+            E.search.search_match_y = -1;
+            E.search.search_match_end_y = -1;
+        }
+        free(text);
+        regfree(&re);
+        return found;
     }
 
     int32_t y = from_y;
@@ -2375,6 +2511,8 @@ static uint8_t editorFindFrom(const char *query, int32_t from_y, int32_t from_x,
             E.search.search_match_y = y;
             E.search.search_match_x = mx;
             E.search.search_match_len = mlen;
+            E.search.search_match_end_y = y;
+            E.search.search_match_end_x = mx + mlen;
             result = 1;
             break;
         }
@@ -2394,11 +2532,13 @@ static uint8_t editorFindFrom(const char *query, int32_t from_y, int32_t from_x,
     if (result) return 1;
 
     E.search.search_match_y = -1;
+    E.search.search_match_end_y = -1;
     return 0;
 }
 
 static void editorFindCallback(char *query, int32_t key) {
-    static int32_t last_cy = -1, last_cx = -1, last_len = 0;
+    static int32_t last_cy = -1, last_cx = -1, last_end_y = -1,
+        last_end_x = 0, last_len = 0;
 
     if (key == '\r' || key == '\x1b') {
         if (key == '\x1b') {
@@ -2408,8 +2548,11 @@ static void editorFindCallback(char *query, int32_t key) {
             E.view.coloff = E.search.saved_coloff;
         }
         E.search.search_match_y = -1;
+        E.search.search_match_end_y = -1;
         last_cy = -1;
         last_cx = -1;
+        last_end_y = -1;
+        last_end_x = 0;
         last_len = 0;
         return;
     }
@@ -2428,12 +2571,16 @@ static void editorFindCallback(char *query, int32_t key) {
          * below when a key isn't a recognized navigation/mode key. */
         last_cy = -1;
         last_cx = -1;
+        last_end_y = -1;
+        last_end_x = 0;
         last_len = 0;
         if (strlen(query) > 0) {
             int32_t from_y = E.search.saved_cy, from_x = E.search.saved_cx;
             if (editorFindFrom(query, from_y, from_x, E.search.direction, 1)) {
                 last_cy = E.document.cursor.cy;
                 last_cx = E.document.cursor.cx;
+                last_end_y = E.search.search_match_end_y;
+                last_end_x = E.search.search_match_end_x;
                 last_len = E.search.search_match_len;
             }
         }
@@ -2448,11 +2595,14 @@ static void editorFindCallback(char *query, int32_t key) {
         E.search.direction = 1;
         last_cy = -1;
         last_cx = -1;
+        last_end_y = -1;
+        last_end_x = 0;
         last_len = 0;
     }
 
     if (strlen(query) == 0) {
         E.search.search_match_y = -1;
+        E.search.search_match_end_y = -1;
         return;
     }
 
@@ -2473,8 +2623,9 @@ static void editorFindCallback(char *query, int32_t key) {
          * reported by the user (Arrow-Down on a regex search got stuck
          * re-matching pieces of the same match instead of moving to
          * the next line). */
-        from_y = last_cy;
-        from_x = last_cx + (last_len > 0 ? last_len : 1);
+        from_y = last_end_y;
+        from_x = last_end_x;
+        if (last_len == 0) from_x++;
     } else if (last_cx > 0) {
         /* Backward: resume just before the START of the previous match
          * (searching for the last match that starts at or before this
@@ -2501,6 +2652,8 @@ static void editorFindCallback(char *query, int32_t key) {
     if (editorFindFrom(query, from_y, from_x, E.search.direction, 1)) {
         last_cy = E.document.cursor.cy;
         last_cx = E.document.cursor.cx;
+        last_end_y = E.search.search_match_end_y;
+        last_end_x = E.search.search_match_end_x;
         last_len = E.search.search_match_len;
     }
 }
@@ -2595,6 +2748,8 @@ static void editorFindAndReplace(const char *query) {
     while (editorFindFrom(query, y, x, 1, 0)) {
         y = E.search.search_match_y;
         x = E.search.search_match_x;
+        int32_t end_y = E.search.search_match_end_y;
+        int32_t end_x = E.search.search_match_end_x;
         /* Actual matched length -- NOT strlen(query). In literal mode
          * these are always equal, but in regex mode the match can be
          * shorter or longer than the pattern text itself (e.g.
@@ -2618,25 +2773,14 @@ static void editorFindAndReplace(const char *query) {
 
         if (do_replace) {
             if (count == 0) editorPushUndo(EDIT_OTHER);
-            erow *row = &E.document.buffer.rows[y];
-            for (int32_t k = 0; k < mlen; k++)
-                editorRowDelChar(row, x);
-            E.document.cursor.cy = y;
-            E.document.cursor.cx = x;
-            for (size_t k = 0; k < rlen; k++) {
-                if (replacement[k] == '\n') {
-                    editorInsertNewlineRaw();
-                } else {
-                    if (E.document.cursor.cy == E.document.buffer.row_count) editorInsertRow(E.document.buffer.row_count, "", 0);
-                    editorRowInsertChar(&E.document.buffer.rows[E.document.cursor.cy], E.document.cursor.cx, (unsigned char)replacement[k]);
-                    E.document.cursor.cx++;
-                }
-            }
+            editorDeleteRangeRaw(y, x, end_y, end_x);
+            editorInsertTextRaw(replacement, rlen);
             count++;
             y = E.document.cursor.cy;
             x = E.document.cursor.cx;
         } else {
-            x += mlen;
+            y = end_y;
+            x = end_x;
         }
         /* A zero-length regex match must always consume one original
          * character before the next search. This applies whether the
@@ -2655,6 +2799,7 @@ static void editorFindAndReplace(const char *query) {
     }
 
     E.search.search_match_y = -1;
+    E.search.search_match_end_y = -1;
     free(replacement);
     editorSetStatusMessage("Replaced %d occurrence(s).", count);
 }
@@ -4123,6 +4268,8 @@ static void initEditor(void) {
     E.search.search_match_y = -1;
     E.search.search_match_x = 0;
     E.search.search_match_len = 0;
+    E.search.search_match_end_y = -1;
+    E.search.search_match_end_x = 0;
     E.document.file.last_backup_time = 0;
 
     settingsLoad(&S);

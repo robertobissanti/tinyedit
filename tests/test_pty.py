@@ -273,6 +273,54 @@ def test_selection_across_tab(home):
             finish(process, master)
 
 
+def test_selection_marks_blank_rows(home):
+    """A selected logical newline must remain visible on an empty row."""
+    case_home = pathlib.Path(home) / "selection-blank-rows"
+    case_home.mkdir()
+    target = case_home / "selection.txt"
+    target.write_bytes(b"\n\nVISTA\n")
+    (case_home / ".tinyeditrc").write_text(
+        "show_line_numbers = 0\nshow_top_bar = 0\nshow_invisibles = 0\n"
+        "syntax_highlight = 0\ncolor_selection = yellow-light\n",
+        encoding="utf-8",
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x01")  # Ctrl-A
+        output = read_available(master)
+        selected_cell = b"\x1b[93m\x1b[7m \x1b[m"
+        if output.count(selected_cell) < 2:
+            raise AssertionError("selected blank rows have no visible terminator cell")
+    finally:
+        finish(process, master)
+
+
+def test_regex_finds_logical_newline(home):
+    """Regex \\n and \\r both address the normalized row boundary."""
+    case_home = pathlib.Path(home) / "regex-newline"
+    case_home.mkdir()
+    target = case_home / "search.txt"
+    target.write_bytes(b"first\r\nsecond\r\n")
+    (case_home / ".tinyeditrc").write_text(
+        "show_line_numbers = 0\nshow_top_bar = 0\nshow_invisibles = 1\n"
+        "syntax_highlight = 0\ncolor_selection = yellow-light\n",
+        encoding="utf-8",
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        for query in (b"\\n", b"\\r"):
+            os.write(master, b"\x06\x07" + query)  # Ctrl-F, Ctrl-G, regex
+            output = read_available(master)
+            if b"\x1b[93m\x1b[7m$\x1b[m" not in output:
+                raise AssertionError(f"regex {query!r} did not highlight a row boundary")
+            os.write(master, b"\x1b")
+            read_available(master)
+    finally:
+        finish(process, master)
+
+
 def test_bracketed_paste_replaces_selection_atomically(home):
     """Terminal-native paste replaces a selection and is one undo step."""
     case_home = pathlib.Path(home) / "paste-selection"
@@ -571,6 +619,8 @@ def main():
         test_ctrl_o_discards_then_creates_named_file(home)
         test_invisible_colors(home)
         test_selection_across_tab(home)
+        test_selection_marks_blank_rows(home)
+        test_regex_finds_logical_newline(home)
         test_copy_preserves_selection(home)
         test_bracketed_paste_replaces_selection_atomically(home)
         test_eol_after_trailing_tab(home)
