@@ -14,14 +14,16 @@ import termios
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-BINARY = ROOT / "tinyedit"
+BINARY = ROOT / "bin" / "tinyedit"
 
 
-def spawn_editor(arguments, home):
+def spawn_editor(arguments, home, extra_env=None):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
     env = os.environ.copy()
     env.update({"HOME": str(home), "TERM": "xterm-256color"})
+    if extra_env:
+        env.update(extra_env)
     process = subprocess.Popen(
         [str(BINARY), *arguments], stdin=slave, stdout=slave, stderr=slave,
         cwd=ROOT, env=env, close_fds=True,
@@ -85,6 +87,23 @@ def test_f3(sequence, label, home):
     finish(process, master)
 
 
+def test_kitty_f1_f2(home):
+    """Ghostty emits short CSI F1/F2 forms while Kitty protocol is active."""
+    process, master = spawn_editor([], home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1b[P")
+        assert b"tinyedit -- keybindings" in read_until(master, b"tinyedit -- keybindings"), (
+            "Kitty CSI F1 did not open Help"
+        )
+        os.write(master, b"x\x1b[Q")
+        assert b"Settings" in read_until(master, b"Settings"), (
+            "Kitty CSI F2 did not open Settings"
+        )
+    finally:
+        finish(process, master)
+
+
 def test_ghostty_ctrl_i_is_drained(home):
     target = pathlib.Path(home) / "ctrl-i.txt"
     target.write_bytes(b"")
@@ -97,6 +116,28 @@ def test_ghostty_ctrl_i_is_drained(home):
     finish(process, master)
     if target.read_bytes() != b"x\n":
         raise AssertionError("obsolete Ghostty Ctrl-I sequence leaked bytes or swallowed the next key")
+
+
+def test_kitty_keyboard_mode_is_restored(home):
+    """The opt-in Ghostty mode must not remain enabled for the shell."""
+    case_home = pathlib.Path(home) / "kitty-keyboard-restore"
+    case_home.mkdir()
+    target = case_home / "empty.txt"
+    target.write_bytes(b"")
+    (case_home / ".tinyeditrc").write_text("mac_command_keys = true\n", encoding="utf-8")
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        output = read_available(master)
+        if b"\x1b[>1u" not in output:
+            raise AssertionError("Kitty keyboard mode was not enabled")
+        os.write(master, b"\x1b[113;9u")  # Cmd-Q: clean buffer exits immediately
+        output += read_available(master)
+        process.wait(timeout=2)
+        output += read_available(master)
+        if b"\x1b[<u" not in output:
+            raise AssertionError("Kitty keyboard mode was not restored on exit")
+    finally:
+        finish(process, master)
 
 
 def test_very_long_wrapped_line(home):
@@ -271,6 +312,54 @@ def test_selection_across_tab(home):
             finish(process, master)
 
 
+def test_selection_marks_blank_rows(home):
+    """A selected logical newline must remain visible on an empty row."""
+    case_home = pathlib.Path(home) / "selection-blank-rows"
+    case_home.mkdir()
+    target = case_home / "selection.txt"
+    target.write_bytes(b"\n\nVISTA\n")
+    (case_home / ".tinyeditrc").write_text(
+        "show_line_numbers = 0\nshow_top_bar = 0\nshow_invisibles = 0\n"
+        "syntax_highlight = 0\ncolor_selection = yellow-light\n",
+        encoding="utf-8",
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x01")  # Ctrl-A
+        output = read_available(master)
+        selected_cell = b"\x1b[93m\x1b[7m \x1b[m"
+        if output.count(selected_cell) < 2:
+            raise AssertionError("selected blank rows have no visible terminator cell")
+    finally:
+        finish(process, master)
+
+
+def test_regex_finds_logical_newline(home):
+    """Regex \\n and \\r both address the normalized row boundary."""
+    case_home = pathlib.Path(home) / "regex-newline"
+    case_home.mkdir()
+    target = case_home / "search.txt"
+    target.write_bytes(b"first\r\nsecond\r\n")
+    (case_home / ".tinyeditrc").write_text(
+        "show_line_numbers = 0\nshow_top_bar = 0\nshow_invisibles = 1\n"
+        "syntax_highlight = 0\ncolor_selection = yellow-light\n",
+        encoding="utf-8",
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        for query in (b"\\n", b"\\r"):
+            os.write(master, b"\x06\x07" + query)  # Ctrl-F, Ctrl-G, regex
+            output = read_available(master)
+            if b"\x1b[93m\x1b[7m$\x1b[m" not in output:
+                raise AssertionError(f"regex {query!r} did not highlight a row boundary")
+            os.write(master, b"\x1b")
+            read_available(master)
+    finally:
+        finish(process, master)
+
+
 def test_bracketed_paste_replaces_selection_atomically(home):
     """Terminal-native paste replaces a selection and is one undo step."""
     case_home = pathlib.Path(home) / "paste-selection"
@@ -294,6 +383,36 @@ def test_bracketed_paste_replaces_selection_atomically(home):
         os.write(master, b"\x1a\x13")
         read_until(master, b"bytes written to disk")
         assert target.read_text(encoding="utf-8") == "hello world\nsecond line\n"
+    finally:
+        finish(process, master)
+
+
+def test_copy_preserves_selection(home):
+    """Copy is non-destructive and leaves the copied range selected."""
+    case_home = pathlib.Path(home) / "copy-selection"
+    case_home.mkdir()
+    target = case_home / "copy.txt"
+    empty_path = case_home / "empty-path"
+    empty_path.mkdir()
+    target.write_text("hello world\n", encoding="utf-8")
+    (case_home / ".tinyeditrc").write_text(
+        "show_line_numbers = 0\nshow_top_bar = 0\n"
+        "syntax_highlight = 0\ncolor_selection = yellow-light\n",
+        encoding="utf-8",
+    )
+    # An empty PATH forces TinyEdit's process-local clipboard backend, so the
+    # test never reads or overwrites the user's desktop clipboard.
+    process, master = spawn_editor(
+        [str(target)], case_home, {"PATH": str(empty_path)}
+    )
+    try:
+        read_available(master)
+        os.write(master, b"\x14" + b"\x1b[C" * 5)  # select "hello"
+        read_available(master, 0.2)
+        os.write(master, b"\x03")  # Ctrl-C
+        output = read_until(master, b"5 bytes copied")
+        selected = b"\x1b[93m\x1b[7mhello\x1b[m world"
+        assert selected in output, "Ctrl-C cleared the copied selection"
     finally:
         finish(process, master)
 
@@ -434,6 +553,52 @@ def test_settings_refresh_rows(home, save, initially_visible):
         finish(process, master)
 
 
+def test_settings_syntax_color_preview(home):
+    """Syntax color rows preview representative text on the chosen background."""
+    case_home = pathlib.Path(home) / "settings-syntax-preview"
+    case_home.mkdir()
+    target = case_home / "preview.c"
+    target.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+    (case_home / ".tinyeditrc").write_text(
+        "color_background = blue-dark\ncolor_syntax_keyword = cyan-light\n",
+        encoding="utf-8",
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1bOQ" + b"\x1b[B" * setting_index("color_syntax_keyword"))
+        output = read_available(master)
+        assert b"\x1b[44m\x1b[96mprintf\x1b[m" in output, (
+            "keyword preview does not use its foreground and editor background"
+        )
+        os.write(master, b"\x1b")
+    finally:
+        finish(process, master)
+
+
+def test_settings_status_bar_preview(home):
+    """Status-bar previews use their separately configured text color."""
+    case_home = pathlib.Path(home) / "settings-status-preview"
+    case_home.mkdir()
+    target = case_home / "preview.c"
+    target.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+    (case_home / ".tinyeditrc").write_text(
+        "color_statusbar = blue-dark\ncolor_statusbar_text = white-light\n",
+        encoding="utf-8",
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1bOQ" + b"\x1b[B" * setting_index("color_statusbar"))
+        output = read_available(master)
+        assert b"\x1b[44m\x1b[97m status \x1b[m" in output, (
+            "status preview does not use the separate text color"
+        )
+        os.write(master, b"\x1b")
+    finally:
+        finish(process, master)
+
+
 def test_block_indent(home):
     """Tab/Shift+Tab shift the selected lines and keep the selection."""
     case_home = pathlib.Path(home) / "block-indent"
@@ -470,6 +635,16 @@ def test_block_indent(home):
     # ...including across a save, which used to clear the selection.
     got = run("aaa\nbbb\nccc\n", select_two + [b"\t", b"\x13", b"\x1b[Z"])
     assert got == "aaa\nbbb\nccc\n", f"outdent after save: {got!r}"
+
+    # A redraw (and therefore a SIGWINCH translated to Ctrl-L) is view-only:
+    # it must not clear the selected block before the next edit.
+    got = run("aaa\nbbb\nccc\n", select_two + [b"\x0c", b"\t"])
+    assert got == "    aaa\n    bbb\nccc\n", f"selection lost on redraw: {got!r}"
+
+    # Ctrl-T initially arms a zero-width anchor. It is selection state for
+    # future motion, but not selected text for an editing command.
+    got = run("aaa\n", [b"\x14", b"\t"])
+    assert got == "    aaa\n", f"collapsed selection treated as a block: {got!r}"
 
     # Outdent stops at column 0 instead of eating the text.
     got = run("  aaa\n  bbb\n", select_two + [b"\x1b[Z", b"\x1b[Z"])
@@ -522,17 +697,24 @@ def main():
         home = pathlib.Path(tmp)
         test_f3(b"\x1bOR", "SS3", home)
         test_f3(b"\x1b[13~", "CSI", home)
+        test_kitty_f1_f2(home)
         test_ghostty_ctrl_i_is_drained(home)
+        test_kitty_keyboard_mode_is_restored(home)
         test_very_long_wrapped_line(home)
         test_regex_replace_all_newline_finishes(home)
         test_ctrl_w_saves_and_closes_only_file(home)
         test_ctrl_o_discards_then_creates_named_file(home)
         test_invisible_colors(home)
         test_selection_across_tab(home)
+        test_selection_marks_blank_rows(home)
+        test_regex_finds_logical_newline(home)
+        test_copy_preserves_selection(home)
         test_bracketed_paste_replaces_selection_atomically(home)
         test_eol_after_trailing_tab(home)
         test_block_indent(home)
         test_no_save_prompt_when_undone(home)
+        test_settings_syntax_color_preview(home)
+        test_settings_status_bar_preview(home)
         for save in ("ctrl-s", "f2", "esc-y"):
             for initially_visible in (0, 1):
                 test_settings_refresh_rows(home, save, initially_visible)

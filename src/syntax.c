@@ -1,6 +1,7 @@
 /* syntax.c -- see syntax.h */
 
 #include "syntax.h"
+#include "alloc.h"
 #include "utf8.h"
 
 #include <dirent.h>
@@ -248,7 +249,7 @@ static char *syntaxDupTrimmed(const char *s) {
     while (isspace((unsigned char)*s)) s++;
     size_t len = strlen(s);
     while (len > 0 && isspace((unsigned char)s[len - 1])) len--;
-    char *out = malloc(len + 1);
+    char *out = teMalloc(len + 1);
     memcpy(out, s, len);
     out[len] = '\0';
     return out;
@@ -263,13 +264,13 @@ static char **syntaxSplitList(const char *value, int32_t *out_count) {
     int32_t count = 1;
     for (const char *p = value; *p; p++) if (*p == ',') count++;
 
-    char **items = malloc(sizeof(char *) * (size_t)(count + 1));
+    char **items = teMalloc(sizeof(char *) * (size_t)(count + 1));
     int32_t n = 0;
     const char *start = value;
     for (;;) {
         const char *comma = strchr(start, ',');
         size_t seglen = comma ? (size_t)(comma - start) : strlen(start);
-        char *seg = malloc(seglen + 1);
+        char *seg = teMalloc(seglen + 1);
         memcpy(seg, start, seglen);
         seg[seglen] = '\0';
         char *trimmed = syntaxDupTrimmed(seg);
@@ -387,7 +388,7 @@ static const struct syntaxLang *syntaxParseLangFile(const char *path) {
         filetype = NULL;
     }
 
-    struct syntaxLang *lang = malloc(sizeof(struct syntaxLang));
+    struct syntaxLang *lang = teMalloc(sizeof(struct syntaxLang));
     lang->extensions = (const char *const *)extensions;
     lang->keywords = (const char *const *)keywords;
     lang->quote_chars = quote_chars;
@@ -446,7 +447,7 @@ static void syntaxLoadUserLangs(void) {
         const struct syntaxLang *lang = syntaxParseLangFile(filepath);
         if (!lang) continue;
 
-        userLangTable = realloc(userLangTable,
+        userLangTable = teRealloc(userLangTable,
             sizeof(struct syntaxLang *) * (size_t)(userLangTableCount + 1));
         userLangTable[userLangTableCount++] = lang;
     }
@@ -514,7 +515,7 @@ static int32_t matchKeyword(const char *const *list, const char *s, int32_t avai
 
 static void syntaxHighlightRowGeneric(erow *row, const struct syntaxLang *lang,
     uint8_t prev_open_comment, uint8_t prev_open_math) {
-    row->hl = realloc(row->hl, (size_t)row->rsize);
+    row->hl = teRealloc(row->hl, (size_t)row->rsize);
     memset(row->hl, HL_NORMAL, (size_t)row->rsize);
 
     const char *s = row->render;
@@ -599,7 +600,20 @@ static void syntaxHighlightRowGeneric(erow *row, const struct syntaxLang *lang,
         }
 
         if (lang->hash_line_is_preprocessor && i == first_token && s[i] == '#') {
-            for (; i < len; i++) row->hl[i] = HL_PREPROCESSOR;
+            /* A directive owns ordinary text to its right, but not a
+             * trailing comment: leave its opener for the comment branch
+             * above, which also preserves multi-line comment state. */
+            for (; i < len; i++) {
+                uint8_t starts_line_comment = line_comment_len &&
+                    i + line_comment_len <= len &&
+                    memcmp(&s[i], lang->line_comment, (size_t)line_comment_len) == 0;
+                uint8_t starts_block_comment = block_start_len &&
+                    i + block_start_len <= len &&
+                    memcmp(&s[i], lang->block_comment_start, (size_t)block_start_len) == 0;
+                if (starts_line_comment || starts_block_comment) break;
+                row->hl[i] = HL_PREPROCESSOR;
+            }
+            if (i < len) continue;
             break;
         }
 
@@ -929,11 +943,13 @@ static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t 
 
 static void syntaxHighlightRowMarkdown(erow *row, uint8_t prev_in_fence, uint8_t prev_in_math,
     uint8_t prev_in_frontmatter, int32_t row_index, uint8_t prev_in_emphasis) {
-    row->hl = realloc(row->hl, (size_t)row->rsize);
+    row->hl = teRealloc(row->hl, (size_t)row->rsize);
     memset(row->hl, HL_NORMAL, (size_t)row->rsize);
 
     const char *s = row->render;
     int32_t len = row->rsize;
+    const char *source = row->chars ? row->chars : s;
+    int32_t source_len = row->chars ? row->size : len;
 
     /* YAML front matter, before every other rule: while inside it the
      * document isn't Markdown at all. Recognized only when the opening
@@ -1052,10 +1068,10 @@ static void syntaxHighlightRowMarkdown(erow *row, uint8_t prev_in_fence, uint8_t
         return;
     }
 
-    if (len > 0 && s[0] == '#') {
+    if (source_len > 0 && source[0] == '#') {
         int32_t k = 0;
-        while (k < len && s[k] == '#') k++;
-        if (k < len && s[k] == ' ') {
+        while (k < source_len && source[k] == '#') k++;
+        if (k < source_len && source[k] == ' ') {
             for (int32_t i = 0; i < len; i++) row->hl[i] = HL_PREPROCESSOR;
             row->hl_open_comment = 0;
             row->hl_open_math = 0;
@@ -1236,7 +1252,7 @@ static int32_t syntaxTryHighlightTemplateBlock(erow *row, const char *s, int32_t
 
 static uint8_t syntaxHighlightRowXml(erow *row, uint8_t prev_open_comment,
     const char *const *template_delimiters) {
-    row->hl = realloc(row->hl, (size_t)row->rsize);
+    row->hl = teRealloc(row->hl, (size_t)row->rsize);
     memset(row->hl, HL_NORMAL, (size_t)row->rsize);
 
     const char *s = row->render;
@@ -1348,7 +1364,7 @@ static uint8_t isCssExtension(const char *ext) {
 }
 
 static uint8_t syntaxHighlightRowCss(erow *row, uint8_t prev_open_comment) {
-    row->hl = realloc(row->hl, (size_t)row->rsize);
+    row->hl = teRealloc(row->hl, (size_t)row->rsize);
     memset(row->hl, HL_NORMAL, (size_t)row->rsize);
 
     const char *s = row->render;

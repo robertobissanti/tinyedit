@@ -5,11 +5,12 @@ Ambito: codice C compilato, test, documentazione tecnica e ultimi 10 commit.
 
 ## Esito sintetico
 
-Il progetto è funzionalmente solido e la suite esistente copre bene le
-regressioni terminali più delicate. Il rischio principale non è una singola
-funzione, ma la concentrazione di troppe responsabilità in `tinyedit.c` e il
-dispatch dei tasti basato su effetti collaterali globali e whitelist. Il bug
-del paste è un esempio diretto di questa fragilità.
+Il primo ciclo di refactoring approvato è completato sul branch
+`codex/refactor-editor-architecture`. Il terminale è ora un modulo autonomo,
+le allocazioni applicative sono controllate uniformemente, il dispatch non usa
+più una whitelist globale per invalidare la selezione e `E` è composto da
+stati più fini. La prima logica estratta in `editor_state.c` è verificata da
+test C diretti, senza PTY. `S` resta intenzionalmente globale in questa fase.
 
 Il refactoring consigliato va eseguito per passi piccoli, mantenendo C99,
 POSIX, zero dipendenze esterne, tipi espliciti e funzioni UTF-8 di `utf8.c`,
@@ -19,12 +20,16 @@ come richiesto da `CLAUDE.md`.
 
 - Build completa con i warning rigorosi già usati dai test.
 - Suite `make test`: test syntax, settings/backup e PTY superati.
-- `tinyedit.c`: circa 5.000 righe e circa 170 funzioni; gestisce terminale,
-  input, buffer, undo, file I/O, rendering, ricerca, overlay e impostazioni.
+- `terminal.c/.h`: raw mode, resize, input, mouse e bracketed paste estratti
+  da `tinyedit.c`.
+- `editor_state.c/.h`: normalizzazione della selezione pura e testabile senza
+  terminale.
+- `tinyedit.c` resta ancora ampio e continua a contenere buffer, history, file
+  I/O, rendering, ricerca, overlay e orchestrazione.
 - `syntax.c`: circa 1.500 righe; è già un modulo separato ma combina loading
   delle configurazioni, lookup dei linguaggi e più tokenizer.
-- 51 allocazioni dinamiche nel codice applicativo esaminato; varie chiamate
-  in percorsi centrali non controllano il fallimento.
+- Le allocazioni applicative passano da `teMalloc`, `teRealloc` e `teStrdup`;
+  il fallimento è sempre fatale e il cleanup registrato ripristina il terminale.
 - La build rigorosa segnala cinque `-Wformat-nonliteral`; quattro sono wrapper
   variadici intenzionali, uno è il prompt dinamico. Non sono errori osservati,
   ma impediscono una policy realmente warning-clean.
@@ -38,25 +43,14 @@ come richiesto da `CLAUDE.md`.
 Il bug segnalato è stato corretto e coperto da test. Non sono emerse altre
 regressioni che richiedano una correzione immediata prima dell'uso normale.
 
-### P1 — Dispatch dei tasti e ciclo di vita della selezione troppo accoppiati
+### Risolto — Dispatch e ciclo di vita della selezione
 
-`editorProcessKeypress()` cattura la selezione, applica una whitelist che può
-cancellarla e solo dopo esegue lo switch. Ogni nuovo tasto deve quindi essere
-classificato correttamente in due luoghi. `PASTE_START_KEY` era stato aggiunto
-allo switch ma non alla whitelist, causando la regressione.
+La whitelist precedente allo switch è stata eliminata. Ogni handler ora
+preserva, estende, consuma o cancella esplicitamente la selezione. Sono coperti
+paste, redraw/Ctrl-L, Tab, Shift-Tab e selezione pinned a larghezza zero.
 
-Refactoring proposto: introdurre una classificazione esplicita dell'azione
-(`MOVE`, `EXTEND_SELECTION`, `PRESERVE_SELECTION`, `CONSUME_SELECTION`,
-`CLEAR_SELECTION`) o piccoli handler che ricevono uno snapshot immutabile
-della selezione. La cancellazione dello stato va effettuata dall'azione che la
-richiede, non da un filtro globale precedente allo switch.
-
-Prima di farlo vanno fissate con test le semantiche oggi intenzionali:
-Tab/Shift-Tab mantengono il blocco, apertura coppia avvolge, Backspace/Delete
-cancellano, paste sostituisce, Save conserva. Resta da decidere esplicitamente
-se un carattere normale o Invio debbano sostituire la selezione come negli
-editor comuni: oggi la selezione viene solo cancellata e il carattere/Invio è
-inserito alla posizione del cursore.
+La semantica residua da decidere come scelta di prodotto è se caratteri normali
+e Invio debbano sostituire una selezione come negli editor comuni.
 
 ### P1 — Undo basato su snapshot completi
 
@@ -84,29 +78,21 @@ solo `realloc` per riga, più un solo `editorUpdateRow()` per riga modificata.
 Il livello pubblico continua a creare un unico step di undo; le primitive
 `Raw` introdotte dalla correzione costituiscono già il confine giusto.
 
-### P1 — Gestione uniforme degli errori di allocazione
+### Risolto — Gestione uniforme degli errori di allocazione
 
-Diversi `malloc`/`realloc` sono dereferenziati senza verifica. Il pattern
-`ptr = realloc(ptr, size)` perde inoltre il vecchio puntatore se l'allocazione
-fallisce. Per un editor, un OOM non dovrebbe trasformarsi in corruzione o
-perdita non diagnosticata del documento.
+`alloc.c/.h` centralizza la policy fail-fast. `CLAUDE.md` rende obbligatorio
+usare gli helper controllati e vieta le allocazioni applicative dirette.
 
-Refactoring proposto: helper locali `xmalloc`/`xrealloc` con uscita controllata
-che ripristini lo stato terminale, oppure API fallibili propagate fino al loop
-principale. Per la filosofia semplice di TinyEdit, gli helper fail-fast sono
-la scelta meno invasiva; prima dell'uscita va tentato un backup se il buffer è
-dirty e ha un nome.
-
-### P2 — Separare `tinyedit.c` per responsabilità
+### Parzialmente risolto — Separare `tinyedit.c` per responsabilità
 
 La convenzione “un modulo per responsabilità” è rispettata per clipboard,
 UTF-8, settings, backup e syntax, ma non più per il core cresciuto. Una
 separazione incrementale consigliata è:
 
-1. `terminal.c/.h`: raw mode, resize, lettura/decodifica tasti, bracketed paste,
-   mouse reporting e dimensioni terminale.
-2. `buffer.c/.h`: righe, range, selezione, serializzazione e primitive raw.
-3. `history.c/.h`: undo/redo e transazioni di modifica.
+1. `terminal.c/.h`: completato.
+2. `editor_state.c/.h`: avviato con la logica pura della selezione.
+3. `buffer.c/.h`: residuo.
+4. `history.c/.h`: residuo.
 4. `render.c/.h`: wrap, mapping coordinate, barre e frame principale.
 5. `tinyedit.c`: orchestrazione, file lifecycle e dispatch ad alto livello.
 
@@ -114,12 +100,14 @@ Non conviene estrarre subito gli overlay F1/F2/F3: dipendono ancora molto da
 rendering e settings e produrrebbero API larghe. Vanno spostati solo dopo aver
 stabilizzato `render.c`.
 
-### P2 — Stato globale e dipendenze implicite
+### Parzialmente risolto — Stato globale e dipendenze implicite
 
-`E`, `S` e vari globali di ricerca/mouse rendono molte funzioni difficili da
-testare senza PTY. Non serve introdurre dependency injection complessa:
-passare `editorConfig *` alle primitive di buffer/history e lasciare globale
-solo l'orchestrazione consentirebbe test C diretti e più rapidi.
+`E` contiene ora `document`, `view`, `ui` e `search`; le vecchie globali di
+ricerca sono state assorbite in `E.search`. Le primitive migrate ricevono
+`editorSelection` + `editorCursor`, `editorHistory` o `editorDocument` secondo
+il loro uso effettivo. `S` resta globale per decisione esplicita. Il lavoro
+residuo è estendere questo schema alle primitive buffer/history ancora interne
+a `tinyedit.c`.
 
 ### P2 — Warning rigorosi non completamente puliti
 

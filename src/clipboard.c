@@ -3,6 +3,7 @@
 #define _DEFAULT_SOURCE
 
 #include "clipboard.h"
+#include "alloc.h"
 
 #include <errno.h>
 #include <signal.h>
@@ -20,14 +21,14 @@ static size_t internal_len = 0;
 
 static void internalCopy(const char *data, size_t len) {
     free(internal_buf);
-    internal_buf = malloc(len);
+    internal_buf = teMalloc(len);
     if (internal_buf) memcpy(internal_buf, data, len);
     internal_len = internal_buf ? len : 0;
 }
 
 static char *internalPaste(size_t *outlen) {
     if (!internal_buf || internal_len == 0) return NULL;
-    char *copy = malloc(internal_len + 1);
+    char *copy = teMalloc(internal_len + 1);
     if (!copy) return NULL;
     memcpy(copy, internal_buf, internal_len);
     copy[internal_len] = '\0';
@@ -53,7 +54,7 @@ static uint8_t commandExists(const char *cmd) {
         const char *dir = dirlen ? segment : ".";
         size_t actual_dirlen = dirlen ? dirlen : 1;
         size_t needed = actual_dirlen + 1 + strlen(cmd) + 1;
-        char *candidate = malloc(needed);
+        char *candidate = teMalloc(needed);
         if (!candidate) return 0;
         snprintf(candidate, needed, "%.*s/%s", (int)actual_dirlen, dir, cmd);
         uint8_t found = access(candidate, X_OK) == 0;
@@ -205,7 +206,7 @@ static char *runPasteCommand(ClipboardBackend b, size_t *outlen) {
     close(fds[1]);
 
     size_t cap = 4096, len = 0;
-    char *buf = malloc(cap);
+    char *buf = teMalloc(cap);
     if (!buf) { close(fds[0]); waitForChild(pid); return NULL; }
 
     ssize_t n;
@@ -213,7 +214,7 @@ static char *runPasteCommand(ClipboardBackend b, size_t *outlen) {
         len += (size_t)n;
         if (len == cap) {
             cap *= 2;
-            char *grown = realloc(buf, cap);
+            char *grown = teRealloc(buf, cap);
             if (!grown) { free(buf); close(fds[0]); waitForChild(pid); return NULL; }
             buf = grown;
         }
