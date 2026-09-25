@@ -234,7 +234,7 @@ tinyedit would produce: a leading tab counts as one full level,
 otherwise up to `tab_stop` spaces are removed, stopping at the first
 non-space so a partially indented line only loses what it has.
 
-### Automatic pair closing
+### Automatic pair and tag closing
 
 With `auto_close_pairs` on (default), typing `(`, `{`, `[`, `"`,
 `` ` ``, or `$` inserts the matching closing character automatically
@@ -259,6 +259,16 @@ its own (inline code) typed several times in a row on the same line,
 not only as this pair's closer. The triple-backtick Markdown code
 fence (`` ``` ``) is intentionally not auto-closed, as auto-closing
 multi-line fences often interferes with regular editing.
+
+In `.xml`, `.html`, and `.htm` files, typing `>` immediately after an
+opening tag also inserts its matching end tag and leaves the cursor between
+the two: `<section>` becomes `<section>|</section>`. This uses the same
+`auto_close_pairs` setting. XML self-closing tags such as `<item/>` are left
+alone. For HTML, tinyedit also recognizes the standard void elements —
+`area`, `base`, `br`, `col`, `embed`, `hr`, `img`, `input`, `link`, `meta`,
+`param`, `source`, `track`, and `wbr` — and does not add an invalid closing
+tag for them. XML has no such void-element rule, so `<br>` in an XML document
+correctly becomes `<br>|</br>`.
 
 ### Invisible characters and colors
 
