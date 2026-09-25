@@ -727,6 +727,11 @@ def test_block_indent(home):
     got = run("\taaa\n\tbbb\n", select_two + [b"\x1b[Z"])
     assert got == "aaa\nbbb\n", f"outdent of a literal tab: {got!r}"
 
+    # Ghostty changes Shift+Tab to Kitty CSI-u form when macOS shortcuts
+    # are enabled; it must outdent the selected block just like CSI Z.
+    got = run("    aaa\n    bbb\n", select_two + [b"\x1b[9;2u"])
+    assert got == "aaa\nbbb\n", f"Ghostty Kitty Shift+Tab: {got!r}"
+
     # With no selection Shift+Tab outdents just the cursor's line.
     got = run("    aaa\n    bbb\n", [b"\x1b[B", b"\x1b[Z"])
     assert got == "    aaa\nbbb\n", f"outdent without selection: {got!r}"

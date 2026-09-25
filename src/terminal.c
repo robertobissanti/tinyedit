@@ -487,6 +487,17 @@ int32_t terminalReadKey(
                     }
                     return '\x1b';
                 } else if (seq[2] == ';') {
+                    /* With Kitty keyboard protocol enabled, Ghostty sends
+                     * Shift+Tab as CSI 9;2u instead of the legacy CSI Z. */
+                    if (seq[1] == '9') {
+                        uint8_t mod, term;
+                        if (read(STDIN_FILENO, &mod, 1) != 1) return '\x1b';
+                        if (read(STDIN_FILENO, &term, 1) != 1) return '\x1b';
+                        if (mod == '2' && term == 'u') return SHIFT_TAB;
+                        if (term < 0x40 || term > 0x7e)
+                            editorDrainUnknownCsiSequence(16);
+                        return '\x1b';
+                    }
                     /* Modified nav key. Two layouts share this prefix:
                      *   ESC [ 1 ; <mod> <letter>   e.g. Alt+Up = ESC[1;3A
                      *   ESC [ 5 ; <mod> ~          Shift+PageUp = ESC[5;2~
