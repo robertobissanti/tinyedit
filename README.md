@@ -50,7 +50,7 @@ for real editing rather than just demonstrating how a terminal works.
 
 | Area | What you get |
 |---|---|
-| Editing | Familiar cursor movement, word jumps, selection, cut/copy/paste, automatic indentation, block indent/outdent with Tab, configurable pair closing, and an undo history of up to 2,000 steps (200 by default). |
+| Editing | Familiar cursor movement, word jumps, selection, cut/copy/paste, automatic indentation, block indent/outdent with Tab, configurable pair and XML/HTML tag closing, and an undo history of up to 2,000 steps (200 by default). |
 | Files | Open or switch files without restarting tinyedit, start a named file before it exists, save atomically, and recover unsaved work from automatic backups after a crash. |
 | Search | Incremental literal or POSIX regular-expression search, match navigation, and interactive search and replace. |
 | Syntax highlighting | Built-in support for C/C++, Python, Shell, JavaScript/TypeScript, Markdown, HTML/XML, and CSS, including function names. Simple C-like languages and HTML-based templates (Nunjucks, Jinja, Liquid, Twig) can be added with a user configuration file; ready-made ones ship in `syntax-configs/`. |
@@ -123,6 +123,7 @@ make install PREFIX=/usr/local
 | `Shift+Tab` | Outdent the selected lines, or the current one when there's no selection |
 | `(` `{` `[` `"` `` ` `` `$` | Auto-close the pair / skip over an existing closer / wrap the selection (if `auto_close_pairs` is on) |
 | `'` | Same, but only when `auto_close_single_quote` is on (off by default, since apostrophes in prose are more common than pairs) |
+| `>` in `.xml`, `.html`, or `.htm` | Auto-insert the matching closing tag (with `auto_close_pairs` on); HTML void elements such as `img` and `br` are left unclosed |
 | Backspace / Delete | Delete a character (UTF-8 aware) |
 | `Ctrl-A` | Select all |
 | `Ctrl-C` / `Ctrl-X` / `Ctrl-V` | Copy / cut / paste (system clipboard; C/X need an active selection) |

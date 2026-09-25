@@ -3037,6 +3037,7 @@ static const struct helpEntry helpEntries[] = {
     { "Shift-Tab", "Outdent selected lines, or the current one" },
     { "( { [ \" ` $", "Auto-close pair / skip over / wrap selection" },
     { "'", "Same, only if auto-close single quote is on (F2, off by default)" },
+    { "> in XML/HTML", "Insert matching end tag (except HTML void elements)" },
     { "Backspace / Delete", "Delete character (UTF-8 aware)" },
     { "Ctrl-Z / Ctrl-Y", "Undo / redo" },
 #ifdef __APPLE__
@@ -3564,6 +3565,111 @@ static const struct autoClosePair *editorAutoCloseFor(int32_t c) {
     return NULL;
 }
 
+static uint8_t editorFilenameHasExtension(const char *extension) {
+    if (!E.document.file.filename) return 0;
+    const char *dot = strrchr(E.document.file.filename, '.');
+    if (!dot || dot[1] == '\0') return 0;
+
+    const char *actual = dot + 1;
+    while (*actual && *extension) {
+        if (tolower((unsigned char)*actual) != tolower((unsigned char)*extension)) return 0;
+        actual++;
+        extension++;
+    }
+    return *actual == '\0' && *extension == '\0';
+}
+
+static uint8_t editorIsXmlTagFile(void) {
+    return editorFilenameHasExtension("xml") || editorFilenameHasExtension("html") ||
+        editorFilenameHasExtension("htm");
+}
+
+static uint8_t editorIsHtmlFile(void) {
+    return editorFilenameHasExtension("html") || editorFilenameHasExtension("htm");
+}
+
+static uint8_t editorIsXmlNameStart(uint8_t byte) {
+    return isalpha(byte) || byte == '_' || byte == ':';
+}
+
+static uint8_t editorIsXmlNameByte(uint8_t byte) {
+    return editorIsXmlNameStart(byte) || isdigit(byte) || byte == '-' || byte == '.';
+}
+
+/* HTML void elements have no end tag. XML uses the same names freely, so
+ * this check deliberately applies only to HTML files. */
+static uint8_t editorIsHtmlVoidTag(const char *name, int32_t len) {
+    static const char *const void_tags[] = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+        "meta", "param", "source", "track", "wbr"
+    };
+    const int32_t void_tag_count = (int32_t)(sizeof(void_tags) / sizeof(void_tags[0]));
+
+    for (int32_t i = 0; i < void_tag_count; i++) {
+        size_t tag_len = strlen(void_tags[i]);
+        if ((size_t)len != tag_len) continue;
+        int32_t j;
+        for (j = 0; j < len; j++)
+            if (tolower((unsigned char)name[j]) != void_tags[i][j]) break;
+        if (j == len) return 1;
+    }
+    return 0;
+}
+
+/* Called immediately after inserting '>'. Recognizes an opening XML tag on
+ * the current row and places its closing tag after the cursor. */
+static void editorTryAutoCloseXmlTag(void) {
+    if (!editorIsXmlTagFile() || E.document.cursor.cy >= E.document.buffer.row_count) return;
+
+    erow *row = &E.document.buffer.rows[E.document.cursor.cy];
+    int32_t close = E.document.cursor.cx - 1;
+    if (close <= 0 || close >= row->size || row->chars[close] != '>') return;
+
+    int32_t before_close = close;
+    while (before_close > 0) {
+        size_t clen = utf8PrevCharLen(row->chars, (size_t)before_close);
+        if (clen == 0) return;
+        int32_t prev = before_close - (int32_t)clen;
+        if (!isspace((unsigned char)row->chars[prev])) break;
+        before_close = prev;
+    }
+    if (before_close > 0 && row->chars[before_close - 1] == '/') return;
+
+    int32_t open = -1;
+    int32_t scan = close;
+    while (scan > 0) {
+        size_t clen = utf8PrevCharLen(row->chars, (size_t)scan);
+        if (clen == 0) return;
+        int32_t prev = scan - (int32_t)clen;
+        if (row->chars[prev] == '<') {
+            open = prev;
+            break;
+        }
+        scan = prev;
+    }
+    if (open < 0) return;
+
+    int32_t name_start = open + 1;
+    if (name_start >= close || !editorIsXmlNameStart((uint8_t)row->chars[name_start])) return;
+    int32_t name_end = name_start;
+    while (name_end < close && editorIsXmlNameByte((uint8_t)row->chars[name_end])) {
+        size_t clen = utf8NextCharLen(row->chars, (size_t)name_end, (size_t)row->size);
+        if (clen == 0) return;
+        name_end += (int32_t)clen;
+    }
+    if (editorIsHtmlFile() && editorIsHtmlVoidTag(row->chars + name_start, name_end - name_start)) return;
+
+    int32_t name_len = name_end - name_start;
+    int32_t closing_len = name_len + 3;
+    char *closing = teMalloc((size_t)closing_len);
+    closing[0] = '<';
+    closing[1] = '/';
+    memcpy(closing + 2, row->chars + name_start, (size_t)name_len);
+    closing[closing_len - 1] = '>';
+    editorRowInsertString(row, E.document.cursor.cx, closing, (size_t)closing_len);
+    free(closing);
+}
+
 /* Curly-quote pairs: full auto-close (open inserts its match, wraps
  * the selection) same as the ASCII pairs, PLUS skip-over on the close
  * character -- even though none of these can be typed from a
@@ -3666,6 +3772,12 @@ static void editorInsertCharAutoClose(int32_t c, uint8_t had_sel,
     int32_t sel_y0, int32_t sel_x0, int32_t sel_y1, int32_t sel_x1) {
     if (!S.auto_close_pairs) {
         editorInsertChar(c);
+        return;
+    }
+
+    if (c == '>' && !had_sel) {
+        editorInsertChar(c);
+        editorTryAutoCloseXmlTag();
         return;
     }
 

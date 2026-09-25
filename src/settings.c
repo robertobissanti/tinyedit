@@ -125,7 +125,7 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, backup_interval), 0, 3600, NULL, 0 },
     { "auto_indent", "Auto-indent new lines", SETTING_BOOL,
       offsetof(struct editorSettings, auto_indent), 0, 0, NULL, 0 },
-    { "auto_close_pairs", "Auto-close brackets/quotes", SETTING_BOOL,
+    { "auto_close_pairs", "Auto-close brackets/quotes/tags", SETTING_BOOL,
       offsetof(struct editorSettings, auto_close_pairs), 0, 0, NULL, 0 },
     { "auto_close_single_quote", "Auto-close single quote '", SETTING_BOOL,
       offsetof(struct editorSettings, auto_close_single_quote), 0, 0, NULL, 0 },

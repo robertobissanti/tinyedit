@@ -16,6 +16,16 @@ partenza da cui il log sarà accurato in avanti.
 
 ## Fatto
 
+- [x] **Auto-chiusura dei tag XML/HTML**
+  - _Inserito: 2026-09-25 · Completato: 2026-09-25_
+  - Digitando `>` dopo un tag di apertura in un file `.xml`, `.html` o
+    `.htm`, tinyedit inserisce il relativo end tag e lascia il cursore
+    al suo interno. Il comportamento usa l'opzione esistente
+    `auto_close_pairs`; i tag self-closing XML (`/>`) non vengono
+    duplicati. In HTML gli elementi void standard (`img`, `br`, `meta`,
+    ecc.) non ricevono un end tag; in XML gli stessi nomi restano tag
+    normali e vengono chiusi.
+
 - [x] **Slogan casuale nello splash e nella schermata Info**
   - _Inserito: 2026-09-08 · Completato: 2026-09-08_
   - Selezione di 14 slogan ripuliti: rimossi riferimenti storici dubbi,

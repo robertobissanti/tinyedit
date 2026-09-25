@@ -765,6 +765,40 @@ def test_no_save_prompt_when_undone(home):
     assert not quits_without_prompt([b"x", b"\x1a", b"\x19"]), "redo did not ask to save"
 
 
+def test_xml_tag_autoclose(home):
+    """Opening XML/HTML tags close, while HTML void tags do not."""
+    case_home = pathlib.Path(home) / "xml-tag-autoclose"
+    case_home.mkdir()
+
+    def type_and_save(name, typed):
+        target = case_home / name
+        target.write_bytes(b"")
+        process, master = spawn_editor([str(target)], case_home)
+        try:
+            read_available(master)
+            os.write(master, typed)
+            read_available(master, 0.2)
+            os.write(master, b"\x13")
+            output = read_until(master, b"bytes written to disk")
+            assert b"bytes written to disk" in output, f"{name}: save did not finish: {output!r}"
+        finally:
+            finish(process, master)
+        return target.read_bytes()
+
+    actual = type_and_save("card.xml", b"<card>")
+    assert actual == b"<card></card>\n", actual
+    actual = type_and_save("line.xml", b"<br>")
+    assert actual == b"<br></br>\n", actual
+    actual = type_and_save("page.html", b"<section>")
+    assert actual == b"<section></section>\n", actual
+    actual = type_and_save("image.html", b"<img>")
+    assert actual == b"<img>\n", actual
+    actual = type_and_save("break.htm", b"<br>")
+    assert actual == b"<br>\n", actual
+    actual = type_and_save("self-closing.xml", b"<item/>")
+    assert actual == b"<item/>\n", actual
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="tinyedit-tests-") as tmp:
         home = pathlib.Path(tmp)
@@ -789,6 +823,7 @@ def main():
         test_eol_after_trailing_tab(home)
         test_block_indent(home)
         test_no_save_prompt_when_undone(home)
+        test_xml_tag_autoclose(home)
         test_settings_syntax_color_preview(home)
         test_settings_status_bar_preview(home)
         for save in ("ctrl-s", "f2", "esc-y"):

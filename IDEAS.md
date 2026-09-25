@@ -37,19 +37,6 @@ momento buono non convincono più.
   multiple del terminale.
 - **Copia/incolla di riga intera con scorciatoia dedicata** (stile
   vim `dd`/`yy`/`p`) come alternativa più rapida alla selezione manuale.
-- **Auto-chiusura tag HTML** (`<div>` → `</div>`) — a differenza
-  dell'auto-chiusura a coppia-singola già in `TODO.md` (che include
-  anche `$$...$$` LaTeX come caso speciale gestito con successo,
-  vedi `TODO.md`), richiede riconoscere un pattern più lungo di un
-  carattere (il nome del tag), guardando indietro nel buffer prima di
-  decidere, e sapere il linguaggio della riga corrente. Il triplo
-  backtick Markdown (`` ``` ``, code fence) è stato deliberatamente
-  escluso da questo tipo di trattamento speciale (vedi `TODO.md`):
-  VS Code l'aveva provato e gli utenti l'hanno trovato più fastidioso
-  che utile, comportamento poi corretto da Microsoft. Stessa famiglia
-  di complessità del syntax highlighting sotto — probabile che
-  convenga farli insieme, condividendo la stessa infrastruttura di
-  "conoscenza del linguaggio".
 - **Rilevamento e preservazione line-ending** (CRLF vs LF) — utile se il
   progetto verrà mai usato per editare file misti Windows/Unix.
 
