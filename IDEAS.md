@@ -37,6 +37,9 @@ momento buono non convincono più.
   multiple del terminale.
 - **Copia/incolla di riga intera con scorciatoia dedicata** (stile
   vim `dd`/`yy`/`p`) come alternativa più rapida alla selezione manuale.
+- **Reindentazione dell'intero file** — comando esplicito che ricostruisce
+  l'indentazione delle righe in base alla struttura del linguaggio, distinto
+  dall'auto-indentazione già applicata quando si crea una nuova riga.
 - **Rilevamento e preservazione line-ending** (CRLF vs LF) — utile se il
   progetto verrà mai usato per editare file misti Windows/Unix.
 
