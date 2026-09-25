@@ -119,6 +119,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, show_top_bar), 0, 0, NULL, 0 },
     { "soft_wrap", "Max wrap width (0=window edge)", SETTING_INT,
       offsetof(struct editorSettings, soft_wrap), 0, 500, NULL, 0 },
+    { "scrolloff", "Cursor margin (rows)", SETTING_INT,
+      offsetof(struct editorSettings, scrolloff), 0, 20, NULL, 0 },
     { "home_end_visual_line", "Home/End use visual line", SETTING_BOOL,
       offsetof(struct editorSettings, home_end_visual_line), 0, 0, NULL, 0 },
     { "backup_interval", "Backup interval s (0=off, min 5)", SETTING_INT,
@@ -182,6 +184,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_statusbar_text = COLOR_WHITE_LIGHT;
     out->show_top_bar = 0;
     out->soft_wrap = 0;
+    out->scrolloff = 0;
     out->home_end_visual_line = 1;
     out->backup_interval = 0;
     out->auto_indent = 1;

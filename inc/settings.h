@@ -113,6 +113,10 @@ struct editorSettings {
      * that; a positive value additionally caps the wrap width when the
      * window is wider than it. See editorSoftWrapCols() in tinyedit.c. */
     int32_t soft_wrap;
+    /* Minimum number of visual rows kept above and below the cursor
+     * while scrolling, when the file is long enough. 0 retains the
+     * edge-following behavior. */
+    int32_t scrolloff;
     /* When true (default), Home/End move to the start/end of the
      * current VISUAL (wrapped) segment, matching Up/Down which also
      * move by video row -- this is the VS Code/Sublime convention.

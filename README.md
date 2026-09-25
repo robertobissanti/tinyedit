@@ -335,6 +335,13 @@ default (`home_end_visual_line = true`, VS Code/Sublime style); set to
 `false` (vim style) they always go to the start/end of the whole
 *logical* line, regardless of how many visual rows it wraps into.
 
+`scrolloff` controls cursor context while navigating long text: it keeps
+that many visual rows above and below the cursor where possible. Its default
+is `0`, which keeps the current edge-following behavior; values from `1` to
+`20` progressively keep the cursor away from the top and bottom of the view.
+Near the start or end of a file the viewport remains clamped to available
+text, so the requested margin may be smaller.
+
 ### Top and status bars
 
 The optional top bar (`show_top_bar`) shows the filename/path and

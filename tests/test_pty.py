@@ -460,6 +460,59 @@ def test_bracketed_paste_replaces_selection_atomically(home):
         finish(process, master)
 
 
+def test_typed_text_replaces_selection(home):
+    """Ordinary typing must consume selected text just like paste does."""
+    case_home = pathlib.Path(home) / "typed-selection"
+    case_home.mkdir()
+    target = case_home / "typed.txt"
+    target.write_text("hello world\n", encoding="utf-8")
+    (case_home / ".tinyeditrc").write_text("backup_interval = 0\n", encoding="utf-8")
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x14" + b"\x1b[C" * 5 + b"X\x13")
+        assert b"bytes written to disk" in read_until(master, b"bytes written to disk")
+    finally:
+        finish(process, master)
+    assert target.read_text(encoding="utf-8") == "X world\n"
+
+
+def test_shift_down_selects_last_wrapped_line(home):
+    """Shift+Down at the final visual row extends selection to line end."""
+    case_home = pathlib.Path(home) / "shift-down-eof"
+    case_home.mkdir()
+    target = case_home / "last-line.txt"
+    target.write_text("abcdef\n", encoding="utf-8")
+    (case_home / ".tinyeditrc").write_text(
+        "soft_wrap = 0\nbackup_interval = 0\n", encoding="utf-8"
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1b[1;2BX\x13")
+        assert b"bytes written to disk" in read_until(master, b"bytes written to disk")
+    finally:
+        finish(process, master)
+    assert target.read_text(encoding="utf-8") == "X\n"
+
+
+def test_ghostty_shift_enter_is_enter(home):
+    """Ghostty Shift+Enter encodings must insert a newline."""
+    case_home = pathlib.Path(home) / "ghostty-shift-enter"
+    case_home.mkdir()
+    target = case_home / "shift-enter.txt"
+    target.write_text("ab\n", encoding="utf-8")
+    (case_home / ".tinyeditrc").write_text("backup_interval = 0\n", encoding="utf-8")
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1b[C\x1b[27;2;13~X\x13")
+        assert b"bytes written to disk" in read_until(master, b"bytes written to disk")
+    finally:
+        finish(process, master)
+    assert target.read_text(encoding="utf-8") == "a\nXb\n"
+
+
 def test_copy_preserves_selection(home):
     """Copy is non-destructive and leaves the copied range selected."""
     case_home = pathlib.Path(home) / "copy-selection"
@@ -825,6 +878,9 @@ def main():
         test_regex_finds_logical_newline(home)
         test_copy_preserves_selection(home)
         test_bracketed_paste_replaces_selection_atomically(home)
+        test_typed_text_replaces_selection(home)
+        test_shift_down_selects_last_wrapped_line(home)
+        test_ghostty_shift_enter_is_enter(home)
         test_eol_after_trailing_tab(home)
         test_block_indent(home)
         test_no_save_prompt_when_undone(home)

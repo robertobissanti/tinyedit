@@ -28,6 +28,7 @@ int main(void) {
     fputs("show_line_numbers = malformed\n", fp);
     fputs("tab_stop = not-a-number\n", fp);
     fputs("backup_interval = -20\n", fp);
+    fputs("scrolloff = 999\n", fp);
     fputs("auto_indent = false\n", fp);
     fputs("color_gutter = cyan-dark\n", fp);
     if (fclose(fp) != 0) fail("close test config");
@@ -37,6 +38,7 @@ int main(void) {
     if (settings.show_line_numbers != 1) fail("malformed bool changed its default");
     if (settings.tab_stop != 4) fail("malformed integer changed its default");
     if (settings.backup_interval != 0) fail("integer range clamp");
+    if (settings.scrolloff != 20) fail("scrolloff range clamp");
     if (settings.auto_indent != 0) fail("valid bool parse");
     if (settings.color_gutter != COLOR_CYAN_DARK) fail("valid enum parse");
     if (!settingsSave(&settings)) fail("settingsSave");

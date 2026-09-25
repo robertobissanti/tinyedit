@@ -1276,6 +1276,12 @@ static void editorScroll(void) {
     }
 
     int32_t wrapcols = editorSoftWrapCols();
+    /* A margin wider than half the viewport has no stable position:
+     * its top and bottom constraints overlap. Cap it locally so a
+     * value such as 20 still behaves sensibly in a short terminal. */
+    int32_t scrolloff = S.scrolloff;
+    int32_t max_scrolloff = (E.view.screenrows - 1) / 2;
+    if (scrolloff > max_scrolloff) scrolloff = max_scrolloff;
 
     if (wrapcols > 0) {
         /* Wrapped mode: vertical scrolling is in video rows, horizontal
@@ -1294,13 +1300,24 @@ static void editorScroll(void) {
             cursor_vy = editorTotalVideoRows(wrapcols);
         }
 
-        if (cursor_vy < E.view.rowoff) E.view.rowoff = cursor_vy;
-        if (cursor_vy >= E.view.rowoff + E.view.screenrows) E.view.rowoff = cursor_vy - E.view.screenrows + 1;
+        if (cursor_vy < E.view.rowoff + scrolloff)
+            E.view.rowoff = cursor_vy - scrolloff;
+        if (cursor_vy >= E.view.rowoff + E.view.screenrows - scrolloff)
+            E.view.rowoff = cursor_vy - E.view.screenrows + scrolloff + 1;
         if (E.view.rowoff < 0) E.view.rowoff = 0;
+        int32_t max_rowoff = editorTotalVideoRows(wrapcols) - E.view.screenrows;
+        if (max_rowoff < 0) max_rowoff = 0;
+        if (E.view.rowoff > max_rowoff) E.view.rowoff = max_rowoff;
         E.view.coloff = 0;
     } else {
-        if (E.document.cursor.cy < E.view.rowoff) E.view.rowoff = E.document.cursor.cy;
-        if (E.document.cursor.cy >= E.view.rowoff + E.view.screenrows) E.view.rowoff = E.document.cursor.cy - E.view.screenrows + 1;
+        if (E.document.cursor.cy < E.view.rowoff + scrolloff)
+            E.view.rowoff = E.document.cursor.cy - scrolloff;
+        if (E.document.cursor.cy >= E.view.rowoff + E.view.screenrows - scrolloff)
+            E.view.rowoff = E.document.cursor.cy - E.view.screenrows + scrolloff + 1;
+        if (E.view.rowoff < 0) E.view.rowoff = 0;
+        int32_t max_rowoff = E.document.buffer.row_count - E.view.screenrows;
+        if (max_rowoff < 0) max_rowoff = 0;
+        if (E.view.rowoff > max_rowoff) E.view.rowoff = max_rowoff;
         if (E.document.cursor.rx < E.view.coloff) E.view.coloff = E.document.cursor.rx;
         int32_t textcols = editorTextCols();
         if (E.document.cursor.rx >= E.view.coloff + textcols) E.view.coloff = E.document.cursor.rx - textcols + 1;
@@ -1949,7 +1966,14 @@ static void editorMoveCursorWrapped(int32_t key, int32_t wrapcols) {
     int32_t target_vy = editorVideoRowOf(E.document.cursor.cy, seg_idx, wrapcols) + (key == ARROW_UP ? -1 : 1);
     if (target_vy < 0) target_vy = 0;
     int32_t total = editorTotalVideoRows(wrapcols);
-    if (target_vy >= total) target_vy = total - 1;
+    if (target_vy >= total) {
+        /* Match unwrapped Down at EOF: there is no following visual row,
+         * so move to the logical line end. This lets Shift+Down select the
+         * remainder of the last line instead of collapsing at its anchor. */
+        E.document.cursor.cy = E.document.buffer.row_count - 1;
+        E.document.cursor.cx = E.document.buffer.rows[E.document.cursor.cy].size;
+        return;
+    }
 
     int32_t target_filerow, target_seg;
     editorFileRowAtVideoRow(target_vy, wrapcols, &target_filerow, &target_seg);
@@ -2087,6 +2111,31 @@ static void editorDeleteRangeRaw(int32_t start_y, int32_t start_x, int32_t end_y
 static void editorDeleteRange(int32_t start_y, int32_t start_x, int32_t end_y, int32_t end_x) {
     editorPushUndo(EDIT_OTHER);
     editorDeleteRangeRaw(start_y, start_x, end_y, end_x);
+}
+
+/* Replaces the current selection with a typed newline as one undo step. */
+static void editorReplaceSelectionWithNewline(int32_t sy, int32_t sx,
+    int32_t ey, int32_t ex) {
+    editorPushUndo(EDIT_OTHER);
+    editorDeleteRangeRaw(sy, sx, ey, ex);
+
+    int32_t src_row = E.document.cursor.cy;
+    int32_t indent_len = 0;
+    if (S.auto_indent && src_row < E.document.buffer.row_count) {
+        erow *row = &E.document.buffer.rows[src_row];
+        while (indent_len < row->size &&
+               (row->chars[indent_len] == ' ' || row->chars[indent_len] == '\t'))
+            indent_len++;
+        if (indent_len > E.document.cursor.cx) indent_len = E.document.cursor.cx;
+    }
+
+    editorInsertNewlineRaw();
+    if (indent_len > 0) {
+        erow *row = &E.document.buffer.rows[src_row];
+        for (int32_t i = 0; i < indent_len; i++)
+            editorInsertCharRaw((unsigned char)row->chars[i]);
+    }
+    E.document.selection.active = 0;
 }
 
 /* Inserts `text` (which may contain '\n') at the current cursor position,
@@ -3940,8 +3989,12 @@ static void editorProcessKeypress(void) {
 
     switch (c) {
         case '\r':
+            if (had_sel)
+                editorReplaceSelectionWithNewline(had_sel_y0, had_sel_x0,
+                    had_sel_y1, had_sel_x1);
+            else
+                editorInsertNewlineAutoIndent();
             E.document.selection.active = 0;
-            editorInsertNewlineAutoIndent();
             break;
 
         case '\t':
@@ -4440,7 +4493,18 @@ static void editorProcessKeypress(void) {
             break;
 
         default:
-            editorInsertCharAutoClose(c, had_sel, had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1);
+            /* Pairs retain their useful "wrap selection" behavior. Every
+             * other typed character replaces selected text, like paste and
+             * delete already do. Keep deletion and insertion in one undo
+             * action by inserting the first byte directly after the snapshot. */
+            if (had_sel && !editorAutoCloseFor(c)) {
+                editorPushUndo(EDIT_OTHER);
+                editorDeleteRangeRaw(had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1);
+                editorInsertCharRaw(c);
+            } else {
+                editorInsertCharAutoClose(c, had_sel, had_sel_y0, had_sel_x0,
+                    had_sel_y1, had_sel_x1);
+            }
             E.document.selection.active = 0;
             break;
     }

@@ -439,6 +439,33 @@ int32_t terminalReadKey(
                     uint8_t term;
                     if (read(STDIN_FILENO, &term, 1) != 1) return '\x1b';
                     if (term == '~') return F3_KEY; /* common CSI F3 form: ESC[13~ */
+                    /* Ghostty's Kitty keyboard protocol reports Shift+Enter
+                     * as CSI 13;2u. The 13 prefix also belongs to CSI F3,
+                     * so distinguish the two only after reading this byte. */
+                    if (term == ';') {
+                        uint8_t mod, csi_term;
+                        if (read(STDIN_FILENO, &mod, 1) != 1) return '\x1b';
+                        if (read(STDIN_FILENO, &csi_term, 1) != 1) return '\x1b';
+                        if (mod == '2' && csi_term == 'u') return '\r';
+                        if (csi_term < 0x40 || csi_term > 0x7e)
+                            editorDrainUnknownCsiSequence(16);
+                    }
+                } else if (seq[1] == '2' && seq[2] == '7') {
+                    /* modifyOtherKeys reports Ghostty Shift+Enter as
+                     * CSI 27;2;13~. It is a three-field sequence, unlike
+                     * the two-field modified navigation keys below. */
+                    uint8_t separator, mod, key_separator, key_tens, key_ones, term;
+                    if (read(STDIN_FILENO, &separator, 1) != 1) return '\x1b';
+                    if (read(STDIN_FILENO, &mod, 1) != 1) return '\x1b';
+                    if (read(STDIN_FILENO, &key_separator, 1) != 1) return '\x1b';
+                    if (read(STDIN_FILENO, &key_tens, 1) != 1) return '\x1b';
+                    if (read(STDIN_FILENO, &key_ones, 1) != 1) return '\x1b';
+                    if (read(STDIN_FILENO, &term, 1) != 1) return '\x1b';
+                    if (separator == ';' && mod == '2' && key_separator == ';' &&
+                        key_tens == '1' && key_ones == '3' && term == '~')
+                        return '\r';
+                    if (term < 0x40 || term > 0x7e)
+                        editorDrainUnknownCsiSequence(16);
                 } else if (seq[2] >= '0' && seq[2] <= '9') {
                     /* CSI-u/Kitty form for a plain
                      * key with modifiers: ESC[<codepoint>;<mod>u, e.g.
