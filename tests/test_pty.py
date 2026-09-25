@@ -140,6 +140,58 @@ def test_kitty_keyboard_mode_is_restored(home):
         finish(process, master)
 
 
+def test_kitty_cmd_z_undoes(home):
+    case_home = pathlib.Path(home) / "kitty-cmd-z"
+    case_home.mkdir()
+    target = case_home / "undo.txt"
+    target.write_bytes(b"original\n")
+    (case_home / ".tinyeditrc").write_text(
+        "mac_command_keys = true\nbackup_interval = 0\n", encoding="utf-8"
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"X\x1b[122;9u\x13")  # X, Cmd-Z, Ctrl-S
+        assert b"bytes written to disk" in read_until(master, b"bytes written to disk"), (
+            "Cmd-Z did not save after undo"
+        )
+    finally:
+        finish(process, master)
+    if target.read_bytes() != b"original\n":
+        raise AssertionError("Kitty Cmd-Z did not undo the edit")
+
+
+def test_shift_click_extends_selection(home):
+    case_home = pathlib.Path(home) / "mouse-shift-click"
+    case_home.mkdir()
+    target = case_home / "selection.txt"
+    target.write_bytes(b"abcdef\n")
+    (case_home / ".tinyeditrc").write_text(
+        "mouse_enabled = true\nshow_line_numbers = 0\nshow_top_bar = 0\n"
+        "backup_interval = 0\n",
+        encoding="utf-8",
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        output = read_available(master)
+        if b"\x1b[>1s" not in output:
+            raise AssertionError("mouse mode did not request Shift mouse reporting")
+        # Put the cursor after 'a', then Shift-click after 'd'. SGR mouse
+        # reports use modifier bit 4 for Shift with the left button.
+        os.write(master, b"\x1b[<0;2;1M\x1b[<0;2;1m")
+        os.write(master, b"\x1b[<4;5;1M\x1b[<4;5;1m")
+        read_available(master, 0.2)
+        os.write(master, b"\x7f\x13")  # Delete selected bcd, then save.
+        assert b"bytes written to disk" in read_until(master, b"bytes written to disk"), (
+            "Shift-click selection was not saved"
+        )
+    finally:
+        finish(process, master)
+    actual = target.read_bytes()
+    if actual != b"aef\n":
+        raise AssertionError(f"Shift-click did not extend the selection: {actual!r}")
+
+
 def test_very_long_wrapped_line(home):
     target = pathlib.Path(home) / "long-line.txt"
     target.write_bytes((b"word " * 12000) + b"TAIL_SENTINEL\n")
@@ -700,6 +752,8 @@ def main():
         test_kitty_f1_f2(home)
         test_ghostty_ctrl_i_is_drained(home)
         test_kitty_keyboard_mode_is_restored(home)
+        test_kitty_cmd_z_undoes(home)
+        test_shift_click_extends_selection(home)
         test_very_long_wrapped_line(home)
         test_regex_replace_all_newline_finishes(home)
         test_ctrl_w_saves_and_closes_only_file(home)

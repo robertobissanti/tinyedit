@@ -3952,12 +3952,11 @@ static void editorProcessKeypress(void) {
             break;
         }
 
-        /* Mouse: click positions the cursor, drag (motion while the
-         * button is held) extends a selection from the click point,
-         * release just stops extending, wheel scrolls without moving
-         * the cursor. SGR button codes (see mouseEventButton, xterm
-         * ctlseqs): 0 = left button, 32 = left button + motion flag
-         * (a drag report, not a fresh press), 64/65 = wheel up/down.
+        /* Mouse: click positions the cursor, Shift-click extends the
+         * selection, drag extends it from the click point, release stops
+         * tracking, and wheel scrolls without moving the cursor. SGR button
+         * codes: 0 = left button, 4 = Shift + left, 32 = left drag, 36 =
+         * Shift + left drag, 64/65 = wheel up/down.
          * Clicks in the gutter or the status/message bars are ignored
          * (editorMouseToCursor() assumes a text-area click; the row
          * bounds check below is what actually filters those out,
@@ -3981,7 +3980,9 @@ static void editorProcessKeypress(void) {
              * state after the whole burst needs to be drawn. */
             uint8_t more = 1;
             while (more) {
-                if (mouseEventButton == 64 || mouseEventButton == 65) {
+                uint8_t shift_held = (mouseEventButton & 4) != 0;
+                int32_t mouse_button = mouseEventButton & ~28;
+                if (mouse_button == 64 || mouse_button == 65) {
                     /* Wheel: scroll the VIEW only. Never touches
                      * E.document.cursor.cy/E.document.cursor.cx or the selection -- the cursor and
                      * whatever text is selected are conceptually
@@ -3993,7 +3994,7 @@ static void editorProcessKeypress(void) {
                      * full PageUp/PageDown, which would be too coarse
                      * for incremental wheel ticks. */
                     int32_t wrapcols = editorSoftWrapCols();
-                    int32_t delta = (mouseEventButton == 64) ? -3 : 3;
+                    int32_t delta = (mouse_button == 64) ? -3 : 3;
                     int32_t limit = wrapcols > 0 ? editorTotalVideoRows(wrapcols) : E.document.buffer.row_count;
                     E.view.rowoff += delta;
                     if (E.view.rowoff < 0) E.view.rowoff = 0;
@@ -4021,40 +4022,28 @@ static void editorProcessKeypress(void) {
                         mouseEventRow <= 1 + (S.show_top_bar ? 1 : 0) + E.view.screenrows - 1 &&
                         mouseEventCol > editorGutterWidth();
 
-                    if (in_text_area && mouseEventButton == 0 && mouseEventPress) {
-                        /* Fresh press: position the cursor there.
-                         * E.document.selection.active is deliberately left OFF here
-                         * (not set to 1 with anchor==cursor) -- the
-                         * anchor is only remembered locally
-                         * (press_anchor_y/x below) and E.document.selection.active is
-                         * turned on only once an actual drag moves the
-                         * cursor away from it (see the drag branch).
-                         *
-                         * A collapsed anchor==cursor selection LOOKS
-                         * invisible right after the click (start==end,
-                         * nothing to highlight), but editorSelectionRange()
-                         * re-evaluates the anchor against the CURRENT
-                         * cursor position on every call, not a
-                         * snapshot -- so if E.document.selection.active stayed 1 here
-                         * and E.document.cursor.cy/E.document.cursor.cx moved for any OTHER reason
-                         * before the next click or Esc (e.g. the wheel
-                         * dragging the cursor along to stay on-screen,
-                         * see the wheel branch above), a real selection
-                         * would suddenly appear out of a plain click
-                         * that never dragged -- this was the bug
-                         * reported by the user ("ho fatto solo click...
-                         * poi scrollando si è magicamente selezionato
-                         * il testo"). Not arming sel_active until a
-                         * real drag happens closes this off entirely. */
+                    if (in_text_area && mouse_button == 0 && mouseEventPress) {
+                        /* A plain click remembers a local drag anchor without
+                         * arming a collapsed selection; Shift-click instead
+                         * retains its existing anchor, or starts from the
+                         * cursor position immediately before the click. */
                         int32_t cy, cx;
                         editorMouseToCursor(mouseEventCol, mouseEventRow, &cy, &cx);
+                        if (shift_held) {
+                            if (!E.document.selection.active) {
+                                E.document.selection.active = 1;
+                                E.document.selection.anchor_x = E.document.cursor.cx;
+                                E.document.selection.anchor_y = E.document.cursor.cy;
+                            }
+                        } else {
+                            E.document.selection.active = 0;
+                            press_anchor_x = cx;
+                            press_anchor_y = cy;
+                        }
                         E.document.cursor.cy = cy;
                         E.document.cursor.cx = cx;
-                        E.document.selection.active = 0;
-                        press_anchor_x = cx;
-                        press_anchor_y = cy;
                         dragging = 1;
-                    } else if (in_text_area && mouseEventButton == 32 && dragging) {
+                    } else if (in_text_area && mouse_button == 32 && dragging) {
                         /* Drag: the cursor has now moved away from the
                          * press point -- arm the selection (if not
                          * already active) with the REMEMBERED press

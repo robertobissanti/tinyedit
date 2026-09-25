@@ -192,9 +192,10 @@ passthrough is enabled in the multiplexer.
 
 Mouse support (`mouse_enabled`, F2 panel, **off by default**) lets you
 click to place the cursor, drag with the left button to select text,
-and scroll with the wheel. It is opt-in because it overrides the terminal's
-native text selection, such as `Cmd-C`/`Cmd-V` in Ghostty, and directs mouse
-events to tinyedit while enabled. The change takes effect
+Shift-click to extend a selection, and scroll with the wheel. It is opt-in
+because it overrides the terminal's native text selection, such as
+`Cmd-C`/`Cmd-V` in Ghostty, and directs mouse events to tinyedit while enabled.
+The change takes effect
 immediately: toggling it in `F2` and pressing `Ctrl-S` applies it
 right away, no restart needed.
 

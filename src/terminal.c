@@ -118,13 +118,14 @@ void terminalEnableKittyKeyboard(void) {
     kitty_keyboard_enabled = 1;
 }
 
-/* Cmd-W/F/Q are intercepted by Ghostty before Kitty keyboard protocol can
+/* Cmd-W/F/Z/Q are intercepted by Ghostty before Kitty keyboard protocol can
  * encode them. The sentinels make this block uniquely Tinyedit-owned: it can
  * be replaced without duplication and deleted without touching other config. */
 uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
     static const char *const managed_lines[] = {
         "keybind = cmd+w=unbind\n",
         "keybind = cmd+f=unbind\n",
+        "keybind = cmd+z=unbind\n",
         "keybind = cmd+q=unbind\n",
         NULL
     };
@@ -273,7 +274,9 @@ uint8_t terminalInputReady(void) {
 /* SGR mouse reporting (\x1b[?1002h enables click+drag button-motion
  * events, \x1b[?1006h switches their encoding to the SGR variant --
  * unbounded coordinates and unambiguous press/release, vs. the legacy
- * X10 encoding this project doesn't use). Toggled at runtime by the
+ * X10 encoding this project doesn't use). XTSHIFTESCAPE (\x1b[>1s)
+ * asks terminals such as Ghostty to report Shift-modified mouse events
+ * instead of reserving Shift for their native selection. Toggled at runtime by the
  * S.mouse_enabled setting (F2), NOT unconditionally at startup like
  * bracketed paste above -- enabling it hands every click/drag to
  * tinyedit instead of the terminal's own text selection (e.g.
@@ -282,12 +285,12 @@ uint8_t terminalInputReady(void) {
  * must not leak into whatever runs in this terminal after tinyedit
  * quits, regardless of how the setting was left. */
 void terminalDisableMouseReporting(void) {
-    write(STDOUT_FILENO, "\x1b[?1002l\x1b[?1006l", 16);
+    write(STDOUT_FILENO, "\x1b[?1002l\x1b[?1006l\x1b[>0s", 21);
 }
 
 void terminalEnableMouseReporting(void) {
     atexit(terminalDisableMouseReporting);
-    write(STDOUT_FILENO, "\x1b[?1002h\x1b[?1006h", 16);
+    write(STDOUT_FILENO, "\x1b[>1s\x1b[?1002h\x1b[?1006h", 21);
 }
 
 static void handleWinch(int sig) {
