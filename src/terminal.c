@@ -118,7 +118,7 @@ void terminalEnableKittyKeyboard(void) {
     kitty_keyboard_enabled = 1;
 }
 
-/* Cmd-W/F/Z/Q are intercepted by Ghostty before Kitty keyboard protocol can
+/* Cmd-W/F/Z/A/Q are intercepted by Ghostty before Kitty keyboard protocol can
  * encode them. The sentinels make this block uniquely Tinyedit-owned: it can
  * be replaced without duplication and deleted without touching other config. */
 uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
@@ -126,6 +126,7 @@ uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
         "keybind = cmd+w=unbind\n",
         "keybind = cmd+f=unbind\n",
         "keybind = cmd+z=unbind\n",
+        "keybind = cmd+a=unbind\n",
         "keybind = cmd+q=unbind\n",
         NULL
     };

@@ -161,6 +161,27 @@ def test_kitty_cmd_z_undoes(home):
         raise AssertionError("Kitty Cmd-Z did not undo the edit")
 
 
+def test_kitty_cmd_a_selects_all(home):
+    case_home = pathlib.Path(home) / "kitty-cmd-a"
+    case_home.mkdir()
+    target = case_home / "select-all.txt"
+    target.write_bytes(b"first\nsecond\n")
+    (case_home / ".tinyeditrc").write_text(
+        "mac_command_keys = true\nbackup_interval = 0\n", encoding="utf-8"
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1b[97;9u\x7f\x13")  # Cmd-A, Backspace, Ctrl-S
+        assert b"bytes written to disk" in read_until(master, b"bytes written to disk"), (
+            "Cmd-A did not save after deleting the selection"
+        )
+    finally:
+        finish(process, master)
+    if target.read_bytes() != b"\n":
+        raise AssertionError("Kitty Cmd-A did not select the whole buffer")
+
+
 def test_shift_click_extends_selection(home):
     case_home = pathlib.Path(home) / "mouse-shift-click"
     case_home.mkdir()
@@ -753,6 +774,7 @@ def main():
         test_ghostty_ctrl_i_is_drained(home)
         test_kitty_keyboard_mode_is_restored(home)
         test_kitty_cmd_z_undoes(home)
+        test_kitty_cmd_a_selects_all(home)
         test_shift_click_extends_selection(home)
         test_very_long_wrapped_line(home)
         test_regex_replace_all_newline_finishes(home)
