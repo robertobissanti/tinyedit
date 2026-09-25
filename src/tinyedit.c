@@ -801,19 +801,27 @@ static uint8_t editorWriteAll(int fd, const char *buf, size_t len) {
 }
 
 static uint8_t editorAtomicSave(const char *filename, const char *buf, size_t len) {
-    char resolved[4096];
-    const char *target = realpath(filename, resolved) ? resolved : filename;
+    char *resolved = realpath(filename, NULL);
+    const char *target = resolved ? resolved : filename;
     size_t target_len = strlen(target);
     const char suffix[] = ".tinyedit.XXXXXX";
     char *tmppath = teMalloc(target_len + sizeof(suffix));
-    if (!tmppath) { errno = ENOMEM; return 0; }
+    if (!tmppath) {
+        free(resolved);
+        errno = ENOMEM;
+        return 0;
+    }
     memcpy(tmppath, target, target_len);
     memcpy(tmppath + target_len, suffix, sizeof(suffix));
 
     struct stat existing;
     uint8_t existed = stat(target, &existing) == 0;
     int fd = mkstemp(tmppath);
-    if (fd == -1) { free(tmppath); return 0; }
+    if (fd == -1) {
+        free(tmppath);
+        free(resolved);
+        return 0;
+    }
 
     mode_t mode;
     if (existed) {
@@ -834,6 +842,7 @@ static uint8_t editorAtomicSave(const char *filename, const char *buf, size_t le
         errno = saved_errno;
     }
     free(tmppath);
+    free(resolved);
     return ok;
 }
 

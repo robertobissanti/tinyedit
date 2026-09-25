@@ -3,7 +3,9 @@
 #include "backup.h"
 #include "settings.h"
 
+#include <errno.h>
 #include <stdint.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,6 +55,36 @@ int main(void) {
     free(restored);
     backupRemove(filename);
     if (backupExists(filename)) fail("backupRemove");
+
+    /* Keep the backup directory under the short temporary HOME, but make the
+     * edited file's resolved path longer than the old 1024-byte buffers. */
+    char longdir[2048];
+    snprintf(longdir, sizeof(longdir), "%s/long-path", home);
+    if (mkdir(longdir, 0700) != 0) fail("create long path root");
+    uint8_t long_path_available = 1;
+    for (int32_t i = 0; i < 12; i++) {
+        size_t used = strlen(longdir);
+        if (used + 91 >= sizeof(longdir)) fail("long path buffer");
+        longdir[used] = '/';
+        memset(longdir + used + 1, 'a', 90);
+        longdir[used + 91] = '\0';
+        if (mkdir(longdir, 0700) != 0) {
+            if (errno == ENAMETOOLONG) {
+                long_path_available = 0;
+                break;
+            }
+            fail("create long path component");
+        }
+    }
+    if (long_path_available) {
+        char longfile[2048];
+        snprintf(longfile, sizeof(longfile), "%s/document.txt", longdir);
+        fp = fopen(longfile, "w");
+        if (!fp || fclose(fp) != 0) fail("create long backup target");
+        if (!backupWrite(longfile, content, sizeof(content) - 1)) fail("long-path backupWrite");
+        backupRemove(longfile);
+        unlink(longfile);
+    }
 
     unlink(filename);
     unlink(config);

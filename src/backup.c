@@ -30,42 +30,47 @@ static uint64_t fnv1a64(const char *s) {
     return h;
 }
 
-/* Absolute path of `filename` into `out` (size `outsize`). realpath()
- * requires the file to exist, which a brand new unsaved buffer's
- * target usually doesn't yet -- so for a non-existent path we fall
- * back to resolving just the parent directory and appending the
- * given basename, which still yields a stable absolute path (the
- * same file edited from different relative paths/cwds hashes the
- * same either way, matching realpath()'s own guarantee). */
-static uint8_t absolutePathOf(const char *filename, char *out, size_t outsize) {
-    if (realpath(filename, out) != NULL) return 1;
+/* `realpath(path, NULL)` allocates exactly the space required by the resolved
+ * path. A new unsaved buffer's target does not exist yet, so resolve its
+ * parent directory and append the basename instead. */
+static char *absolutePathOf(const char *filename) {
+    char *resolved = realpath(filename, NULL);
+    if (resolved != NULL) return resolved;
 
-    char cwd[1024];
     const char *base = strrchr(filename, '/');
+    char *cwd;
     if (base) {
-        char dir[1024];
         size_t dirlen = (size_t)(base - filename);
-        if (dirlen == 0) dirlen = 1; /* "/" */
-        if (dirlen >= sizeof(dir)) return 0;
+        if (dirlen == 0) dirlen = 1;
+        char *dir = teMalloc(dirlen + 1);
+        if (!dir) return NULL;
         memcpy(dir, filename, dirlen);
         dir[dirlen] = '\0';
-        if (realpath(dir, cwd) == NULL) return 0;
+        cwd = realpath(dir, NULL);
+        free(dir);
+        if (cwd == NULL) return NULL;
         base++; /* skip '/' */
     } else {
-        if (getcwd(cwd, sizeof(cwd)) == NULL) return 0;
+        cwd = realpath(".", NULL);
+        if (cwd == NULL) return NULL;
         base = filename;
     }
-    return (size_t)snprintf(out, outsize, "%s/%s", cwd, base) < outsize;
+
+    size_t len = strlen(cwd) + 1 + strlen(base) + 1;
+    char *absolute = teMalloc(len);
+    if (absolute != NULL) snprintf(absolute, len, "%s/%s", cwd, base);
+    free(cwd);
+    return absolute;
 }
 
 uint8_t backupPathFor(const char *filename, char *out, size_t outsize) {
     const char *home = getenv("HOME");
     if (!home || !*home) return 0;
 
-    char abspath[1024];
-    if (!absolutePathOf(filename, abspath, sizeof(abspath))) return 0;
-
+    char *abspath = absolutePathOf(filename);
+    if (!abspath) return 0;
     uint64_t hash = fnv1a64(abspath);
+    free(abspath);
     int32_t n = snprintf(out, outsize, "%s" BACKUP_DIR_SUFFIX "/%016" PRIx64 ".swp",
         home, hash);
     return n > 0 && (size_t)n < outsize;
@@ -144,8 +149,8 @@ uint8_t backupWrite(const char *filename, const char *content, size_t len) {
     char path[1024];
     if (!backupPathFor(filename, path, sizeof(path))) return 0;
 
-    char abspath[1024];
-    if (!absolutePathOf(filename, abspath, sizeof(abspath))) return 0;
+    char *abspath = absolutePathOf(filename);
+    if (!abspath) return 0;
 
     /* Write to a temp file then rename() into place: rename() is
      * atomic on the same filesystem, so a crash mid-write (e.g. power
@@ -153,14 +158,21 @@ uint8_t backupWrite(const char *filename, const char *content, size_t len) {
      * would confuse for valid recovered content. */
     char tmppath[1040];
     int32_t n = snprintf(tmppath, sizeof(tmppath), "%s.tmp.XXXXXX", path);
-    if (n < 0 || (size_t)n >= sizeof(tmppath)) return 0;
+    if (n < 0 || (size_t)n >= sizeof(tmppath)) {
+        free(abspath);
+        return 0;
+    }
 
     int fd = mkstemp(tmppath);
-    if (fd == -1) return 0;
+    if (fd == -1) {
+        free(abspath);
+        return 0;
+    }
     FILE *fp = fdopen(fd, "w");
     if (!fp) {
         close(fd);
         unlink(tmppath);
+        free(abspath);
         return 0;
     }
 
@@ -171,12 +183,15 @@ uint8_t backupWrite(const char *filename, const char *content, size_t len) {
 
     if (!ok) {
         unlink(tmppath);
+        free(abspath);
         return 0;
     }
     if (rename(tmppath, path) != 0) {
         unlink(tmppath);
+        free(abspath);
         return 0;
     }
+    free(abspath);
     return 1;
 }
 

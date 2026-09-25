@@ -1,7 +1,7 @@
 CC ?= cc
-CFLAGS ?= -Wall -O2 -std=c99
+CFLAGS ?= -Wall -O2 -D_FORTIFY_SOURCE=2 -std=c99
 CPPFLAGS ?= -Iinc
-TEST_CFLAGS ?= -std=c99 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Wundef -Wstrict-prototypes -Wmissing-prototypes
+TEST_CFLAGS ?= -O2 -D_FORTIFY_SOURCE=2 -std=c99 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Wundef -Wstrict-prototypes -Wmissing-prototypes
 
 BIN_DIR := bin
 TARGET := $(BIN_DIR)/tinyedit
