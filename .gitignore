@@ -2,6 +2,12 @@ bin/
 imgs/old/
 .tinyedit_history
 
+# Internal instructions and audit notes for AI assistants. Keep these files
+# available in local worktrees without publishing them in the repository.
+AGENTS.md
+CLAUDE.md
+REFACTORING_AUDIT.md
+
 # Scratch/test files (manual try-out documents, debug builds) --
 # never part of the source, kept out of git entirely.
 dev/
