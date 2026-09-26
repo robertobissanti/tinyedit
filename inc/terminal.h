@@ -33,6 +33,8 @@ void terminalEnableResizeHandling(void);
 int32_t terminalReadKey(
 #ifdef __APPLE__
     uint8_t mac_command_keys
+#else
+    void
 #endif
 );
 char *terminalReadPastedText(size_t *outlen);

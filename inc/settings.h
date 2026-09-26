@@ -71,7 +71,8 @@ enum settingColor {
      * any of the 24 hues, not merely their fallback on lookup failure
      * (see color_syntax_normal in struct editorSettings). */
     COLOR_TERMINAL_DEFAULT,
-    SETTING_COLOR_COUNT
+    SETTING_COLOR_COUNT,
+    SETTING_HUE_COLOR_COUNT = SETTING_COLOR_COUNT - 1
 };
 
 /* DECSCUSR cursor shapes. */

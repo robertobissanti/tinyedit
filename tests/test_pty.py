@@ -103,7 +103,6 @@ def test_kitty_f1_f2(home):
     finally:
         finish(process, master)
 
-
 def test_ghostty_ctrl_i_is_drained(home):
     target = pathlib.Path(home) / "ctrl-i.txt"
     target.write_bytes(b"")
@@ -228,6 +227,27 @@ def test_very_long_wrapped_line(home):
     finish(process, master)
     if not found:
         raise AssertionError("content beyond the former 512-wrap-segment limit is unreachable")
+
+
+def test_utf8_word_jumps(home):
+    """Word jumps across multibyte text must leave editable UTF-8 boundaries."""
+    cases = (
+        ("forward", "è café foo", b"\x1b[H\x1bfX", "èX café foo\n"),
+        ("backward", "è café foo", b"\x1b[F\x1bbX", "è café Xfoo\n"),
+    )
+    for name, initial, keys, expected in cases:
+        target = pathlib.Path(home) / f"word-jump-{name}.txt"
+        target.write_text(initial, encoding="utf-8")
+        process, master = spawn_editor([str(target)], home)
+        try:
+            read_available(master)
+            os.write(master, keys + b"\x13")
+            output = read_until(master, b"bytes written to disk")
+            assert b"bytes written to disk" in output, f"{name}: save did not finish"
+        finally:
+            finish(process, master)
+        actual = target.read_text(encoding="utf-8")
+        assert actual == expected, f"{name}: {actual!r} != {expected!r}"
 
 
 def test_regex_replace_all_newline_finishes(home):
@@ -383,6 +403,51 @@ def test_selection_across_tab(home):
             assert selected in output, "selection did not cover the complete rendered tab"
         finally:
             finish(process, master)
+
+
+def test_matching_bracket_highlight(home):
+    """The delimiter under the cursor highlights its textual match."""
+    case_home = pathlib.Path(home) / "matching-brackets"
+    case_home.mkdir()
+    target = case_home / "brackets.txt"
+    target.write_bytes(b"([x])\n")
+    (case_home / ".tinyeditrc").write_text(
+        "show_line_numbers = 0\nshow_top_bar = 0\nsyntax_highlight = 0\n"
+        "color_selection = yellow-light\n",
+        encoding="utf-8",
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        output = read_available(master)
+        for bracket in (b"(", b")"):
+            assert b"\x1b[7m" + bracket + b"\x1b[m" in output, (
+                "outer nested brackets were not highlighted"
+            )
+        os.write(master, b"\x1b[C")
+        output = read_available(master)
+        for bracket in (b"[", b"]"):
+            assert b"\x1b[7m" + bracket + b"\x1b[m" in output, (
+                "inner nested brackets were not highlighted"
+            )
+        os.write(master, b"\x1b[F")  # Cursor immediately after the outer closer.
+        output = read_available(master)
+        for bracket in (b"(", b")"):
+            assert b"\x1b[7m" + bracket + b"\x1b[m" in output, (
+                "outer brackets were not highlighted from the closer"
+            )
+    finally:
+        finish(process, master)
+
+    target.write_bytes(b"(\n)\n")
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        output = read_available(master)
+        for bracket in (b"(", b")"):
+            assert b"\x1b[7m" + bracket + b"\x1b[m" in output, (
+                "brackets on separate lines were not highlighted"
+            )
+    finally:
+        finish(process, master)
 
 
 def test_selection_marks_blank_rows(home):
@@ -868,7 +933,9 @@ def main():
         test_kitty_cmd_z_undoes(home)
         test_kitty_cmd_a_selects_all(home)
         test_shift_click_extends_selection(home)
+        test_matching_bracket_highlight(home)
         test_very_long_wrapped_line(home)
+        test_utf8_word_jumps(home)
         test_regex_replace_all_newline_finishes(home)
         test_ctrl_w_saves_and_closes_only_file(home)
         test_ctrl_o_discards_then_creates_named_file(home)

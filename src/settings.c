@@ -18,6 +18,9 @@
 static const char *const redoKeyNames[] = { "ctrl-y", "ctrl-shift-z", NULL };
 static const char *const cursorStyleNames[] = { "block", "bar", NULL };
 static const char *const lineEndingNames[] = { "auto", "lf", "crlf", NULL };
+static const char *const legacyNames[] = {
+    "gray", "blue", "green", "yellow", "cyan", "magenta", "red", "white", NULL
+};
 /* Order matches enum settingColor exactly -- each base hue's light,
  * dark, then dim variant. "gray" (with no suffix, from before the
  * light/dark/dim split) is kept as an alias handled separately in
@@ -96,7 +99,7 @@ const struct settingDescriptor settingDescriptors[] = {
     { "mouse_enabled", "Mouse support (disables native terminal selection)", SETTING_BOOL,
       offsetof(struct editorSettings, mouse_enabled), 0, 0, NULL, 0 },
 #ifdef __APPLE__
-    { "mac_command_keys", "macOS Command keys (Ghostty Kitty protocol)", SETTING_BOOL,
+    { "mac_command_keys", "macOS Command keys (Ghostty, experimental)", SETTING_BOOL,
       offsetof(struct editorSettings, mac_command_keys), 0, 0, NULL, 0 },
 #endif
     { "cursor_style", "Cursor shape", SETTING_ENUM,
@@ -247,11 +250,7 @@ static int32_t enumIndexOf(const char *const *names, const char *name) {
  * legacy name count rather than hardcoded, so a future variant
  * addition doesn't need this function touched again. */
 static int32_t settingColorFromLegacyName(const char *name) {
-    static const char *const legacyNames[] = {
-        "gray", "blue", "green", "yellow", "cyan", "magenta", "red", "white", NULL
-    };
-    enum { HUE_COLOR_COUNT = SETTING_COLOR_COUNT - 1 };
-    int32_t variants_per_hue = HUE_COLOR_COUNT / 8;
+    int32_t variants_per_hue = SETTING_HUE_COLOR_COUNT / 8;
     for (int32_t i = 0; legacyNames[i]; i++)
         if (strcmp(legacyNames[i], name) == 0) return i * variants_per_hue; /* *_LIGHT is first in each block */
     return -1;

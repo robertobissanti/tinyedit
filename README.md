@@ -143,7 +143,7 @@ make install PREFIX=/usr/local
 
 In Ghostty, tinyedit can optionally accept macOS Command shortcuts, including
 `Cmd-S`, `Cmd-Z`, `Cmd-C`, `Cmd-X`, `Cmd-F`, and `Cmd-Q`, through the Kitty
-keyboard protocol. Enable **macOS Command keys (Ghostty Kitty protocol)** in
+keyboard protocol. Enable **macOS Command keys (Ghostty, experimental)** in
 `F2`, or set `mac_command_keys = true` in `~/.tinyeditrc`, then reload
 Ghostty with `Cmd-Shift-,`.
 
