@@ -4779,6 +4779,7 @@ static void initEditor(void) {
 
 int main(int argc, char **argv) {
     terminalEnableRawMode();
+    terminalEnterAlternateScreen();
     terminalEnableBracketedPaste();
     terminalEnableResizeHandling();
     initEditor();
@@ -4787,7 +4788,6 @@ int main(int argc, char **argv) {
     if (S.mac_command_keys) terminalEnableKittyKeyboard();
 #endif
     editorChooseSlogan();
-    atexit(terminalRestoreVisualState);
     if (S.mouse_enabled) terminalEnableMouseReporting();
     atexit(editorFreeUndoRedo);
     if (argc >= 2) editorOpen(argv[1]);

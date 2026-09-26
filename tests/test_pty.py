@@ -135,8 +135,57 @@ def test_kitty_keyboard_mode_is_restored(home):
         output += read_available(master)
         if b"\x1b[<u" not in output:
             raise AssertionError("Kitty keyboard mode was not restored on exit")
+        assert output.index(b"\x1b[<u") < output.index(b"\x1b[?1049l"), (
+            "Kitty keyboard mode was restored after leaving alternate screen"
+        )
     finally:
         finish(process, master)
+
+
+def test_alternate_screen_lifecycle(home):
+    case_home = pathlib.Path(home) / "alternate-screen"
+    case_home.mkdir()
+    (case_home / ".tinyeditrc").write_text(
+        "mouse_enabled = true\n", encoding="utf-8"
+    )
+    target = case_home / "empty.txt"
+    target.write_bytes(b"")
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
+    original = termios.tcgetattr(slave)
+    env = os.environ.copy()
+    env.update({"HOME": str(case_home), "TERM": "xterm-256color"})
+    process = subprocess.Popen(
+        [str(BINARY), str(target)], stdin=slave, stdout=slave, stderr=slave,
+        cwd=ROOT, env=env, close_fds=True,
+    )
+    try:
+        output = read_available(master)
+        assert output.count(b"\x1b[?1049h") == 1, "alternate screen was not entered once"
+        assert output.index(b"\x1b[?1049h") < output.index(b"\x1b[?2004h")
+        assert b"\x1b[?1049l" not in output
+        os.write(master, b"\x11")  # Ctrl-Q
+        cleanup = read_until(master, b"\x1b[?1049l")
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired as exc:
+            raise AssertionError(f"quit did not exit: {read_available(master)!r}") from exc
+        cleanup += read_available(master)
+        output += cleanup
+        assert process.returncode == 0
+        assert output.count(b"\x1b[?1049l") == 1, "alternate screen was not left once"
+        assert b"\x1b[?1002l" in output and b"\x1b[?1006l" in output
+        assert b"\x1b[?2004l" in output
+        assert output.index(b"\x1b[?1002l") < output.index(b"\x1b[?2004l")
+        assert output.index(b"\x1b[?2004l") < output.index(b"\x1b[?1049l")
+        assert b"\x1b[2J" not in cleanup, "main screen was cleared on exit"
+        assert termios.tcgetattr(slave) == original, "termios was not restored"
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait()
+        os.close(master)
+        os.close(slave)
 
 
 def test_kitty_cmd_z_undoes(home):
@@ -1082,6 +1131,7 @@ def main():
         test_kitty_f1_f2(home)
         test_ghostty_ctrl_i_is_drained(home)
         test_kitty_keyboard_mode_is_restored(home)
+        test_alternate_screen_lifecycle(home)
         test_kitty_cmd_z_undoes(home)
         test_kitty_cmd_a_selects_all(home)
         test_shift_click_extends_selection(home)
