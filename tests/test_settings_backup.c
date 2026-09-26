@@ -17,6 +17,22 @@ static void fail(const char *message) {
 }
 
 int main(void) {
+    uint8_t found_mac_command_keys = 0;
+    for (int32_t i = 0; i < settingDescriptorCount; i++) {
+        if (strcmp(settingDescriptors[i].key, "mac_command_keys") == 0) {
+            found_mac_command_keys = 1;
+#ifdef __APPLE__
+            if (!strstr(settingDescriptors[i].label, "experimental"))
+                fail("Ghostty option is not marked experimental");
+#endif
+        }
+    }
+#ifdef __APPLE__
+    if (!found_mac_command_keys) fail("Ghostty option missing on macOS");
+#else
+    if (found_mac_command_keys) fail("Ghostty option present off macOS");
+#endif
+
     char home[] = "/tmp/tinyedit-settings-XXXXXX";
     if (!mkdtemp(home)) fail("mkdtemp");
     if (setenv("HOME", home, 1) != 0) fail("setenv");

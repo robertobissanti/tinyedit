@@ -45,6 +45,117 @@
 
 static struct editorConfig E;
 static struct editorSettings S;
+static int32_t last_cy = -1, last_cx = -1, last_end_y = -1,
+    last_end_x = 0, last_len = 0;
+
+static const char *const void_tags[] = {
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+    "meta", "param", "source", "track", "wbr"
+};
+
+/* Splash uses the startup choice; Info chooses again on each opening. */
+static const char *const slogans[] = {
+    "The terminal editor your fingers already know.",
+    "You already know how to exit.",
+    "No modes, no spells. Just edit.",
+    "Fast in the shell, familiar to your hands.",
+    "Text editing, not piano lessons.",
+    "Pure C. Familiar keys. Just edit.",
+    "Built for muscle memory.",
+    "Ctrl+S saves. Ctrl+Q quits.",
+    "The terminal editor that respects your desktop habits.",
+    "Desktop shortcuts at the command line.",
+    "Open a file. Start typing.",
+    "Small editor. Familiar shortcuts.",
+    "No external libraries. Familiar muscle memory.",
+    "Forget :wq. Save with Ctrl+S, quit with Ctrl+Q."
+};
+static const char *sessionSlogan;
+
+/* NULL marks blank spacer lines in the centered splash. */
+static const char *splashLines[] = {
+    "tinyedit",
+    NULL, /* session slogan, assigned at startup */
+    NULL,
+    "version " TE_VERSION,
+    "by Roberto Bissanti",
+    "MIT licensed -- free to use and redistribute",
+    NULL,
+    /* These four lines share one left edge for their two key columns. */
+    "Ctrl-O  open a file        Ctrl-S  save    ",
+    "Ctrl-F  find               F4      save as ",
+    "Ctrl-Z  undo               F2      settings",
+    "Ctrl-Q  quit               F1      help    ",
+    NULL,
+    "Start typing, or press F3 for details",
+};
+static const int32_t splashLineCount =
+    (int32_t)(sizeof(splashLines) / sizeof(splashLines[0]));
+
+static const struct autoClosePair autoCloseTable[] = {
+    { '(', ')' }, { '{', '}' }, { '[', ']' },
+    { '"', '"' }, { '\'', '\'' }, { '$', '$' }, { '`', '`' },
+};
+static const int32_t autoCloseTableCount =
+    (int32_t)(sizeof(autoCloseTable) / sizeof(autoCloseTable[0]));
+
+static const struct autoCloseMultiByte autoCloseMultiByteTable[] = {
+    { "\xc2\xab", 2, "\xc2\xbb", 2 },             /* « » */
+    { "\xe2\x80\x9c", 3, "\xe2\x80\x9d", 3 },     /* “ ” */
+    { "\xe2\x80\x98", 3, "\xe2\x80\x99", 3 },     /* ‘ ’ */
+};
+static const int32_t autoCloseMultiByteCount =
+    (int32_t)(sizeof(autoCloseMultiByteTable) / sizeof(autoCloseMultiByteTable[0]));
+
+/* One entry per F1 line; NULL marks a section header. */
+static const struct helpEntry helpEntries[] = {
+    { NULL, "Movement" },
+    { "Arrows, Home, End, PageUp/Down", "Move cursor" },
+    { "Ctrl-Home/End (or Ctrl-PageUp/Down)", "Jump to start/end of the file" },
+    { "Alt+Left/Right (or Esc b / Esc f)", "Jump by word" },
+    { "Mouse click (if enabled, see F2)", "Position cursor" },
+    { "Mouse wheel (if enabled, see F2)", "Scroll view (cursor/selection unaffected)" },
+    { NULL, "Editing" },
+    { "Enter", "New line (auto-indents if enabled)" },
+    { "Tab", "Indent (spaces or literal tab, see F2)" },
+    { "Tab (with selection)", "Indent every selected line one level" },
+    { "Shift-Tab", "Outdent selected lines, or the current one" },
+    { "( { [ \" ` $", "Auto-close pair / skip over / wrap selection" },
+    { "'", "Same, only if auto-close single quote is on (F2, off by default)" },
+    { "> in XML/HTML", "Insert matching end tag (except HTML void elements)" },
+    { "Backspace / Delete", "Delete character (UTF-8 aware)" },
+    { "Ctrl-Z / Ctrl-Y", "Undo / redo" },
+#ifdef __APPLE__
+    { "Cmd-S/F/Z/O/W/C/X/A/Q/G/R (Ghostty, experimental)", "Save/find/undo/open/close/copy/cut/select all/quit/regex/replace; see README" },
+#endif
+    { "Paste (terminal-native, e.g. Cmd+V)", "Bulk insert, no auto-close on pasted text" },
+    { NULL, "Selection & clipboard" },
+    { "Shift+Arrows, Shift+PageUp/Down", "Extend selection" },
+    { "Shift+Home/End", "Extend selection to start/end of line" },
+    { "Shift+Ctrl+Home/End", "Extend selection to start/end of file" },
+    { "Mouse drag (if enabled, see F2)", "Extend selection" },
+    { "Ctrl-T", "Toggle selection mode (works on every terminal)" },
+    { "Ctrl-A", "Select all" },
+    { "Ctrl-C / Ctrl-X / Ctrl-V", "Copy / cut / paste (system clipboard)" },
+    { NULL, "Find" },
+    { "Ctrl-F", "Incremental find" },
+    { "Ctrl-G (inside Find)", "Toggle regex mode (POSIX extended)" },
+    { "Ctrl-R (inside Find)", "Switch to find & replace" },
+    { NULL, "File & editor" },
+    { "Ctrl-S", "Save" },
+    { "F4 (or Ctrl-Shift-S, terminal permitting)", "Save as (always prompts for a filename)" },
+    { "Ctrl-O", "Open another file (offers to save current file first)" },
+    { "Ctrl-W", "Close current file without quitting" },
+    { "Ctrl-Q", "Quit (offers to save first if unsaved)" },
+    { "F2", "Settings panel (Ctrl-D inside it resets to defaults)" },
+    { "F1", "This help screen" },
+    { "F3", "Info screen: version, author, current file stats" },
+    { NULL, "Configuration files (see README.md for details)" },
+    { "~/.tinyeditrc", "All settings from F2, plain key=value, hand-editable" },
+    { "~/.tinyedit/syntax/*.conf", "Custom syntax-highlighted languages (any filename)" },
+    { "~/.tinyedit/backup/", "Crash-recovery backups (never next to your files)" },
+};
+static const int32_t helpEntryCount = (int32_t)(sizeof(helpEntries) / sizeof(helpEntries[0]));
 
 /* The Ghostty Kitty-keyboard mode is opt-in. Keep the on-screen language in
  * step with it, without changing the underlying Ctrl-based key handling. */
@@ -102,6 +213,78 @@ static int32_t editorRowCxToRx(erow *row, int32_t cx) {
  * use this same tab expansion as editorRowCxToRx(). */
 static int32_t editorRowRxToCx(erow *row, int32_t target_rx) {
     return bufferRowRxToCx(row, target_rx, S.tab_stop);
+}
+
+/* Finds the delimiter under the cursor, or the one immediately to its left,
+ * and its matching ASCII bracket. Matching deliberately operates on raw text
+ * rather than auto-close history: pasted and pre-existing pairs behave the
+ * same way. UTF-8 is stepped as complete characters while scanning, so a
+ * cursor or match never lands inside a multibyte sequence. */
+static uint8_t editorMatchingPairAtCursor(int32_t *anchor_y, int32_t *anchor_x,
+    int32_t *match_y, int32_t *match_x) {
+    int32_t y = E.document.cursor.cy;
+    int32_t x = E.document.cursor.cx;
+    if (y < 0 || y >= E.document.buffer.row_count) return 0;
+
+    erow *row = &E.document.buffer.rows[y];
+    int32_t at = -1;
+    if (x < row->size && strchr("()[]{}", row->chars[x])) at = x;
+    else if (x > 0) {
+        size_t step = utf8PrevCharLen(row->chars, (size_t)x);
+        int32_t prev = x - (int32_t)(step ? step : 1);
+        if (strchr("()[]{}", row->chars[prev])) at = prev;
+    }
+    if (at < 0) return 0;
+
+    char bracket = row->chars[at];
+    char open, close;
+    uint8_t forward;
+    switch (bracket) {
+        case '(': open = '('; close = ')'; forward = 1; break;
+        case '[': open = '['; close = ']'; forward = 1; break;
+        case '{': open = '{'; close = '}'; forward = 1; break;
+        case ')': open = '('; close = ')'; forward = 0; break;
+        case ']': open = '['; close = ']'; forward = 0; break;
+        case '}': open = '{'; close = '}'; forward = 0; break;
+        default: return 0;
+    }
+
+    int32_t depth = 1;
+    if (forward) {
+        for (int32_t scan_y = y; scan_y < E.document.buffer.row_count; scan_y++) {
+            erow *scan_row = &E.document.buffer.rows[scan_y];
+            int32_t scan_x = scan_y == y ? at + 1 : 0;
+            while (scan_x < scan_row->size) {
+                char byte = scan_row->chars[scan_x];
+                if (byte == open) depth++;
+                else if (byte == close && --depth == 0) {
+                    *anchor_y = y; *anchor_x = at;
+                    *match_y = scan_y; *match_x = scan_x;
+                    return 1;
+                }
+                size_t step = utf8NextCharLen(scan_row->chars, (size_t)scan_x,
+                    (size_t)scan_row->size);
+                scan_x += (int32_t)(step ? step : 1);
+            }
+        }
+    } else {
+        for (int32_t scan_y = y; scan_y >= 0; scan_y--) {
+            erow *scan_row = &E.document.buffer.rows[scan_y];
+            int32_t scan_x = scan_y == y ? at : scan_row->size;
+            while (scan_x > 0) {
+                size_t step = utf8PrevCharLen(scan_row->chars, (size_t)scan_x);
+                scan_x -= (int32_t)(step ? step : 1);
+                char byte = scan_row->chars[scan_x];
+                if (byte == close) depth++;
+                else if (byte == open && --depth == 0) {
+                    *anchor_y = y; *anchor_x = at;
+                    *match_y = scan_y; *match_x = scan_x;
+                    return 1;
+                }
+            }
+        }
+    }
+    return 0;
 }
 
 /* Placeholder glyphs for S.show_invisibles, single ASCII bytes on
@@ -1329,7 +1512,8 @@ static void editorScroll(void) {
  * by both the unwrapped (one call per file row) and wrapped (one call
  * per visual segment) paths in editorDrawRows(). */
 static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_from, int32_t seg_to,
-    uint8_t has_sel, int32_t sel_y0, int32_t sel_x0, int32_t sel_y1, int32_t sel_x1) {
+    uint8_t has_sel, int32_t sel_y0, int32_t sel_x0, int32_t sel_y1, int32_t sel_x1,
+    uint8_t has_pair, int32_t pair_y0, int32_t pair_x0, int32_t pair_y1, int32_t pair_x1) {
     erow *row = &E.document.buffer.rows[filerow];
     int32_t len = seg_to - seg_from;
     if (len <= 0) return;
@@ -1368,12 +1552,16 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
         uint8_t should_sel = (row_sel_start >= 0 &&
             filecol >= row_sel_start && filecol < row_sel_end) ||
             (match_start >= 0 && filecol >= match_start && filecol < match_end);
-        if (should_sel && !in_sel) {
+        uint8_t should_pair = has_pair &&
+            ((filerow == pair_y0 && filecol == pair_x0) ||
+             (filerow == pair_y1 && filecol == pair_x1));
+        uint8_t should_highlight = should_sel || should_pair;
+        if (should_highlight && !in_sel) {
             const char *sel_color = ansiColorCode(S.color_selection);
             abAppend(ab, sel_color, (int32_t)strlen(sel_color));
             abAppend(ab, "\x1b[7m", 4);
             in_sel = 1;
-        } else if (!should_sel && in_sel) {
+        } else if (!should_highlight && in_sel) {
             abAppendReset(ab);
             in_sel = 0;
         }
@@ -1385,7 +1573,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
          * attention). Reset immediately after since these are lone
          * bytes interleaved with normal text, unlike the selection
          * span above which covers a contiguous range. */
-        uint8_t is_invisible_glyph = !should_sel && emitted_len == 1 &&
+        uint8_t is_invisible_glyph = !should_highlight && emitted_len == 1 &&
             (line[j] == INVISIBLE_SPACE_GLYPH || line[j] == INVISIBLE_TAB_GLYPH) &&
             S.show_invisibles;
         if (is_invisible_glyph) {
@@ -1404,7 +1592,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
          * for this row (see editorUpdateRow()), so this is a no-op in
          * that case without an extra flag check. */
         const char *syn_color = NULL;
-        if (!should_sel && !is_invisible_glyph) {
+        if (!should_highlight && !is_invisible_glyph) {
             if (row->hl && rendercol < row->rsize) {
                 syn_color = syntaxColorFor((enum syntaxHighlight)row->hl[rendercol], &S);
             } else if (S.color_syntax_normal != COLOR_TERMINAL_DEFAULT) {
@@ -1470,45 +1658,6 @@ static void editorDrawGutter(struct abuf *ab, int32_t gutter, int32_t filerow, u
  * without knowing to press F1, but it still has to fit a small
  * terminal, so it lists the way out and the way to get help rather
  * than trying to summarize the whole keymap. */
-/* Splash uses the startup choice; Info chooses again on each opening. */
-static const char *const slogans[] = {
-    "The terminal editor your fingers already know.",
-    "You already know how to exit.",
-    "No modes, no spells. Just edit.",
-    "Fast in the shell, familiar to your hands.",
-    "Text editing, not piano lessons.",
-    "Pure C. Familiar keys. Just edit.",
-    "Built for muscle memory.",
-    "Ctrl+S saves. Ctrl+Q quits.",
-    "The terminal editor that respects your desktop habits.",
-    "Desktop shortcuts at the command line.",
-    "Open a file. Start typing.",
-    "Small editor. Familiar shortcuts.",
-    "No external libraries. Familiar muscle memory.",
-    "Forget :wq. Save with Ctrl+S, quit with Ctrl+Q."
-};
-static const char *sessionSlogan;
-
-static const char *splashLines[] = {
-    "tinyedit",
-    NULL, /* session slogan, assigned at startup */
-    NULL,
-    "version " TE_VERSION,
-    "by Roberto Bissanti",
-    "MIT licensed -- free to use and redistribute",
-    NULL,
-    /* Padded to a common width so the block's own centering can't
-     * stagger them: these four must share one left edge for their two
-     * key columns to line up. */
-    "Ctrl-O  open a file        Ctrl-S  save    ",
-    "Ctrl-F  find               F4      save as ",
-    "Ctrl-Z  undo               F2      settings",
-    "Ctrl-Q  quit               F1      help    ",
-    NULL,
-    "Start typing, or press F3 for details",
-};
-static const int32_t splashLineCount =
-    (int32_t)(sizeof(splashLines) / sizeof(splashLines[0]));
 
 static void editorChooseSlogan(void) {
     uint32_t count = (uint32_t)(sizeof(slogans) / sizeof(slogans[0]));
@@ -1604,6 +1753,8 @@ static void editorDrawSplashRow(struct abuf *ab, int32_t y, int32_t textcols) {
 static void editorDrawRows(struct abuf *ab) {
     int32_t sel_y0 = 0, sel_x0 = 0, sel_y1 = 0, sel_x1 = 0;
     uint8_t has_sel = editorSelectionRange(&E.document.selection, &E.document.cursor, &sel_y0, &sel_x0, &sel_y1, &sel_x1);
+    int32_t pair_y0 = -1, pair_x0 = -1, pair_y1 = -1, pair_x1 = -1;
+    uint8_t has_pair = editorMatchingPairAtCursor(&pair_y0, &pair_x0, &pair_y1, &pair_x1);
     int32_t gutter = editorGutterWidth();
     int32_t textcols = editorTextCols();
     int32_t wrapcols = editorSoftWrapCols();
@@ -1624,7 +1775,8 @@ static void editorDrawRows(struct abuf *ab) {
                 if (len < 0) len = 0;
                 if (len > textcols) len = textcols;
                 editorDrawRowSegment(ab, filerow, E.view.coloff, E.view.coloff + len,
-                    has_sel, sel_y0, sel_x0, sel_y1, sel_x1);
+                    has_sel, sel_y0, sel_x0, sel_y1, sel_x1,
+                    has_pair, pair_y0, pair_x0, pair_y1, pair_x1);
                 if (editorRowTerminatorHighlighted(filerow, has_sel, sel_y0, sel_y1))
                     editorDrawHighlightedTerminator(ab);
             }
@@ -1662,7 +1814,8 @@ static void editorDrawRows(struct abuf *ab) {
         int32_t seg_to = editorSegVisibleEnd(row, nseg, row->seg_start, seg);
 
         editorDrawGutter(ab, gutter, filerow, seg > 0);
-        editorDrawRowSegment(ab, filerow, seg_from, seg_to, has_sel, sel_y0, sel_x0, sel_y1, sel_x1);
+        editorDrawRowSegment(ab, filerow, seg_from, seg_to, has_sel, sel_y0, sel_x0, sel_y1, sel_x1,
+            has_pair, pair_y0, pair_x0, pair_y1, pair_x1);
 
         /* End-of-line glyph: only after the LAST visual segment of a
          * logical row (seg == nseg - 1), not after every wrapped
@@ -2054,8 +2207,14 @@ static void editorMoveCursorWord(uint8_t forward) {
             }
             return;
         }
-        while (E.document.cursor.cx < row->size && isspace((unsigned char)row->chars[E.document.cursor.cx])) E.document.cursor.cx++;
-        while (E.document.cursor.cx < row->size && !isspace((unsigned char)row->chars[E.document.cursor.cx])) E.document.cursor.cx++;
+        while (E.document.cursor.cx < row->size && isspace((unsigned char)row->chars[E.document.cursor.cx])) {
+            size_t step = utf8NextCharLen(row->chars, (size_t)E.document.cursor.cx, (size_t)row->size);
+            E.document.cursor.cx += (int32_t)(step ? step : 1);
+        }
+        while (E.document.cursor.cx < row->size && !isspace((unsigned char)row->chars[E.document.cursor.cx])) {
+            size_t step = utf8NextCharLen(row->chars, (size_t)E.document.cursor.cx, (size_t)row->size);
+            E.document.cursor.cx += (int32_t)(step ? step : 1);
+        }
     } else {
         if (E.document.cursor.cx == 0) {
             if (E.document.cursor.cy > 0) {
@@ -2065,9 +2224,19 @@ static void editorMoveCursorWord(uint8_t forward) {
             return;
         }
         erow *row = &E.document.buffer.rows[E.document.cursor.cy];
-        int32_t i = E.document.cursor.cx - 1;
-        while (i > 0 && isspace((unsigned char)row->chars[i])) i--;
-        while (i > 0 && !isspace((unsigned char)row->chars[i - 1])) i--;
+        int32_t i = E.document.cursor.cx;
+        while (i > 0) {
+            size_t step = utf8PrevCharLen(row->chars, (size_t)i);
+            int32_t prev = i - (int32_t)(step ? step : 1);
+            if (!isspace((unsigned char)row->chars[prev])) break;
+            i = prev;
+        }
+        while (i > 0) {
+            size_t step = utf8PrevCharLen(row->chars, (size_t)i);
+            int32_t prev = i - (int32_t)(step ? step : 1);
+            if (isspace((unsigned char)row->chars[prev])) break;
+            i = prev;
+        }
         E.document.cursor.cx = i;
     }
 }
@@ -2594,9 +2763,6 @@ static uint8_t editorFindFrom(const char *query, int32_t from_y, int32_t from_x,
 }
 
 static void editorFindCallback(char *query, int32_t key) {
-    static int32_t last_cy = -1, last_cx = -1, last_end_y = -1,
-        last_end_x = 0, last_len = 0;
-
     if (key == '\r' || key == '\x1b') {
         if (key == '\x1b') {
             E.document.cursor.cx = E.search.saved_cx;
@@ -3072,54 +3238,6 @@ static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected
  * Kept as a flat array rather than scattered doc-comments so this is
  * the one place to update when a keybinding changes -- easy to miss
  * a case in editorProcessKeypress() otherwise. */
-static const struct helpEntry helpEntries[] = {
-    { NULL, "Movement" },
-    { "Arrows, Home, End, PageUp/Down", "Move cursor" },
-    { "Ctrl-Home/End (or Ctrl-PageUp/Down)", "Jump to start/end of the file" },
-    { "Alt+Left/Right (or Esc b / Esc f)", "Jump by word" },
-    { "Mouse click (if enabled, see F2)", "Position cursor" },
-    { "Mouse wheel (if enabled, see F2)", "Scroll view (cursor/selection unaffected)" },
-    { NULL, "Editing" },
-    { "Enter", "New line (auto-indents if enabled)" },
-    { "Tab", "Indent (spaces or literal tab, see F2)" },
-    { "Tab (with selection)", "Indent every selected line one level" },
-    { "Shift-Tab", "Outdent selected lines, or the current one" },
-    { "( { [ \" ` $", "Auto-close pair / skip over / wrap selection" },
-    { "'", "Same, only if auto-close single quote is on (F2, off by default)" },
-    { "> in XML/HTML", "Insert matching end tag (except HTML void elements)" },
-    { "Backspace / Delete", "Delete character (UTF-8 aware)" },
-    { "Ctrl-Z / Ctrl-Y", "Undo / redo" },
-#ifdef __APPLE__
-    { "Cmd-S/F/Z/O/W/C/X/A/Q/G/R (Ghostty opt-in)", "Save/find/undo/open/close/copy/cut/select all/quit/regex/replace; see README" },
-#endif
-    { "Paste (terminal-native, e.g. Cmd+V)", "Bulk insert, no auto-close on pasted text" },
-    { NULL, "Selection & clipboard" },
-    { "Shift+Arrows, Shift+PageUp/Down", "Extend selection" },
-    { "Shift+Home/End", "Extend selection to start/end of line" },
-    { "Shift+Ctrl+Home/End", "Extend selection to start/end of file" },
-    { "Mouse drag (if enabled, see F2)", "Extend selection" },
-    { "Ctrl-T", "Toggle selection mode (works on every terminal)" },
-    { "Ctrl-A", "Select all" },
-    { "Ctrl-C / Ctrl-X / Ctrl-V", "Copy / cut / paste (system clipboard)" },
-    { NULL, "Find" },
-    { "Ctrl-F", "Incremental find" },
-    { "Ctrl-G (inside Find)", "Toggle regex mode (POSIX extended)" },
-    { "Ctrl-R (inside Find)", "Switch to find & replace" },
-    { NULL, "File & editor" },
-    { "Ctrl-S", "Save" },
-    { "F4 (or Ctrl-Shift-S, terminal permitting)", "Save as (always prompts for a filename)" },
-    { "Ctrl-O", "Open another file (offers to save current file first)" },
-    { "Ctrl-W", "Close current file without quitting" },
-    { "Ctrl-Q", "Quit (offers to save first if unsaved)" },
-    { "F2", "Settings panel (Ctrl-D inside it resets to defaults)" },
-    { "F1", "This help screen" },
-    { "F3", "Info screen: version, author, current file stats" },
-    { NULL, "Configuration files (see README.md for details)" },
-    { "~/.tinyeditrc", "All settings from F2, plain key=value, hand-editable" },
-    { "~/.tinyedit/syntax/*.conf", "Custom syntax-highlighted languages (any filename)" },
-    { "~/.tinyedit/backup/", "Crash-recovery backups (never next to your files)" },
-};
-static const int32_t helpEntryCount = (int32_t)(sizeof(helpEntries) / sizeof(helpEntries[0]));
 
 /* Full-screen static help overlay (F1). No editable state, so unlike
  * editorSettingsScreen() this doesn't need a local copy or Ctrl-S --
@@ -3595,12 +3713,6 @@ static void editorSettingsScreen(void) {
  * multi-line code blocks), and it was walked back. Curly quotes
  * («» "" '') aren't in this table -- see autoCloseMultiByteTable
  * below for why they're handled separately. */
-static const struct autoClosePair autoCloseTable[] = {
-    { '(', ')' }, { '{', '}' }, { '[', ']' },
-    { '"', '"' }, { '\'', '\'' }, { '$', '$' }, { '`', '`' },
-};
-static const int32_t autoCloseTableCount =
-    (int32_t)(sizeof(autoCloseTable) / sizeof(autoCloseTable[0]));
 
 static const struct autoClosePair *editorAutoCloseFor(int32_t c) {
     /* Single quote has its own opt-in (default off, see
@@ -3648,10 +3760,6 @@ static uint8_t editorIsXmlNameByte(uint8_t byte) {
 /* HTML void elements have no end tag. XML uses the same names freely, so
  * this check deliberately applies only to HTML files. */
 static uint8_t editorIsHtmlVoidTag(const char *name, int32_t len) {
-    static const char *const void_tags[] = {
-        "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
-        "meta", "param", "source", "track", "wbr"
-    };
     const int32_t void_tag_count = (int32_t)(sizeof(void_tags) / sizeof(void_tags[0]));
 
     for (int32_t i = 0; i < void_tag_count; i++) {
@@ -3730,13 +3838,6 @@ static void editorTryAutoCloseXmlTag(void) {
  * arrived" once editorReadMultiByteKey() has assembled it. Each
  * open/close is the raw UTF-8 bytes (not a codepoint) since that's
  * what's compared against/written into row->chars. */
-static const struct autoCloseMultiByte autoCloseMultiByteTable[] = {
-    { "\xc2\xab", 2, "\xc2\xbb", 2 },             /* « » */
-    { "\xe2\x80\x9c", 3, "\xe2\x80\x9d", 3 },     /* “ ” */
-    { "\xe2\x80\x98", 3, "\xe2\x80\x99", 3 },     /* ‘ ’ */
-};
-static const int32_t autoCloseMultiByteCount =
-    (int32_t)(sizeof(autoCloseMultiByteTable) / sizeof(autoCloseMultiByteTable[0]));
 
 /* Reads the remaining bytes of a UTF-8 sequence whose lead byte
  * (`lead`, already consumed from the input) was passed in, via

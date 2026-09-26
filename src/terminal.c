@@ -31,10 +31,28 @@ int32_t pending_key = -1;
 static uint8_t kitty_keyboard_enabled = 0;
 static uint8_t kitty_keyboard_cleanup_registered = 0;
 static uint8_t ghostty_bindings_cleanup_registered = 0;
+static const char *const managed_lines[] = {
+    "keybind = cmd+w=unbind\n",
+    "keybind = cmd+f=unbind\n",
+    "keybind = cmd+z=unbind\n",
+    "keybind = cmd+a=unbind\n",
+    "keybind = cmd+q=unbind\n",
+    NULL
+};
+static const char managed_start[] =
+    "# >>> tinyedit Ghostty Command-key bindings >>>\n";
+static const char managed_end[] =
+    "# <<< tinyedit Ghostty Command-key bindings <<<\n";
+static const char legacy_header[] =
+    "# Lascia passare le scorciatoie a Tinyedit tramite Kitty keyboard protocol.\n";
+static const char ghostty_reload_script[] =
+    "tell application \"Ghostty\" to perform action \"reload_config\" "
+    "on focused terminal of selected tab of front window";
 
 static void terminalRemoveGhosttyCommandBindings(void);
 static uint8_t terminalReloadGhosttyConfiguration(void);
 #endif
+static const char paste_end_marker[] = "\x1b[201~";
 
 
 void terminalDie(const char *s) {
@@ -122,20 +140,6 @@ void terminalEnableKittyKeyboard(void) {
  * encode them. The sentinels make this block uniquely Tinyedit-owned: it can
  * be replaced without duplication and deleted without touching other config. */
 uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
-    static const char *const managed_lines[] = {
-        "keybind = cmd+w=unbind\n",
-        "keybind = cmd+f=unbind\n",
-        "keybind = cmd+z=unbind\n",
-        "keybind = cmd+a=unbind\n",
-        "keybind = cmd+q=unbind\n",
-        NULL
-    };
-    static const char managed_start[] =
-        "# >>> tinyedit Ghostty Command-key bindings >>>\n";
-    static const char managed_end[] =
-        "# <<< tinyedit Ghostty Command-key bindings <<<\n";
-    static const char legacy_header[] =
-        "# Lascia passare le scorciatoie a Tinyedit tramite Kitty keyboard protocol.\n";
     const char *home = getenv("HOME");
     const char *xdg = getenv("XDG_CONFIG_HOME");
     char candidates[4][PATH_MAX];
@@ -227,9 +231,6 @@ uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
  * its documented macOS automation interface; silence its diagnostic output
  * because Tinyedit owns the terminal screen while this runs. */
 static uint8_t terminalReloadGhosttyConfiguration(void) {
-    static const char script[] =
-        "tell application \"Ghostty\" to perform action \"reload_config\" "
-        "on focused terminal of selected tab of front window";
     pid_t pid = fork();
     if (pid == -1) return 0;
     if (pid == 0) {
@@ -239,7 +240,7 @@ static uint8_t terminalReloadGhosttyConfiguration(void) {
             dup2(nullfd, STDERR_FILENO);
             close(nullfd);
         }
-        execl("/usr/bin/osascript", "osascript", "-e", script, (char *)NULL);
+        execl("/usr/bin/osascript", "osascript", "-e", ghostty_reload_script, (char *)NULL);
         _exit(127);
     }
     int status;
@@ -360,6 +361,8 @@ static int32_t terminalCsiUSuperShortcut(int32_t codepoint) {
 int32_t terminalReadKey(
 #ifdef __APPLE__
     uint8_t mac_command_keys
+#else
+    void
 #endif
 ) {
     if (pending_key >= 0) {
@@ -697,16 +700,15 @@ char *terminalReadPastedText(size_t *outlen) {
      * else, doesn't falsely end the paste early -- those bytes get
      * appended to the output like any other pasted byte once the
      * mismatch is detected). */
-    static const char end_marker[] = "\x1b[201~";
     int32_t matched = 0;
 
     while (1) {
         uint8_t c;
         if (read(STDIN_FILENO, &c, 1) != 1) break; /* stream ended unexpectedly; return what we have */
 
-        if (c == (uint8_t)end_marker[matched]) {
+        if (c == (uint8_t)paste_end_marker[matched]) {
             matched++;
-            if (matched == (int32_t)(sizeof(end_marker) - 1)) break; /* full end marker consumed */
+            if (matched == (int32_t)(sizeof(paste_end_marker) - 1)) break; /* full end marker consumed */
             continue;
         }
 
@@ -718,12 +720,12 @@ char *terminalReadPastedText(size_t *outlen) {
                 while (len + (size_t)matched > cap) cap *= 2;
                 buf = teRealloc(buf, cap);
             }
-            memcpy(&buf[len], end_marker, (size_t)matched);
+            memcpy(&buf[len], paste_end_marker, (size_t)matched);
             len += (size_t)matched;
             matched = 0;
         }
 
-        if (c == (uint8_t)end_marker[0]) {
+        if (c == (uint8_t)paste_end_marker[0]) {
             /* `c` itself starts a fresh potential match (e.g. the
              * mismatch above was itself an ESC starting a different
              * sequence) -- don't append it yet, let the next iteration

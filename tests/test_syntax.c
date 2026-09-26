@@ -1,4 +1,5 @@
 #include "syntax.h"
+#include "alloc.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -10,9 +11,9 @@ static int failures = 0;
 static void initRow(erow *row, const char *text) {
     memset(row, 0, sizeof(*row));
     row->size = (int32_t)strlen(text);
-    row->chars = strdup(text);
+    row->chars = teStrdup(text);
     row->rsize = (int32_t)strlen(text);
-    row->render = strdup(text);
+    row->render = teStrdup(text);
 }
 
 static void freeRow(erow *row) {
