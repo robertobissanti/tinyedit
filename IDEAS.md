@@ -29,12 +29,12 @@ momento buono non convincono più.
     fence** (es. ` ```python ` colora il contenuto come Python) —
     deliberatamente fuori scope per ora, stessa politica "niente
     sintassi annidata" della versione C-only originale.
-- **Multi-file / buffer switching** — aprire più file nella stessa
-  sessione, passare tra buffer con una combinazione tipo `Ctrl-Tab`.
-  Cambia parecchio l'architettura attuale (che assume un solo buffer
-  globale in `editorConfig`) — da valutare se vale la complessità o se
-  è meglio lasciare "un processo, un file" e affidarsi a `tmux`/finestre
-  multiple del terminale.
+- **Multi-file / buffer switching** — tenere aperti più file nella stessa
+  sessione e passare tra i buffer, per esempio con `Ctrl-Tab`. Ogni buffer
+  dovrebbe conservare il proprio stato (modifiche non salvate, cursore,
+  selezione, scroll e undo). Richiede di superare l'attuale modello con un
+  solo buffer globale in `editorConfig`; valutare interfaccia e complessità
+  prima di pianificarlo.
 - **Copia/incolla di riga intera con scorciatoia dedicata** (stile
   vim `dd`/`yy`/`p`) come alternativa più rapida alla selezione manuale.
 - **Reindentazione dell'intero file** — comando esplicito che ricostruisce
@@ -54,6 +54,17 @@ momento buono non convincono più.
 
 ## Interfaccia
 
+- **Barra laterale di navigazione file** — un albero di cartelle e file,
+  richiamabile e richiudibile, per aprire documenti senza digitare il
+  percorso. Da valutare insieme al multi-buffer: la navigazione resta
+  utile anche con un solo documento, ma aprire più file senza perdere il
+  precedente ne aumenterebbe l'utilità. La barra deve lasciare spazio
+  sufficiente al testo nei terminali stretti.
+- **Completamento dei percorsi con Tab nei prompt Open e Save as** —
+  completare nomi di cartelle e file a partire dal percorso digitato,
+  mostrando o facendo scorrere le alternative quando ce n'è più di una.
+  Riutilizzare lo stesso comportamento anche nel prompt del primo
+  salvataggio di un buffer senza nome.
 - **Mouse support opzionale** — vedi nota in `TODO.md`: possibile solo
   come opzione esplicita via config, mai default, perché disattiva la
   selezione nativa del terminale.
@@ -65,6 +76,17 @@ momento buono non convincono più.
 
 ## Portabilità
 
+- **Build `make vanilla`** — compilare un secondo eseguibile essenziale
+  dallo stesso codice, usando un flag di compilazione (per esempio
+  `TE_VANILLA`) che escluda le funzioni non necessarie: inizialmente
+  menu e syntax highlighting a colori. Dove possibile, il Makefile
+  esclude i relativi moduli; nei file condivisi, sezioni condizionali
+  impediscono di compilare chiamate e stato associati. Non basta
+  disattivare le funzioni a runtime: il codice deve mancare dal binario
+  vanilla. Definire il resto del perimetro prima di implementarlo,
+  conservando le basi di editing, apertura e salvataggio, protezione
+  dalle modifiche non salvate e gestione corretta di UTF-8. Misurare
+  dimensione del binario e complessità aggiunta dai `#ifdef`.
 - **Windows/WSL**: al momento il progetto assume POSIX (termios, raw
   mode via `tcsetattr`). Un porting Windows nativo richiederebbe la
   Console API di Windows (non termios) — fuori scope a meno di richiesta

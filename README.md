@@ -50,7 +50,7 @@ for real editing rather than just demonstrating how a terminal works.
 
 | Area | What you get |
 |---|---|
-| Editing | Familiar cursor movement, word jumps, selection, cut/copy/paste, automatic indentation, block indent/outdent with Tab, configurable pair and XML/HTML tag closing, and an undo history of up to 2,000 steps (200 by default). |
+| Editing | Familiar cursor movement, word jumps, selection, cut/copy/paste, automatic indentation, block indent/outdent with Tab, configurable pair and XML/HTML tag closing, matching-bracket highlighting, and an undo history of up to 2,000 steps (200 by default). |
 | Files | Open or switch files without restarting tinyedit, start a named file before it exists, save atomically, and recover unsaved work from automatic backups after a crash. |
 | Search | Incremental literal or POSIX regular-expression search, match navigation, and interactive search and replace. |
 | Syntax highlighting | Built-in support for C/C++, Python, Shell, JavaScript/TypeScript, Markdown, HTML/XML, and CSS, including function names. Simple C-like languages and HTML-based templates (Nunjucks, Jinja, Liquid, Twig) can be added with a user configuration file; ready-made ones ship in `syntax-configs/`. |
@@ -58,7 +58,7 @@ for real editing rather than just demonstrating how a terminal works.
 | Long lines | Lines wrap at the terminal edge, preferably at word boundaries. Navigation follows the visible wrapped rows, without imposing a fixed line-length limit. |
 | Clipboard | Uses the native macOS clipboard or the available Wayland/X11 clipboard tool directly, without sending commands through a shell. |
 | Terminal input | Fast bracketed paste, optional mouse selection and scrolling, and key-sequence handling for common macOS and Linux terminals. |
-| Interface | Optional line numbers and top bar, visible whitespace, file statistics, in-editor help, and a persistent settings panel. |
+| Interface | A persistent menu bar, optional line numbers and top bar, visible whitespace, file statistics, in-editor help, and a settings panel. |
 | Configuration | Settings live in `~/.tinyeditrc`; colors, tabs, wrapping, mouse behavior, interface elements, and editing assists can all be changed from `F2`. |
 | Portability | One C99 binary and no third-party runtime libraries. The supported targets are POSIX systems such as macOS and Linux. |
 | Testing | Syntax, settings, backup, terminal-input, key-binding, and very-long-line behavior are covered by `make test`; sample files are included for hands-on checks. |
@@ -133,6 +133,7 @@ make install PREFIX=/usr/local
 | `F1` | Help screen listing every shortcut (any key closes it) |
 | `F3` | Info screen: version, author, and stats about the current file |
 | `F2` | Settings panel (Up/Down to navigate, Enter/Space to edit, Left/Right to cycle options, `Ctrl-D` resets defaults, `Ctrl-S` saves and exits, Esc exits with a confirmation prompt if there are unsaved changes) |
+| `F10` | Open or close the menu; use arrows to navigate, Enter to choose, or Esc to dismiss |
 | `Ctrl-S` | Save (asks for a filename if none is set) |
 | `F4` (or `Ctrl-Shift-S` where the terminal sends it) | Save as: always asks for a filename, even when one is already set |
 | `Ctrl-O` | Open another file by entering its path; offers to save the current file first. A missing path becomes a new file on first save. |
@@ -200,6 +201,29 @@ The change takes effect
 immediately: toggling it in `F2` and pressing `Ctrl-S` applies it
 right away, no restart needed.
 
+### Menus
+
+The menu bar is visible below the optional top bar by default. Press `F10` to
+open it, use Left/Right to switch menus and Up/Down to select a command, then
+press Enter to run it or Esc to close it. With `mouse_enabled` on, you can
+click a menu, hover over items or another menu to change the selection, and
+click an item to run it; clicking outside closes the open menu.
+
+`TinyEdit` contains Info, Settings, and Quit; `File` has file operations;
+`Edit` has editing commands and Find; `View` has checked switches for line
+numbers, the top bar, the menu itself, and invisible characters; and `Help`
+opens the shortcut reference. Existing keyboard shortcuts appear beside
+commands, with `^` meaning Ctrl (for example, `^S` means `Ctrl-S`). The
+`F10 Menu` hint in the bottom message bar also opens the menu when clicked.
+
+To hide the menu bar, turn off **Enable F10 menu** in `F2` Settings or set
+`show_menu = false` in `~/.tinyeditrc`. `F2` remains available to turn it back
+on.
+
+![tinyedit File menu](imgs/menu-view.png)
+
+*The File menu shows commands and their keyboard shortcuts.*
+
 ### Settings and appearance
 
 Line numbers (gutter), tab width, interface colors, soft-wrap, the top bar,
@@ -259,6 +283,13 @@ its own (inline code) typed several times in a row on the same line,
 not only as this pair's closer. The triple-backtick Markdown code
 fence (`` ``` ``) is intentionally not auto-closed, as auto-closing
 multi-line fences often interferes with regular editing.
+
+When the cursor is on or immediately after `(`, `)`, `[`, `]`, `{`, or `}`,
+tinyedit highlights that bracket and its matching partner using the selection
+color. It follows nested brackets across lines and works on existing or pasted
+text too, independently of `auto_close_pairs`. Matching uses the text itself;
+it does not distinguish brackets inside strings or comments. Quotes, backticks,
+and `$` are not included in this highlight.
 
 In `.xml`, `.html`, and `.htm` files, typing `>` immediately after an
 opening tag also inserts its matching end tag and leaves the cursor between
@@ -638,6 +669,10 @@ and asks whether to restore the changes before proceeding.
 - `src/settings.c`, `inc/settings.h`: Persistence of user settings
   (`~/.tinyeditrc`), a descriptor table that drives both the file
   parser and the `F2` panel.
+- `src/command.c`, `inc/command.h`: Shared command labels, shortcuts, and
+  links to settings toggles.
+- `src/menu.c`, `inc/menu.h`: Menu bar and popup drawing, plus keyboard and
+  mouse navigation.
 - `src/syntax.c`, `inc/syntax.h`: Syntax highlighting, with a generic tokenizer
   for "C-like" languages driven by per-language tables (including
   ones loaded at runtime from `~/.tinyedit/syntax/*.conf`), plus
