@@ -25,6 +25,38 @@ navigation and selection (Nano). tinyedit reduces that friction with familiar
 shortcuts such as `Ctrl-C`, `Ctrl-V`, `Ctrl-Z`, and `Ctrl-F`, Shift+Arrow text
 selection, and optional mouse support for clicking and scrolling.
 
+## Contents
+
+- [Why it exists](#why-it-exists)
+- [Features at a glance](#features-at-a-glance)
+- [Homebrew](#homebrew-macos--linux)
+- [Build](#build)
+- [Usage](#usage)
+  - [Optional command installation](#optional-command-installation)
+  - [Keyboard shortcuts](#keyboard-shortcuts)
+  - [Experimental macOS Command keys in Ghostty](#experimental-macos-command-keys-in-ghostty)
+  - [Opening and closing files](#opening-and-closing-files)
+  - [File information](#file-information)
+  - [Fast terminal paste](#fast-terminal-paste)
+  - [Mouse support](#mouse-support)
+  - [Menus](#menus)
+  - [Settings and appearance](#settings-and-appearance)
+  - [Indentation and tabs](#indentation-and-tabs)
+  - [Automatic pair and tag closing](#automatic-pair-and-tag-closing)
+  - [Invisible characters and colors](#invisible-characters-and-colors)
+  - [Soft wrapping and navigation](#soft-wrapping-and-navigation)
+  - [Top and status bars](#top-and-status-bars)
+  - [UTF-8 text](#utf-8-text)
+  - [Syntax highlighting](#syntax-highlighting)
+  - [Extending syntax highlighting](#extending-syntax-highlighting)
+    - [Markup templates](#markup-templates)
+  - [Ready-made syntax configurations](#ready-made-syntax-configurations)
+  - [Find and replace](#find-and-replace)
+- [Backup and crash recovery](#backup-and-crash-recovery)
+- [Code layout](#code-layout)
+- [Project status](#project-status)
+- [Author and license](#author-and-license)
+
 ## Why it exists
 
 I kept building tinyedit because I became convinced that a terminal editor
@@ -58,7 +90,8 @@ for real editing rather than just demonstrating how a terminal works.
 | Long lines | Lines wrap at the terminal edge, preferably at word boundaries. Navigation follows the visible wrapped rows, without imposing a fixed line-length limit. |
 | Clipboard | Uses the native macOS clipboard or the available Wayland/X11 clipboard tool directly, without sending commands through a shell. |
 | Terminal input | Fast bracketed paste, optional mouse selection and scrolling, and key-sequence handling for common macOS and Linux terminals. |
-| Interface | A persistent menu bar, optional line numbers and top bar, visible whitespace, file statistics, in-editor help, and a settings panel. |
+| [Menus](#menus) | A persistent menu bar with TinyEdit, File, Edit, View, and Help menus; keyboard and optional mouse navigation; shortcuts beside commands; and checked View settings. |
+| Interface | Optional line numbers and top bar, visible whitespace, file statistics, in-editor help, and a settings panel. |
 | Configuration | Settings live in `~/.tinyeditrc`; colors, tabs, wrapping, mouse behavior, interface elements, and editing assists can all be changed from `F2`. |
 | Portability | One C99 binary and no third-party runtime libraries. The supported targets are POSIX systems such as macOS and Linux. |
 | Testing | Syntax, settings, backup, terminal-input, key-binding, and very-long-line behavior are covered by `make test`; sample files are included for hands-on checks. |
