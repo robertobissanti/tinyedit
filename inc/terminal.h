@@ -29,6 +29,7 @@ uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled);
 uint8_t terminalInputReady(void);
 void terminalEnableMouseReporting(void);
 void terminalDisableMouseReporting(void);
+void terminalSetMenuMouseMotion(uint8_t enabled);
 void terminalEnableResizeHandling(void);
 int32_t terminalReadKey(
 #ifdef __APPLE__

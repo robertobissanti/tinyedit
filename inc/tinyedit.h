@@ -26,7 +26,7 @@
 
 /* ---- config -------------------------------------------------------- */
 
-#define TE_VERSION "0.3.3"
+#define TE_VERSION "0.3.4"
 #define ABUF_INIT {NULL, 0}
 #define INVISIBLE_SPACE_GLYPH '.'
 #define INVISIBLE_TAB_GLYPH '>'
@@ -76,6 +76,7 @@ enum editorKey {
     F2_KEY,
     F3_KEY,
     F4_KEY,
+    F10_KEY,
     /* Save As, bound to F4 (see editorReadKey()'s SS3 handling) and,
      * where the terminal actually sends it as a distinct sequence
      * rather than the same byte as plain Ctrl-S, to Ctrl-Shift-S via

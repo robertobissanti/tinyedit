@@ -120,6 +120,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, color_statusbar_text), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "show_top_bar", "Show top bar", SETTING_BOOL,
       offsetof(struct editorSettings, show_top_bar), 0, 0, NULL, 0 },
+    { "show_menu", "Enable F10 menu", SETTING_BOOL,
+      offsetof(struct editorSettings, show_menu), 0, 0, NULL, 0 },
     { "soft_wrap", "Max wrap width (0=window edge)", SETTING_INT,
       offsetof(struct editorSettings, soft_wrap), 0, 500, NULL, 0 },
     { "scrolloff", "Cursor margin (rows)", SETTING_INT,
@@ -176,6 +178,27 @@ static const int32_t *settingSlotConst(const struct editorSettings *s, const str
     return (const int32_t *)((const char *)s + d->offset);
 }
 
+const struct settingDescriptor *settingsFind(const char *key) {
+    for (int32_t i = 0; i < settingDescriptorCount; i++) {
+        if (strcmp(settingDescriptors[i].key, key) == 0)
+            return &settingDescriptors[i];
+    }
+    return NULL;
+}
+
+uint8_t settingsGetBool(const struct editorSettings *settings, const char *key) {
+    const struct settingDescriptor *descriptor = settingsFind(key);
+    return descriptor && descriptor->type == SETTING_BOOL &&
+        *settingSlotConst(settings, descriptor) != 0;
+}
+
+uint8_t settingsToggleBool(struct editorSettings *settings, const char *key) {
+    const struct settingDescriptor *descriptor = settingsFind(key);
+    if (!descriptor || descriptor->type != SETTING_BOOL) return 0;
+    *settingSlot(settings, descriptor) = !*settingSlot(settings, descriptor);
+    return 1;
+}
+
 void settingsDefaults(struct editorSettings *out) {
     out->show_line_numbers = 1;
     out->tab_stop = 4;
@@ -186,6 +209,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_statusbar = COLOR_WHITE_DARK;
     out->color_statusbar_text = COLOR_WHITE_LIGHT;
     out->show_top_bar = 0;
+    out->show_menu = 1;
     out->soft_wrap = 0;
     out->scrolloff = 0;
     out->home_end_visual_line = 1;

@@ -285,14 +285,22 @@ uint8_t terminalInputReady(void) {
  * Cmd+C/Cmd+V on Ghostty), so it must be an explicit opt-in. Still registered
  * with atexit() once turned on, same reasoning as bracketed paste:
  * must not leak into whatever runs in this terminal after tinyedit
- * quits, regardless of how the setting was left. */
+ * quits, regardless of how the setting was left. While a menu is open,
+ * ?1003 enables motion without a button so hovering can select items;
+ * closing the menu restores ?1002 behavior. */
 void terminalDisableMouseReporting(void) {
-    write(STDOUT_FILENO, "\x1b[?1002l\x1b[?1006l\x1b[>0s", 21);
+    write(STDOUT_FILENO, "\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[>0s", 29);
 }
 
 void terminalEnableMouseReporting(void) {
     atexit(terminalDisableMouseReporting);
     write(STDOUT_FILENO, "\x1b[>1s\x1b[?1002h\x1b[?1006h", 21);
+}
+
+void terminalSetMenuMouseMotion(uint8_t enabled) {
+    /* 1003 replaces 1002 in some terminals; restore 1002 when the menu closes. */
+    const char *sequence = enabled ? "\x1b[?1002l\x1b[?1003h" : "\x1b[?1003l\x1b[?1002h";
+    write(STDOUT_FILENO, sequence, 16);
 }
 
 static void handleWinch(int sig) {
@@ -453,6 +461,10 @@ int32_t terminalReadKey(
                         if (csi_term < 0x40 || csi_term > 0x7e)
                             editorDrainUnknownCsiSequence(16);
                     }
+                } else if (seq[1] == '2' && seq[2] == '1') {
+                    uint8_t term;
+                    if (read(STDIN_FILENO, &term, 1) != 1) return '\x1b';
+                    if (term == '~') return F10_KEY; /* common CSI F10 form: ESC[21~ */
                 } else if (seq[1] == '2' && seq[2] == '7') {
                     /* modifyOtherKeys reports Ghostty Shift+Enter as
                      * CSI 27;2;13~. It is a three-field sequence, unlike
