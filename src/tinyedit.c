@@ -10,6 +10,24 @@
  *
  * Build:  make
  * Run:    bin/tinyedit [filename]
+ *
+ * Module map (keep this list in sync whenever a source module is added,
+ * removed, or given a materially different responsibility):
+ *   alloc.c        checked allocation helpers
+ *   backup.c       crash-recovery snapshots and atomic-save support
+ *   buffer.c       document rows and text-buffer mutations
+ *   clipboard.c    system clipboard integration and local fallback
+ *   command.c      shared command metadata and setting-toggle links
+ *   editor_state.c editor-state initialization and cleanup
+ *   history.c      undo and redo snapshots
+ *   linenoise.c    historical line-editor implementation; not built
+ *   menu.c         rectangular menu overlay and its input navigation
+ *   render.c       shared layout calculations for rows and wrapped text
+ *   settings.c     persistent configuration parsing and serialization
+ *   syntax.c       filetype detection and syntax highlighting
+ *   terminal.c     raw terminal setup, input decoding, and terminal I/O
+ *   tinyedit.c     application flow, editor commands, screens, and drawing
+ *   utf8.c         UTF-8 decoding, navigation, and display-width helpers
  */
 
 #define _DEFAULT_SOURCE
@@ -24,7 +42,9 @@
 #include "history.h"
 #include "render.h"
 #include "clipboard.h"
+#include "command.h"
 #include "syntax.h"
+#include "menu.h"
 #include "terminal.h"
 #include "utf8.h"
 
@@ -45,6 +65,8 @@
 
 static struct editorConfig E;
 static struct editorSettings S;
+static struct editorMenu M;
+static uint8_t menu_mouse_motion_enabled;
 static int32_t last_cy = -1, last_cx = -1, last_end_y = -1,
     last_end_x = 0, last_len = 0;
 
@@ -572,6 +594,7 @@ static int32_t editorReadMultiByteKey(uint8_t lead, char *out);
 static void editorFreeUndoRedo(void);
 static void abAppend(struct abuf *ab, const char *s, int32_t len);
 static void abFree(struct abuf *ab);
+static void editorMenuAppend(void *context, const char *text, int32_t len);
 
 /* Prompt input is kept verbatim, but spaces/tabs are always rendered as
  * compact placeholders so whitespace is unambiguous while searching or
@@ -1251,6 +1274,10 @@ static void abAppend(struct abuf *ab, const char *s, int32_t len) {
     ab->len += len;
 }
 
+static void editorMenuAppend(void *context, const char *text, int32_t len) {
+    abAppend((struct abuf *)context, text, len);
+}
+
 static void abFree(struct abuf *ab) { free(ab->b); }
 
 /* Resets SGR attributes (colors, reverse-video, bold, ...) the same as
@@ -1389,7 +1416,7 @@ static int32_t editorTotalVideoRows(int32_t wrapcols) {
  * valid spot if the click landed outside the text (e.g. past the end
  * of a short line, in the gutter, or below the last line). Inverse of
  * the cursor-positioning math in editorRefreshScreen() (see
- * "cursor_row + 1 + (S.show_top_bar ? 1 : 0)" / "cursor_col +
+ * "cursor_row + 1 + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0)" / "cursor_col +
  * editorGutterWidth() + 1" there) -- kept as its own function since
  * both need the exact same coordinate transform and must not drift
  * apart from each other. Clicks in the gutter or status/message bars
@@ -1399,7 +1426,8 @@ static void editorMouseToCursor(int32_t screen_col, int32_t screen_row, int32_t 
     int32_t gutter = editorGutterWidth();
     int32_t wrapcols = editorSoftWrapCols();
 
-    int32_t cursor_row = screen_row - 1 - (S.show_top_bar ? 1 : 0);
+    int32_t cursor_row = screen_row - 1 - (S.show_top_bar ? 1 : 0) -
+        (S.show_menu ? 1 : 0);
     int32_t cursor_col = screen_col - 1 - gutter;
     if (cursor_row < 0) cursor_row = 0;
     if (cursor_col < 0) cursor_col = 0;
@@ -1982,6 +2010,15 @@ static void editorDrawMessageBar(struct abuf *ab) {
     }
     if (msglen && (E.ui.statusmsg_sticky || time(NULL) - E.ui.statusmsg_time < 5))
         abAppend(ab, msg, msglen);
+    if (S.show_menu && !M.open && E.view.screencols >= 8) {
+        char position[32];
+        int32_t row = E.view.screenrows + (S.show_top_bar ? 1 : 0) +
+            (S.show_menu ? 1 : 0) + 2;
+        int32_t len = snprintf(position, sizeof(position), "\x1b[%d;%dH", row,
+            E.view.screencols - 7);
+        abAppend(ab, position, len);
+        abAppend(ab, "F10 Menu", 8);
+    }
 }
 
 static void editorRefreshScreen(void) {
@@ -1990,7 +2027,8 @@ static void editorRefreshScreen(void) {
         winsize_changed = 0;
         int32_t rows, cols;
         if (terminalGetWindowSize(&rows, &cols) == 0) {
-            E.view.screenrows = rows - 2 - (S.show_top_bar ? 1 : 0); /* status bar + message bar (+ top bar) */
+            E.view.screenrows = rows - 2 - (S.show_top_bar ? 1 : 0) -
+                (S.show_menu ? 1 : 0); /* status/message bars plus optional top/menu bars */
             E.view.screencols = cols;
         }
         /* Shrinking the terminal can leave old rows visible past the
@@ -2016,12 +2054,15 @@ static void editorRefreshScreen(void) {
     abAppend(&ab, "\x1b[H", 3);
 
     editorDrawTopBar(&ab);
+    if (S.show_menu) menuDrawBar(&M, &S, editorMenuAppend, &ab);
     editorDrawRows(&ab);
     editorDrawStatusBar(&ab);
     editorDrawMessageBar(&ab);
+    if (S.show_menu) menuDrawPopup(&M, &S, S.show_top_bar ? 2 : 1,
+        editorMenuAppend, &ab);
 
-    char buf[32];
-    {
+    if (!M.open) {
+        char buf[32];
         int32_t wrapcols = editorSoftWrapCols();
         int32_t cursor_row, cursor_col;
         if (wrapcols > 0 && E.document.cursor.cy < E.document.buffer.row_count) {
@@ -2040,12 +2081,11 @@ static void editorRefreshScreen(void) {
             cursor_col = E.document.cursor.rx - E.view.coloff;
         }
         snprintf(buf, sizeof(buf), "\x1b[%d;%dH",
-            cursor_row + 1 + (S.show_top_bar ? 1 : 0),
+            cursor_row + 1 + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0),
             cursor_col + editorGutterWidth() + 1);
+        abAppend(&ab, buf, (int32_t)strlen(buf));
+        abAppend(&ab, "\x1b[?25h", 6);
     }
-    abAppend(&ab, buf, (int32_t)strlen(buf));
-
-    abAppend(&ab, "\x1b[?25h", 6);
 
     write(STDOUT_FILENO, ab.b, (size_t)ab.len);
     abFree(&ab);
@@ -3555,7 +3595,7 @@ static void editorSettingsSave(const struct editorSettings *edited) {
     if (previous.color_background != COLOR_TERMINAL_DEFAULT &&
         S.color_background == COLOR_TERMINAL_DEFAULT)
         write(STDOUT_FILENO, "\x1b[49m", 5);
-    if (S.show_top_bar != previous.show_top_bar)
+    if (S.show_top_bar != previous.show_top_bar || S.show_menu != previous.show_menu)
         winsize_changed = 1;
     if (S.tab_stop != previous.tab_stop ||
         S.show_invisibles != previous.show_invisibles ||
@@ -4079,8 +4119,57 @@ static void editorInsertCharAutoClose(int32_t c, uint8_t had_sel,
     editorInsertChar(c);
 }
 
+static int32_t editorMenuCommandKey(enum editorCommand command) {
+    switch (command) {
+        case CMD_INFO: return F3_KEY;
+        case CMD_SETTINGS: return F2_KEY;
+        case CMD_QUIT: return CTRL_KEY('q');
+        case CMD_OPEN: return CTRL_KEY('o');
+        case CMD_SAVE: return CTRL_KEY('s');
+        case CMD_SAVE_AS: return F4_KEY;
+        case CMD_CLOSE: return CTRL_KEY('w');
+        case CMD_UNDO: return CTRL_KEY('z');
+        case CMD_REDO: return CTRL_KEY('y');
+        case CMD_CUT: return CTRL_KEY('x');
+        case CMD_COPY: return CTRL_KEY('c');
+        case CMD_PASTE: return CTRL_KEY('v');
+        case CMD_SELECT_ALL: return CTRL_KEY('a');
+        case CMD_FIND: return CTRL_KEY('f');
+        case CMD_HELP: return F1_KEY;
+        default: return 0;
+    }
+}
+
+static void editorToggleMenuSetting(enum editorCommand command) {
+    struct editorSettings edited = S;
+    if (!commandToggleSetting(command, &edited)) return;
+    if (command == CMD_TOGGLE_MENU && !edited.show_menu) M.open = 0;
+    editorSettingsSave(&edited);
+}
+
+static void editorSyncMenuMouseMotion(void) {
+    uint8_t enabled = S.mouse_enabled && S.show_menu && M.open;
+    if (enabled == menu_mouse_motion_enabled) return;
+    terminalSetMenuMouseMotion(enabled);
+    menu_mouse_motion_enabled = enabled;
+}
+
 static void editorProcessKeypress(void) {
     int32_t c = editorReadKey();
+
+dispatch_key:
+    if (S.show_menu && c != MOUSE_EVENT_KEY &&
+        (M.open || c == F10_KEY)) {
+        enum editorCommand command = menuHandleKey(&M, c);
+        editorSyncMenuMouseMotion();
+        if (command == CMD_NONE) return;
+        if (commandIsSetting(command)) {
+            editorToggleMenuSetting(command);
+            return;
+        }
+        c = editorMenuCommandKey(command);
+        if (c == 0) return;
+    }
 
     /* Immutable snapshot for actions that consume or wrap the selection.
      * Each switch branch owns its selection transition; there is no global
@@ -4234,6 +4323,32 @@ static void editorProcessKeypress(void) {
             static uint8_t dragging = 0;
             static int32_t press_anchor_x = 0, press_anchor_y = 0;
 
+            int32_t message_row = E.view.screenrows + (S.show_top_bar ? 1 : 0) +
+                (S.show_menu ? 1 : 0) + 2;
+            if (S.show_menu && !M.open && mouseEventPress && mouseEventRow == message_row &&
+                mouseEventCol >= E.view.screencols - 7) {
+                menuOpen(&M);
+                editorSyncMenuMouseMotion();
+                break;
+            }
+            if (S.show_menu && M.open && !mouseEventPress &&
+                mouseEventRow == message_row && mouseEventCol >= E.view.screencols - 7)
+                break;
+            if (S.show_menu && (M.open ||
+                (mouseEventPress && mouseEventRow == (S.show_top_bar ? 2 : 1)))) {
+                enum editorCommand command = menuHandleMouse(&M,
+                    mouseEventRow, mouseEventCol, S.show_top_bar ? 2 : 1,
+                    mouseEventPress, (mouseEventButton & 32) != 0);
+                editorSyncMenuMouseMotion();
+                if (commandIsSetting(command)) {
+                    editorToggleMenuSetting(command);
+                } else if (command != CMD_NONE) {
+                    c = editorMenuCommandKey(command);
+                    if (c != 0) goto dispatch_key;
+                }
+                break;
+            }
+
             /* Coalescing loop: apply this event, then check whether
              * another one is already queued (see terminalInputReady())
              * and if so read+apply it too, WITHOUT returning to the
@@ -4284,8 +4399,9 @@ static void editorProcessKeypress(void) {
                      * "view follows cursor" behavior. */
                     E.view.free_scroll = 1;
                 } else {
-                    uint8_t in_text_area = mouseEventRow >= 1 + (S.show_top_bar ? 1 : 0) &&
-                        mouseEventRow <= 1 + (S.show_top_bar ? 1 : 0) + E.view.screenrows - 1 &&
+                    uint8_t in_text_area = mouseEventRow >= 1 + (S.show_top_bar ? 1 : 0) +
+                        (S.show_menu ? 1 : 0) && mouseEventRow <= 1 +
+                        (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0) + E.view.screenrows - 1 &&
                         mouseEventCol > editorGutterWidth();
 
                     if (in_text_area && mouse_button == 0 && mouseEventPress) {
@@ -4645,6 +4761,7 @@ static void initEditor(void) {
     E.document.file.last_backup_time = 0;
 
     settingsLoad(&S);
+    menuInit(&M);
 
     E.document.history.undo_stack = NULL;
     E.document.history.undo_count = 0;
@@ -4657,6 +4774,7 @@ static void initEditor(void) {
         terminalDie("getWindowSize");
     E.view.screenrows -= 2; /* status bar + message bar */
     if (S.show_top_bar) E.view.screenrows -= 1;
+    if (S.show_menu) E.view.screenrows -= 1;
 }
 
 int main(int argc, char **argv) {

@@ -198,8 +198,8 @@ def test_shift_click_extends_selection(home):
             raise AssertionError("mouse mode did not request Shift mouse reporting")
         # Put the cursor after 'a', then Shift-click after 'd'. SGR mouse
         # reports use modifier bit 4 for Shift with the left button.
-        os.write(master, b"\x1b[<0;2;1M\x1b[<0;2;1m")
-        os.write(master, b"\x1b[<4;5;1M\x1b[<4;5;1m")
+        os.write(master, b"\x1b[<0;2;2M\x1b[<0;2;2m")
+        os.write(master, b"\x1b[<4;5;2M\x1b[<4;5;2m")
         read_available(master, 0.2)
         os.write(master, b"\x7f\x13")  # Delete selected bcd, then save.
         assert b"bytes written to disk" in read_until(master, b"bytes written to disk"), (
@@ -210,6 +210,126 @@ def test_shift_click_extends_selection(home):
     actual = target.read_bytes()
     if actual != b"aef\n":
         raise AssertionError(f"Shift-click did not extend the selection: {actual!r}")
+
+
+def test_menu_bar_precedes_first_file_row(home):
+    """The permanent menu bar must occupy a real terminal row."""
+    for show_top_bar in (0, 1):
+        case_home = pathlib.Path(home) / f"menu-layout-{show_top_bar}"
+        case_home.mkdir()
+        target = case_home / "layout.txt"
+        target.write_bytes(b"FIRST\nSECOND\n")
+        (case_home / ".tinyeditrc").write_text(
+            f"show_top_bar = {show_top_bar}\nshow_menu = true\n"
+            "show_line_numbers = false\nbackup_interval = 0\n",
+            encoding="utf-8",
+        )
+        process, master = spawn_editor([str(target)], case_home)
+        try:
+            output = read_available(master)
+            if not (0 <= output.find(b"TinyEdit") < output.find(b"FIRST") <
+                    output.find(b"SECOND")):
+                raise AssertionError("menu bar did not precede the first file row")
+            positions = re.findall(rb"\x1b\[(\d+);(\d+)H", output)
+            expected_row = 3 if show_top_bar else 2
+            if not positions or int(positions[-1][0]) != expected_row:
+                raise AssertionError("cursor and first file row use different offsets")
+        finally:
+            finish(process, master)
+
+
+def test_menu_restores_editor_background(home):
+    """The menu bar must not leak the terminal background into file rows."""
+    for show_line_numbers in (0, 1):
+        case_home = pathlib.Path(home) / f"menu-background-{show_line_numbers}"
+        case_home.mkdir()
+        target = case_home / "background.c"
+        target.write_bytes(b"\n/* text */\n")
+        (case_home / ".tinyeditrc").write_text(
+            f"show_line_numbers = {show_line_numbers}\n"
+            "show_menu = true\nshow_top_bar = false\n"
+            "color_background = gray-dark\ncolor_statusbar = blue-dark\n"
+            "backup_interval = 0\n", encoding="utf-8"
+        )
+        process, master = spawn_editor([str(target)], case_home)
+        try:
+            output = read_until(master, b"TinyEdit")
+            output += read_available(master, 0.2)
+            assert b"TinyEdit" in output, "menu bar was not drawn"
+            assert b"\x1b[K\x1b[m\r\n\x1b[40m" in output, (
+                "menu bar did not restore the editor background before the first row"
+            )
+        finally:
+            finish(process, master)
+
+
+def test_menu_mouse_navigation(home):
+    """Mouse reports must reach the menu while it is open."""
+    case_home = pathlib.Path(home) / "menu-mouse"
+    case_home.mkdir()
+    target = case_home / "menu.txt"
+    target.write_bytes(b"sample\n")
+    (case_home / ".tinyeditrc").write_text(
+        "mouse_enabled = true\nshow_top_bar = false\nshow_menu = true\n"
+        "backup_interval = 0\n", encoding="utf-8"
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+
+        def click(col, row):
+            os.write(master, f"\x1b[<0;{col};{row}M\x1b[<0;{col};{row}m".encode())
+            return read_available(master, 0.2)
+
+        def hover(col, row):
+            os.write(master, f"\x1b[<35;{col};{row}M".encode())
+            return read_available(master, 0.2)
+
+        opened = click(2, 1)
+        assert b"Settings" in opened, "mouse did not open TinyEdit menu"
+        assert b"\x1b[?1003h" in opened, "menu did not enable mouse motion"
+        assert b"\x1b[7mSettings" in hover(4, 4), "hover did not select Settings"
+        assert b"\x1b[7mInfo" in hover(4, 3), "hover did not select Info"
+        assert b"Open..." in hover(12, 1), "hover did not switch to File menu"
+        assert b"Settings" in click(2, 1), "mouse did not switch back to TinyEdit"
+        selected = click(4, 3)
+        assert b"tinyedit -- info" in selected, "mouse did not select Info"
+        assert b"\x1b[?1003l\x1b[?1002h" in selected, (
+            "selecting a command did not restore mouse click reporting"
+        )
+        os.write(master, b"x")  # close Info
+        read_available(master, 0.2)
+        click(2, 1)
+        closed = click(40, 10)
+        assert b"\x1b[?25h" in closed, "outside click did not close menu"
+        assert b"\x1b[?1003l\x1b[?1002h" in closed, (
+            "outside click did not restore mouse click reporting"
+        )
+        assert b"\x1b[?1003h" in click(95, 30), (
+            "F10 Menu click was closed by its own mouse release"
+        )
+    finally:
+        finish(process, master)
+
+
+def test_menu_show_invisibles_refreshes_rows(home):
+    case_home = pathlib.Path(home) / "menu-invisibles"
+    case_home.mkdir()
+    target = case_home / "spaces.txt"
+    target.write_bytes(b"a b\n")
+    (case_home / ".tinyeditrc").write_text(
+        "show_menu = true\nshow_invisibles = false\n"
+        "backup_interval = 0\n", encoding="utf-8"
+    )
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1b[21~" + b"\x1b[C" * 3 + b"\x1b[B" * 3 + b"\r")
+        output = read_available(master)
+        visible_text = re.sub(rb"\x1b\[[0-9;?]*[ -/]*[@-~]", b"", output)
+        assert b"a.b" in visible_text, "View toggle did not rebuild rendered spaces"
+    finally:
+        finish(process, master)
 
 
 def test_very_long_wrapped_line(home):
@@ -678,7 +798,10 @@ def expect_rendered_rows(output, text, visible, tab_stop=4):
             else:
                 rendered += char
         expected.append((rendered + ("$" if visible else "")).encode())
-    actual = plain.split(b"\r\n")[:len(expected)]
+    lines = plain.split(b"\r\n")
+    if lines and lines[0].startswith(b" TinyEdit  File  Edit  View  Help "):
+        lines = lines[1:]
+    actual = lines[:len(expected)]
     assert actual == expected, f"stale row rendering: {actual!r}, expected {expected!r}"
 
 
@@ -933,6 +1056,10 @@ def main():
         test_kitty_cmd_z_undoes(home)
         test_kitty_cmd_a_selects_all(home)
         test_shift_click_extends_selection(home)
+        test_menu_bar_precedes_first_file_row(home)
+        test_menu_restores_editor_background(home)
+        test_menu_mouse_navigation(home)
+        test_menu_show_invisibles_refreshes_rows(home)
         test_matching_bracket_highlight(home)
         test_very_long_wrapped_line(home)
         test_utf8_word_jumps(home)

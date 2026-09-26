@@ -109,6 +109,9 @@ struct editorSettings {
     int32_t color_statusbar;
     int32_t color_statusbar_text;
     int32_t show_top_bar;
+    /* Enables the F10/mouse menu overlay and its message-bar entry point.
+     * F2 remains available so the menu can always be turned back on. */
+    int32_t show_menu;
     /* Wrap is always on (no horizontal scrolling): text always wraps
      * at the window edge at minimum. 0 means no extra limit beyond
      * that; a positive value additionally caps the wrap width when the
@@ -238,6 +241,10 @@ struct settingDescriptor {
 
 extern const struct settingDescriptor settingDescriptors[];
 extern const int32_t settingDescriptorCount;
+
+const struct settingDescriptor *settingsFind(const char *key);
+uint8_t settingsGetBool(const struct editorSettings *settings, const char *key);
+uint8_t settingsToggleBool(struct editorSettings *settings, const char *key);
 
 /* Maps a file extension to a human-readable language/filetype name for
  * the status bar (e.g. "c" -> "C", "py" -> "Python"). Falls back to a
