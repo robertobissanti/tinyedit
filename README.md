@@ -244,7 +244,8 @@ click an item to run it; clicking outside closes the open menu.
 
 `TinyEdit` contains Info, Settings, and Quit; `File` has file operations;
 `Edit` has editing commands and Find; `View` has checked switches for line
-numbers, the top bar, the menu itself, and invisible characters; and `Help`
+numbers, the top bar, the menu itself, invisible characters, syntax
+highlighting, and automatic indentation; and `Help`
 opens the shortcut reference. Existing keyboard shortcuts appear beside
 commands, with `^` meaning Ctrl (for example, `^S` means `Ctrl-S`). The
 `F10 Menu` hint in the bottom message bar also opens the menu when clicked.

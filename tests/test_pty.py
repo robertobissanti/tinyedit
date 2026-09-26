@@ -332,6 +332,35 @@ def test_menu_show_invisibles_refreshes_rows(home):
         finish(process, master)
 
 
+def test_menu_view_toggles_settings(home):
+    case_home = pathlib.Path(home) / "menu-view-settings"
+    case_home.mkdir()
+    target = case_home / "view.c"
+    target.write_bytes(b"int value;\n")
+    config = case_home / ".tinyeditrc"
+    config.write_text("show_menu = true\nbackup_interval = 0\n", encoding="utf-8")
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1b[21~" + b"\x1b[C" * 3)
+        opened = read_until(master, b"Auto-indent new lines")
+        assert b"[x] Syntax highlighting" in opened
+        assert b"[x] Auto-indent new lines" in opened
+
+        os.write(master, b"\x1b[B" * 4 + b"\r")
+        read_available(master)
+        assert "syntax_highlight = false" in config.read_text(encoding="utf-8")
+
+        os.write(master, b"\x1b[21~" + b"\x1b[C" * 3)
+        reopened = read_until(master, b"Auto-indent new lines")
+        assert b"[ ] Syntax highlighting" in reopened
+        os.write(master, b"\x1b[B" * 5 + b"\r")
+        read_available(master)
+        assert "auto_indent = false" in config.read_text(encoding="utf-8")
+    finally:
+        finish(process, master)
+
+
 def test_very_long_wrapped_line(home):
     target = pathlib.Path(home) / "long-line.txt"
     target.write_bytes((b"word " * 12000) + b"TAIL_SENTINEL\n")
@@ -1060,6 +1089,7 @@ def main():
         test_menu_restores_editor_background(home)
         test_menu_mouse_navigation(home)
         test_menu_show_invisibles_refreshes_rows(home)
+        test_menu_view_toggles_settings(home)
         test_matching_bracket_highlight(home)
         test_very_long_wrapped_line(home)
         test_utf8_word_jumps(home)

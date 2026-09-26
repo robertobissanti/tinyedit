@@ -21,7 +21,9 @@ static const struct commandDescriptor command_descriptors[] = {
     { CMD_TOGGLE_LINE_NUMBERS, "Line numbers", NULL, "show_line_numbers" },
     { CMD_TOGGLE_TOP_BAR, "Top bar", NULL, "show_top_bar" },
     { CMD_TOGGLE_MENU, "F10 menu", NULL, "show_menu" },
-    { CMD_TOGGLE_INVISIBLES, "Show invisibles", NULL, "show_invisibles" }
+    { CMD_TOGGLE_INVISIBLES, "Show invisibles", NULL, "show_invisibles" },
+    { CMD_TOGGLE_SYNTAX_HIGHLIGHT, "Syntax highlighting", NULL, "syntax_highlight" },
+    { CMD_TOGGLE_AUTO_INDENT, "Auto-indent new lines", NULL, "auto_indent" }
 };
 
 const struct commandDescriptor *commandGetDescriptor(enum editorCommand command) {
