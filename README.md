@@ -19,6 +19,9 @@ after [kilo](https://github.com/antirez/kilo) by Salvatore Sanfilippo),
 with no dependencies beyond the POSIX standard library.
 
 tinyedit brings the familiar ease of a desktop text editor to the terminal.
+It uses the terminal's alternate screen while open, then returns to the main
+screen on exit with the shell prompt and scrollback intact.
+
 Traditional terminal editors can require learning modal editing (Vim),
 memorizing non-standard key sequences (Emacs), or working around limited
 navigation and selection (Nano). tinyedit reduces that friction with familiar

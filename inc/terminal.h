@@ -18,6 +18,7 @@ extern int32_t pending_key;
 void terminalDie(const char *s);
 void terminalEnableRawMode(void);
 void terminalDisableRawMode(void);
+void terminalEnterAlternateScreen(void);
 void terminalRestoreVisualState(void);
 void terminalEnableBracketedPaste(void);
 void terminalDisableBracketedPaste(void);

@@ -22,6 +22,7 @@
 #include <unistd.h>
 
 static struct termios orig_termios;
+static uint8_t alternate_screen_active = 0;
 volatile sig_atomic_t winsize_changed = 0;
 int32_t mouseEventButton;
 int32_t mouseEventCol, mouseEventRow;
@@ -56,8 +57,6 @@ static const char paste_end_marker[] = "\x1b[201~";
 
 
 void terminalDie(const char *s) {
-    write(STDOUT_FILENO, "\x1b[2J", 4);
-    write(STDOUT_FILENO, "\x1b[H", 3);
     perror(s);
     exit(1);
 }
@@ -67,12 +66,18 @@ void terminalDisableRawMode(void) {
         terminalDie("tcsetattr");
 }
 
-/* SGR background is terminal state, but an erase fills cells using the
- * CURRENT background. Reset first, then clear, so the shell prompt is drawn
- * on the terminal's real default background rather than on tinyedit's old
- * painted cells. DECSCUSR 0 restores the terminal's cursor default. */
 void terminalRestoreVisualState(void) {
-    write(STDOUT_FILENO, "\x1b[0m\x1b[2J\x1b[H\x1b[?25h\x1b[0 q", 22);
+    if (!alternate_screen_active) return;
+    static const char restore[] = "\x1b[0m\x1b[?25h\x1b[0 q\x1b[?1049l";
+    write(STDOUT_FILENO, restore, sizeof(restore) - 1);
+    alternate_screen_active = 0;
+}
+
+void terminalEnterAlternateScreen(void) {
+    if (alternate_screen_active) return;
+    atexit(terminalRestoreVisualState);
+    write(STDOUT_FILENO, "\x1b[?1049h", 8);
+    alternate_screen_active = 1;
 }
 
 void terminalEnableRawMode(void) {
