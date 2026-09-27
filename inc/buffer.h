@@ -15,7 +15,9 @@ void bufferRowAppend(erow *row, const char *text, size_t len);
 void bufferRowDeleteByte(erow *row, int32_t at);
 void bufferRowDeleteRange(erow *row, int32_t start, int32_t end);
 int32_t bufferRowOutdent(erow *row, int32_t tab_stop);
+/* Preserve the original final-line boundary when serializing a file. */
 char *bufferSerialize(const struct editorBuffer *buffer, enum lineEndingMode ending,
+    uint8_t final_newline,
     size_t *out_len);
 char *bufferSerializeRange(const struct editorBuffer *buffer, int32_t start_y,
     int32_t start_x, int32_t end_y, int32_t end_x, size_t *out_len);

@@ -143,12 +143,11 @@ Use the helpers in `utf8.c` and `utf8.h`:
 - `utf8StrWidth()`
 - `utf8SingleCharWidth()`
 
-The current `utf8DecodeChar()` interface was inherited from linenoise and
-assumes valid input because it does not receive the remaining buffer length.
-Do not add new direct uses of it for untrusted file or terminal data. Its
-planned bounded replacement and recovery contract are recorded in
-`IDEAS.md`; callers changed as part of that work must use the new validated
-result rather than infer validity from a leading byte.
+`utf8DecodeChar()` receives the number of bytes available and returns a
+`struct utf8DecodeResult` with the code point, consumed byte count, and a
+validity flag. It consumes zero bytes for empty input and one byte for a
+malformed or truncated sequence. Callers must check validity before using
+the code point for grapheme or width calculations.
 
 A character can occupy one to four bytes and a different number of display
 columns. When an operation needs both a byte offset and its visual column,

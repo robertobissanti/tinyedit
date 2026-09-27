@@ -25,9 +25,14 @@ int main(void) {
     if (strcmp(buffer.rows[0].chars, "A\tB!") != 0) fail("row byte mutations");
 
     size_t len = 0;
-    char *text = bufferSerialize(&buffer, LINE_ENDING_CRLF, &len);
+    char *text = bufferSerialize(&buffer, LINE_ENDING_CRLF, 1, &len);
     if (len != 14 || memcmp(text, "A\tB!\r\ncaff\xc3\xa8\r\n", len) != 0)
         fail("CRLF serialization");
+    free(text);
+
+    text = bufferSerialize(&buffer, LINE_ENDING_LF, 0, &len);
+    if (len != 11 || memcmp(text, "A\tB!\ncaff\xc3\xa8", len) != 0)
+        fail("unterminated final row serialization");
     free(text);
 
     text = bufferSerializeRange(&buffer, 0, 1, 1, 4, &len);

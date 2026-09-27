@@ -430,8 +430,8 @@ def test_very_long_wrapped_line(home):
 def test_utf8_word_jumps(home):
     """Word jumps across multibyte text must leave editable UTF-8 boundaries."""
     cases = (
-        ("forward", "è café foo", b"\x1b[H\x1bfX", "èX café foo\n"),
-        ("backward", "è café foo", b"\x1b[F\x1bbX", "è café Xfoo\n"),
+        ("forward", "è café foo", b"\x1b[H\x1bfX", "èX café foo"),
+        ("backward", "è café foo", b"\x1b[F\x1bbX", "è café Xfoo"),
     )
     for name, initial, keys, expected in cases:
         target = pathlib.Path(home) / f"word-jump-{name}.txt"
@@ -1123,6 +1123,58 @@ def test_xml_tag_autoclose(home):
     assert actual == b"<item/>\n", actual
 
 
+def test_malformed_utf8_round_trip(home):
+    """Rendering may replace bad bytes; saving and deletion must use the originals."""
+    target = home / "malformed.bin"
+    original = b"A\xe2\x82B\xc3\xa9\xffC\n"
+    target.write_bytes(original)
+    process, master = spawn_editor([str(target)], home)
+    try:
+        output = read_available(master)
+        assert b"\xef\xbf\xbd" in output, "malformed byte was not rendered safely"
+        os.write(master, b"\x13")
+        output = read_until(master, b"bytes written to disk")
+        assert b"bytes written to disk" in output, "save did not finish"
+        assert target.read_bytes() == original, "save changed malformed bytes"
+    finally:
+        finish(process, master)
+
+    target.write_bytes(original)
+    process, master = spawn_editor([str(target)], home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1b[C\x1b[C\x7f\x13")
+        output = read_until(master, b"bytes written to disk")
+        assert b"bytes written to disk" in output, "edited malformed file was not saved"
+        assert target.read_bytes() == b"A\x82B\xc3\xa9\xffC\n", (
+            "backspace did not delete exactly one malformed byte"
+        )
+    finally:
+        finish(process, master)
+
+
+def test_malformed_utf8_at_file_boundaries(home):
+    """A bad sequence beside LF or EOF must not consume the boundary."""
+    samples = (
+        b"OVERLONG_EOL: A\xc0\x80\nTRUNCATED_EOL: A\xe2\x82\n"
+        b"OVERLONG_EOF: A\xf0\x80\x80\xaf",
+        b"TRUNCATED_EOF: A\xf0\x9f\x98",
+    )
+    for index, original in enumerate(samples):
+        target = home / f"malformed-boundary-{index}.txt"
+        target.write_bytes(original)
+        process, master = spawn_editor([str(target)], home)
+        try:
+            output = read_available(master)
+            assert b"\xef\xbf\xbd" in output, "boundary error was not rendered"
+            os.write(master, b"\x13")
+            output = read_until(master, b"bytes written to disk")
+            assert b"bytes written to disk" in output, "boundary file was not saved"
+            assert target.read_bytes() == original, "save changed bytes beside LF or EOF"
+        finally:
+            finish(process, master)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="tinyedit-tests-") as tmp:
         home = pathlib.Path(tmp)
@@ -1143,6 +1195,8 @@ def main():
         test_matching_bracket_highlight(home)
         test_very_long_wrapped_line(home)
         test_utf8_word_jumps(home)
+        test_malformed_utf8_round_trip(home)
+        test_malformed_utf8_at_file_boundaries(home)
         test_regex_replace_all_newline_finishes(home)
         test_ctrl_w_saves_and_closes_only_file(home)
         test_ctrl_o_discards_then_creates_named_file(home)

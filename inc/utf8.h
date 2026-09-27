@@ -15,13 +15,21 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Byte length of the UTF-8 sequence starting with byte `c` (1-4). */
+/* Expected length for a valid leading byte; invalid leads count as one. */
 int32_t utf8ByteLen(uint8_t c);
 
-/* Decodes the UTF-8 sequence at `s` into a Unicode codepoint, writing its
- * byte length to *len. Assumes valid UTF-8; falls back to 1 byte / raw
- * byte value on malformed input rather than reading out of bounds. */
-uint32_t utf8DecodeChar(const char *s, size_t *len);
+/* One decoding step. Callers must check valid before using codepoint;
+ * consumed is also the safe distance to the next byte on an error. */
+struct utf8DecodeResult {
+    uint32_t codepoint;
+    size_t consumed;
+    uint8_t valid;
+};
+
+/* Decode at most available bytes. Valid input returns its scalar value and
+ * length. Empty input consumes zero bytes; malformed or truncated input
+ * returns valid=0 and consumes one byte. The input bytes are never changed. */
+struct utf8DecodeResult utf8DecodeChar(const char *s, size_t available);
 
 /* Byte length of the grapheme cluster ending at byte offset `pos` in
  * `buf` (i.e. the cluster the cursor would delete/skip moving left).
