@@ -45,6 +45,27 @@ momento buono non convincono più.
 
 ## Robustezza
 
+- **Decoder UTF-8 rigoroso, bounded e con recupero non distruttivo** — sostituire
+  l'assunzione attuale di input sempre valido con una primitiva di decodifica
+  che riceva esplicitamente i byte ancora disponibili e non possa leggere oltre
+  il buffer. Deve accettare soltanto le sequenze well-formed dello standard:
+  rifiutare continuation byte isolati, sequenze troncate, codifiche overlong,
+  surrogate `U+D800..U+DFFF` e valori oltre `U+10FFFF`. La validazione rigorosa
+  non deve però impedire di aprire un file parzialmente malformato: navigazione e
+  rendering avanzano di un byte sull'errore, possono mostrarlo con un glifo di
+  sostituzione, ma conservano nel buffer il byte originale affinché un file non
+  modificato possa essere risalvato byte per byte. Segmentazione dei grapheme e
+  larghezza terminale restano livelli successivi e separati dalla validazione.
+  Aggiungere test sulle frontiere di ogni classe valida e su sequenze troncate a
+  ogni posizione. Direzione suggerita da Juuso Alasuutari (`imaami`) durante una
+  discussione sul parser di tinyedit, prendendo come riferimento concettuale la
+  [mappa degli stati](https://i.imgur.com/nVfDRT8.png) generata dal suo progetto
+  [`c.utf-8`](https://github.com/imaami/c.utf-8). Nella mappa il nodo ASCII
+  parte per errore da `0x01`: l'implementazione deve includere anche `0x00`,
+  valido in UTF-8 come confermano lo standard e la lookup table del progetto.
+  Implementazione originale C99 per tinyedit, salvo un eventuale contributo
+  esplicitamente concesso sotto MIT.
+
 - **Grandi file**: il buffer attuale è un array statico (`MAX_LINES`
   storico del prototipo riga-per-riga, non più applicabile alla versione
   a schermo intero — verificare che non ci siano limiti residui simili
