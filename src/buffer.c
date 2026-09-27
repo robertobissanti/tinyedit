@@ -127,17 +127,21 @@ int32_t bufferRowOutdent(erow *row, int32_t tab_stop) {
 }
 
 char *bufferSerialize(const struct editorBuffer *buffer, enum lineEndingMode ending,
+    uint8_t final_newline,
     size_t *out_len) {
     size_t ending_len = ending == LINE_ENDING_CRLF ? 2 : 1, total = 0;
     for (int32_t i = 0; i < buffer->row_count; i++)
-        total += (size_t)buffer->rows[i].size + ending_len;
+        total += (size_t)buffer->rows[i].size +
+            ((i + 1 < buffer->row_count || final_newline) ? ending_len : 0);
     *out_len = total;
     char *result = teMalloc(total > 0 ? total : 1), *dst = result;
     for (int32_t i = 0; i < buffer->row_count; i++) {
         memcpy(dst, buffer->rows[i].chars, (size_t)buffer->rows[i].size);
         dst += buffer->rows[i].size;
-        if (ending == LINE_ENDING_CRLF) *dst++ = '\r';
-        *dst++ = '\n';
+        if (i + 1 < buffer->row_count || final_newline) {
+            if (ending == LINE_ENDING_CRLF) *dst++ = '\r';
+            *dst++ = '\n';
+        }
     }
     return result;
 }

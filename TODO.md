@@ -16,6 +16,16 @@ partenza da cui il log sarà accurato in avanti.
 
 ## Fatto
 
+- [x] **Decoder UTF-8 rigoroso con recupero di un byte**
+  - _Inserito: 2026-09-27 · Completato: 2026-09-27_
+  - La decodifica riceve la lunghezza disponibile e rifiuta sequenze
+    malformate o troncate senza leggere oltre il buffer. Ogni errore avanza
+    di un byte; navigazione, cancellazione, wrapping e larghezza visiva usano
+    la stessa regola, mentre il salvataggio conserva i byte originali.
+  - Conservata anche l'assenza del newline finale nei file che ne sono privi.
+    Testati i confini UTF-8, i troncamenti a fine riga e prima di EOF,
+    cancellazione, wrap, round trip e sanitizers.
+
 - [x] **Auto-chiusura dei tag XML/HTML**
   - _Inserito: 2026-09-25 · Completato: 2026-09-25_
   - Digitando `>` dopo un tag di apertura in un file `.xml`, `.html` o

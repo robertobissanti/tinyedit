@@ -423,14 +423,20 @@ column, on the right (`line/total: C column`) next to the line number.
 
 ### UTF-8 text
 
-Full UTF-8 support (ported from
-[linenoise](https://github.com/antirez/linenoise)): code point
-decoding, grapheme cluster boundaries (emoji with modifiers, ZWJ,
-combining marks), and real display width (0/1/2 columns) for the
-cursor, backspace, and rendering, not just European accented
+UTF-8 support includes code point decoding, grapheme cluster boundaries
+(emoji with modifiers, ZWJ, combining marks), and display width (0/1/2
+columns) for the cursor, backspace, and rendering, not just European accented
 characters but CJK and emoji too. The status bar's character count is
 grapheme clusters, not raw bytes (a modified emoji counts as 1
 character, not however many bytes it takes in the buffer).
+The grapheme and width helpers began as a port from
+[linenoise](https://github.com/antirez/linenoise); the bounded, strict decoder
+is original to tinyedit and accepts only well-formed UTF-8, including `0x00`.
+It rejects isolated continuation bytes, overlong encodings, surrogate code
+points, values above `U+10FFFF`, and incomplete sequences. Each bad byte is
+one cursor and deletion step, displayed as `�`; valid bytes after it are
+decoded normally. Display never rewrites the file buffer. Saving an otherwise
+unchanged file preserves its UTF-8 bytes and whether its final row has a newline.
 
 ### Syntax highlighting
 

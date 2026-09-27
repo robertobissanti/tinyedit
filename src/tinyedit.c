@@ -583,7 +583,8 @@ static enum lineEndingMode editorEffectiveLineEnding(void) {
 }
 
 static char *editorRowsToString(size_t *buflen) {
-    return bufferSerialize(&E.document.buffer, editorEffectiveLineEnding(), buflen);
+    return bufferSerialize(&E.document.buffer, editorEffectiveLineEnding(),
+        E.document.file.final_newline, buflen);
 }
 
 static void editorSetStatusMessage(const char *fmt, ...);
@@ -760,21 +761,17 @@ static void editorClearRows(void) {
     E.document.cursor.cy = 0;
 }
 
-/* Splits `data` (length `len`, not necessarily NUL-terminated) into
- * rows on '\n', trimming a trailing '\r' from each (CRLF-tolerant),
- * appending them to the buffer via editorInsertRow(). Shared by
- * editorOpen() (reading a file) and editorOfferBackupRecovery()
- * (reading a backup) so both parse line endings the same way. */
+/* Restore editable rows from a backup without mistaking its final newline
+ * for an extra empty row. Keep the backup's final-line boundary for saving. */
 static void editorLoadLines(const char *data, size_t len) {
+    E.document.file.final_newline = len == 0 || data[len - 1] == '\n';
     size_t start = 0;
     for (size_t i = 0; i <= len; i++) {
         if (i == len || data[i] == '\n') {
             size_t linelen = i - start;
             if (linelen > 0 && data[start + linelen - 1] == '\r') linelen--;
-            /* A trailing newline at end-of-input produces one final
-             * empty "row" here (start == len) that real files/backups
-             * never intend -- editorRowsToString() always terminates
-             * every row including the last with '\n', so skip it. */
+            /* The final newline belongs to the last row's file ending;
+             * it does not create another editable row. */
             if (i < len || linelen > 0) editorInsertRow(E.document.buffer.row_count, data + start, linelen);
             start = i + 1;
         }
@@ -854,6 +851,7 @@ static void editorOpen(const char *filename) {
 
     E.document.file.detected_line_ending = LINE_ENDING_LF;
     E.document.file.line_endings_mixed = 0;
+    E.document.file.final_newline = 1;
     uint8_t saw_line_ending = 0;
     char *line = NULL;
     size_t linecap = 0;
@@ -861,6 +859,7 @@ static void editorOpen(const char *filename) {
     while ((linelen = getline(&line, &linecap, fp)) != -1) {
         enum lineEndingMode this_ending = LINE_ENDING_LF;
         uint8_t has_ending = linelen > 0 && line[linelen - 1] == '\n';
+        E.document.file.final_newline = has_ending;
         if (has_ending && linelen > 1 && line[linelen - 2] == '\r')
             this_ending = LINE_ENDING_CRLF;
         if (has_ending) {
@@ -1186,6 +1185,7 @@ static void editorResetDocument(void) {
     E.view.free_scroll = 0;
     E.document.file.detected_line_ending = LINE_ENDING_LF;
     E.document.file.line_endings_mixed = 0;
+    E.document.file.final_newline = 1;
     E.document.file.dirty = 0;
     E.document.selection.active = 0;
     E.document.selection.anchor_x = 0;
@@ -1577,6 +1577,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
         size_t char_len = utf8NextCharLen(line, (size_t)j, (size_t)len);
         if (char_len == 0 || (size_t)j + char_len > (size_t)len) char_len = 1;
         int32_t emitted_len = (int32_t)char_len;
+        struct utf8DecodeResult decoded = utf8DecodeChar(line + j, (size_t)(len - j));
         uint8_t should_sel = (row_sel_start >= 0 &&
             filecol >= row_sel_start && filecol < row_sel_end) ||
             (match_start >= 0 && filecol >= match_start && filecol < match_end);
@@ -1637,7 +1638,8 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
          * ANSI escapes between continuation bytes would split the codepoint
          * and make terminals render replacement diamonds (�), especially
          * visible with accented characters such as é. */
-        abAppend(ab, &line[j], emitted_len);
+        if (decoded.valid) abAppend(ab, &line[j], emitted_len);
+        else abAppend(ab, "\xef\xbf\xbd", 3);
 
         if (syn_color) abAppendReset(ab);
         if (is_invisible_glyph) abAppendReset(ab);
@@ -4742,6 +4744,7 @@ static void initEditor(void) {
     E.view.free_scroll = 0;
     E.document.file.detected_line_ending = LINE_ENDING_LF;
     E.document.file.line_endings_mixed = 0;
+    E.document.file.final_newline = 1;
     E.document.buffer.row_count = 0;
     E.document.buffer.rows = NULL;
     E.document.file.dirty = 0;

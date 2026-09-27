@@ -16,40 +16,56 @@
  * patterns: 0xxxxxxx (1), 110xxxxx (2), 1110xxxx (3), 11110xxx (4). */
 int32_t utf8ByteLen(uint8_t c) {
     if ((c & 0x80) == 0)    return 1;   /* 0xxxxxxx: ASCII */
-    if ((c & 0xE0) == 0xC0) return 2;   /* 110xxxxx: 2-byte seq */
-    if ((c & 0xF0) == 0xE0) return 3;   /* 1110xxxx: 3-byte seq */
-    if ((c & 0xF8) == 0xF0) return 4;   /* 11110xxx: 4-byte seq */
+    if (c >= 0xc2 && c <= 0xdf) return 2;
+    if (c >= 0xe0 && c <= 0xef) return 3;
+    if (c >= 0xf0 && c <= 0xf4) return 4;
     return 1; /* Fallback for invalid encoding, treat as single byte. */
 }
 
-uint32_t utf8DecodeChar(const char *s, size_t *len) {
-    unsigned char *p = (unsigned char *)s;
-    uint32_t cp;
+/* Check the lead and its permitted successors before assembling a scalar.
+ * A bad prefix is one recoverable byte, so the next byte gets its own chance
+ * to start a valid character. */
+struct utf8DecodeResult utf8DecodeChar(const char *s, size_t available) {
+    struct utf8DecodeResult result = {0, 0, 0};
+    if (available == 0) return result;
 
-    if ((*p & 0x80) == 0) {
-        *len = 1;
-        return *p;
-    } else if ((*p & 0xE0) == 0xC0) {
-        *len = 2;
-        cp = (uint32_t)(*p & 0x1F) << 6;
-        cp |= (p[1] & 0x3F);
-        return cp;
-    } else if ((*p & 0xF0) == 0xE0) {
-        *len = 3;
-        cp = (uint32_t)(*p & 0x0F) << 12;
-        cp |= (uint32_t)(p[1] & 0x3F) << 6;
-        cp |= (p[2] & 0x3F);
-        return cp;
-    } else if ((*p & 0xF8) == 0xF0) {
-        *len = 4;
-        cp = (uint32_t)(*p & 0x07) << 18;
-        cp |= (uint32_t)(p[1] & 0x3F) << 12;
-        cp |= (uint32_t)(p[2] & 0x3F) << 6;
-        cp |= (p[3] & 0x3F);
-        return cp;
+    const uint8_t *p = (const uint8_t *)s;
+    result.consumed = 1;
+    if (p[0] <= 0x7f) {
+        result.codepoint = p[0];
+        result.valid = 1;
+        return result;
     }
-    *len = 1;
-    return *p; /* Fallback for invalid sequences. */
+
+    size_t length;
+    uint8_t second_min = 0x80, second_max = 0xbf;
+    uint32_t cp;
+    if (p[0] >= 0xc2 && p[0] <= 0xdf) {
+        length = 2;
+        cp = p[0] & 0x1f;
+    } else if (p[0] >= 0xe0 && p[0] <= 0xef) {
+        length = 3;
+        cp = p[0] & 0x0f;
+        if (p[0] == 0xe0) second_min = 0xa0;
+        if (p[0] == 0xed) second_max = 0x9f;
+    } else if (p[0] >= 0xf0 && p[0] <= 0xf4) {
+        length = 4;
+        cp = p[0] & 0x07;
+        if (p[0] == 0xf0) second_min = 0x90;
+        if (p[0] == 0xf4) second_max = 0x8f;
+    } else {
+        return result;
+    }
+    if (available < length || p[1] < second_min || p[1] > second_max)
+        return result;
+    for (size_t i = 2; i < length; i++)
+        if (p[i] < 0x80 || p[i] > 0xbf) return result;
+    cp = (cp << 6) | (p[1] & 0x3f);
+    for (size_t i = 2; i < length; i++) cp = (cp << 6) | (p[i] & 0x3f);
+    result.codepoint = cp;
+    result.consumed = length;
+    result.valid = 1;
+    return result;
 }
 
 /* Variation selector (emoji style modifiers). */
@@ -87,21 +103,18 @@ static uint8_t isGraphemeExtend(uint32_t cp) {
            isZWJ(cp) || isCombiningMark(cp);
 }
 
-/* Decode the UTF-8 codepoint ending at position 'pos' (exclusive) and
- * return its value. Also sets *cplen to the byte length of the codepoint. */
-static uint32_t utf8DecodePrev(const char *buf, size_t pos, size_t *cplen) {
+/* Try the few possible starts of a character ending at pos. If none fits,
+ * the last byte is independent, just as in the forward scan. */
+static struct utf8DecodeResult utf8DecodePrev(const char *buf, size_t pos) {
     if (pos == 0) {
-        *cplen = 0;
-        return 0;
+        return utf8DecodeChar(buf, 0);
     }
-    /* Scan backwards to find the start byte. */
-    size_t i = pos;
-    do {
-        i--;
-    } while (i > 0 && (pos - i) < 4 && ((unsigned char)buf[i] & 0xC0) == 0x80);
-    *cplen = pos - i;
-    size_t dummy;
-    return utf8DecodeChar(buf + i, &dummy);
+    size_t first = pos > 4 ? pos - 4 : 0;
+    for (size_t i = first; i < pos; i++) {
+        struct utf8DecodeResult decoded = utf8DecodeChar(buf + i, pos - i);
+        if (decoded.valid && decoded.consumed == pos - i) return decoded;
+    }
+    return utf8DecodeChar(buf + pos - 1, 1);
 }
 
 size_t utf8PrevCharLen(const char *buf, size_t pos) {
@@ -111,8 +124,9 @@ size_t utf8PrevCharLen(const char *buf, size_t pos) {
     size_t curpos = pos;
 
     /* First, get the last codepoint. */
-    size_t cplen;
-    uint32_t cp = utf8DecodePrev(buf, curpos, &cplen);
+    struct utf8DecodeResult decoded = utf8DecodePrev(buf, curpos);
+    size_t cplen = decoded.consumed;
+    uint32_t cp = decoded.codepoint;
     if (cplen == 0) return 0;
     total += cplen;
     curpos -= cplen;
@@ -120,27 +134,35 @@ size_t utf8PrevCharLen(const char *buf, size_t pos) {
     /* If we're at an extending character, we need to find what it extends.
      * Keep going back through the grapheme cluster. */
     while (curpos > 0) {
-        size_t prevlen;
-        uint32_t prevcp = utf8DecodePrev(buf, curpos, &prevlen);
+        struct utf8DecodeResult previous = utf8DecodePrev(buf, curpos);
+        size_t prevlen = previous.consumed;
+        uint32_t prevcp = previous.codepoint;
         if (prevlen == 0) break;
+
+        if (!decoded.valid || !previous.valid) break;
 
         if (isZWJ(prevcp)) {
             /* ZWJ joins two emoji. Include the ZWJ and continue to get
              * the preceding character. */
+            /* Now get the character before ZWJ. */
+            struct utf8DecodeResult before_joiner = utf8DecodePrev(buf, curpos - prevlen);
+            if (!before_joiner.valid) break;
             total += prevlen;
             curpos -= prevlen;
-            /* Now get the character before ZWJ. */
-            prevcp = utf8DecodePrev(buf, curpos, &prevlen);
-            if (prevlen == 0) break;
+            previous = before_joiner;
+            prevlen = previous.consumed;
+            prevcp = previous.codepoint;
             total += prevlen;
             curpos -= prevlen;
             cp = prevcp;
+            decoded = previous;
             continue;  /* Check if there's more extending before this. */
         } else if (isGraphemeExtend(cp)) {
             /* Current cp is an extending character; include previous. */
             total += prevlen;
             curpos -= prevlen;
             cp = prevcp;
+            decoded = previous;
             continue;
         } else if (isRegionalIndicator(cp) && isRegionalIndicator(prevcp)) {
             /* Two regional indicators form a flag. But we need to be careful:
@@ -164,8 +186,10 @@ size_t utf8NextCharLen(const char *buf, size_t pos, size_t len) {
     size_t curpos = pos;
 
     /* Get the first codepoint. */
-    size_t cplen;
-    uint32_t cp = utf8DecodeChar(buf + curpos, &cplen);
+    struct utf8DecodeResult decoded = utf8DecodeChar(buf + curpos, len - curpos);
+    size_t cplen = decoded.consumed;
+    uint32_t cp = decoded.codepoint;
+    if (!decoded.valid) return 1;
     total += cplen;
     curpos += cplen;
 
@@ -173,15 +197,19 @@ size_t utf8NextCharLen(const char *buf, size_t pos, size_t len) {
 
     /* Consume any extending characters that follow. */
     while (curpos < len) {
-        size_t nextlen;
-        uint32_t nextcp = utf8DecodeChar(buf + curpos, &nextlen);
+        struct utf8DecodeResult next = utf8DecodeChar(buf + curpos, len - curpos);
+        size_t nextlen = next.consumed;
+        uint32_t nextcp = next.codepoint;
+        if (!next.valid) break;
 
         if (isZWJ(nextcp) && curpos + nextlen < len) {
             /* ZWJ: include it and the following character. */
             total += nextlen;
             curpos += nextlen;
             /* Get the character after ZWJ. */
-            utf8DecodeChar(buf + curpos, &nextlen);
+            next = utf8DecodeChar(buf + curpos, len - curpos);
+            if (!next.valid) break;
+            nextlen = next.consumed;
             total += nextlen;
             curpos += nextlen;
             continue;  /* Check for more extending after the joined char. */
@@ -275,8 +303,9 @@ size_t utf8StrWidth(const char *s, size_t len) {
     uint8_t after_zwj = 0;  /* Track if previous char was ZWJ */
 
     while (i < len) {
-        size_t clen;
-        uint32_t cp = utf8DecodeChar(s + i, &clen);
+        struct utf8DecodeResult decoded = utf8DecodeChar(s + i, len - i);
+        size_t clen = decoded.consumed;
+        uint32_t cp = decoded.codepoint;
 
         /* Skip ANSI CSI escape sequences entirely: they produce no
          * glyph, so they must not contribute to the display width.
@@ -290,7 +319,10 @@ size_t utf8StrWidth(const char *s, size_t len) {
             }
         }
 
-        if (after_zwj) {
+        if (!decoded.valid) {
+            after_zwj = 0;
+            width++;
+        } else if (after_zwj) {
             /* Character after ZWJ: don't add width, it's joined.
              * But do check for extending chars after it. */
             after_zwj = 0;
@@ -310,8 +342,6 @@ size_t utf8StrWidth(const char *s, size_t len) {
 
 int32_t utf8SingleCharWidth(const char *s, size_t len) {
     if (len == 0) return 0;
-    size_t clen;
-    uint32_t cp = utf8DecodeChar(s, &clen);
-    (void)clen;
-    return utf8CharWidth(cp);
+    struct utf8DecodeResult decoded = utf8DecodeChar(s, len);
+    return decoded.valid ? utf8CharWidth(decoded.codepoint) : 1;
 }

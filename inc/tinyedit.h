@@ -26,7 +26,7 @@
 
 /* ---- config -------------------------------------------------------- */
 
-#define TE_VERSION "0.3.4"
+#define TE_VERSION "0.3.5"
 #define ABUF_INIT {NULL, 0}
 #define INVISIBLE_SPACE_GLYPH '.'
 #define INVISIBLE_TAB_GLYPH '>'
@@ -223,6 +223,7 @@ struct editorHistory {
 struct editorFileState {
     enum lineEndingMode detected_line_ending;
     uint8_t line_endings_mixed;
+    uint8_t final_newline; /* Keep an unterminated last row unterminated on save. */
     uint8_t dirty;
     char *filename;
     time_t last_backup_time;

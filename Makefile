@@ -17,7 +17,7 @@ SOURCES := $(SRC_DIR)/tinyedit.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c \
 HEADERS := $(wildcard $(INC_DIR)/*.h)
 TEST_BINS := $(TEST_DIR)/test_syntax $(TEST_DIR)/test_settings_backup \
 	$(TEST_DIR)/test_editor_state $(TEST_DIR)/test_buffer $(TEST_DIR)/test_history \
-	$(TEST_DIR)/test_render
+	$(TEST_DIR)/test_render $(TEST_DIR)/test_utf8
 
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
@@ -73,6 +73,9 @@ $(TEST_DIR)/test_history: $(TEST_DIR)/test_history.c $(SRC_DIR)/history.c $(SRC_
 $(TEST_DIR)/test_render: $(TEST_DIR)/test_render.c $(SRC_DIR)/render.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_render.c $(SRC_DIR)/render.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
 
+$(TEST_DIR)/test_utf8: $(TEST_DIR)/test_utf8.c $(SRC_DIR)/render.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_utf8.c $(SRC_DIR)/render.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
+
 test: $(TARGET) $(TEST_BINS)
 	./$(TEST_DIR)/test_syntax
 	./$(TEST_DIR)/test_settings_backup
@@ -80,6 +83,7 @@ test: $(TARGET) $(TEST_BINS)
 	./$(TEST_DIR)/test_buffer
 	./$(TEST_DIR)/test_history
 	./$(TEST_DIR)/test_render
+	./$(TEST_DIR)/test_utf8
 	python3 $(TEST_DIR)/test_pty.py
 
 clean:

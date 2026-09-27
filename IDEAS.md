@@ -45,26 +45,16 @@ momento buono non convincono più.
 
 ## Robustezza
 
-- **Decoder UTF-8 rigoroso, bounded e con recupero non distruttivo** — sostituire
-  l'assunzione attuale di input sempre valido con una primitiva di decodifica
-  che riceva esplicitamente i byte ancora disponibili e non possa leggere oltre
-  il buffer. Deve accettare soltanto le sequenze well-formed dello standard:
-  rifiutare continuation byte isolati, sequenze troncate, codifiche overlong,
-  surrogate `U+D800..U+DFFF` e valori oltre `U+10FFFF`. La validazione rigorosa
-  non deve però impedire di aprire un file parzialmente malformato: navigazione e
-  rendering avanzano di un byte sull'errore, possono mostrarlo con un glifo di
-  sostituzione, ma conservano nel buffer il byte originale affinché un file non
-  modificato possa essere risalvato byte per byte. Segmentazione dei grapheme e
-  larghezza terminale restano livelli successivi e separati dalla validazione.
-  Aggiungere test sulle frontiere di ogni classe valida e su sequenze troncate a
-  ogni posizione. Direzione suggerita da Juuso Alasuutari (`imaami`) durante una
-  discussione sul parser di tinyedit, prendendo come riferimento concettuale la
-  [mappa degli stati](https://i.imgur.com/nVfDRT8.png) generata dal suo progetto
-  [`c.utf-8`](https://github.com/imaami/c.utf-8). Nella mappa il nodo ASCII
-  parte per errore da `0x01`: l'implementazione deve includere anche `0x00`,
-  valido in UTF-8 come confermano lo standard e la lookup table del progetto.
-  Implementazione originale C99 per tinyedit, salvo un eventuale contributo
-  esplicitamente concesso sotto MIT.
+- **Decoder UTF-8 rigoroso, bounded e con recupero non distruttivo
+  (implementato; vedi `TODO.md`)** — l'idea è stata suggerita da Juuso
+  Alasuutari (`imaami`) durante una discussione sul parser di tinyedit; la
+  [mappa degli stati](https://i.imgur.com/nVfDRT8.png) del suo progetto
+  [`c.utf-8`](https://github.com/imaami/c.utf-8) è stata usata solo per
+  comprendere i casi limite.
+  Nella mappa il nodo ASCII parte per errore da `0x01`: anche `0x00` è UTF-8
+  valido. Decoder e test sono stati scritti indipendentemente dal codice di
+  `c.utf-8`, sulla base della Table 3-7 dello Unicode Standard e della
+  sezione 4 di RFC 3629.
 
 - **Grandi file**: il buffer attuale è un array statico (`MAX_LINES`
   storico del prototipo riga-per-riga, non più applicabile alla versione
