@@ -2159,7 +2159,11 @@ static void editorMoveCursorWrapped(int32_t key, int32_t wrapcols) {
     editorRxToSegment(&E.document.buffer.rows[E.document.cursor.cy], wrapcols, current_rx, &seg_idx, &seg_col);
 
     int32_t target_vy = editorVideoRowOf(E.document.cursor.cy, seg_idx, wrapcols) + (key == ARROW_UP ? -1 : 1);
-    if (target_vy < 0) target_vy = 0;
+    if (target_vy < 0) {
+        E.document.cursor.cy = 0;
+        E.document.cursor.cx = 0;
+        return;
+    }
     int32_t total = editorTotalVideoRows(wrapcols);
     if (target_vy >= total) {
         /* Match unwrapped Down at EOF: there is no following visual row,
@@ -2217,7 +2221,11 @@ static void editorMoveCursor(int32_t key) {
             }
             break;
         case ARROW_UP:
-            if (E.document.cursor.cy != 0) E.document.cursor.cy--;
+            if (E.document.cursor.cy != 0) {
+                E.document.cursor.cy--;
+            } else {
+                E.document.cursor.cx = 0;
+            }
             break;
         case ARROW_DOWN:
             if (E.document.buffer.row_count > 0 && E.document.cursor.cy >= E.document.buffer.row_count - 1) {

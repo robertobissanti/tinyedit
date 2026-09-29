@@ -759,6 +759,23 @@ def test_shift_down_selects_last_wrapped_line(home):
     assert target.read_text(encoding="utf-8") == "X\n"
 
 
+def test_up_on_first_line_moves_to_start(home):
+    """Up at the top boundary acts like Home instead of doing nothing."""
+    case_home = pathlib.Path(home) / "up-at-start"
+    case_home.mkdir()
+    target = case_home / "first-line.txt"
+    target.write_text("abcdef\n", encoding="utf-8")
+    (case_home / ".tinyeditrc").write_text("backup_interval = 0\n", encoding="utf-8")
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1b[F\x1b[AX\x13")  # End, Up, insert, save.
+        assert b"bytes written to disk" in read_until(master, b"bytes written to disk")
+    finally:
+        finish(process, master)
+    assert target.read_text(encoding="utf-8") == "Xabcdef\n"
+
+
 def test_ghostty_shift_enter_is_enter(home):
     """Ghostty Shift+Enter encodings must insert a newline."""
     case_home = pathlib.Path(home) / "ghostty-shift-enter"
@@ -1208,6 +1225,7 @@ def main():
         test_bracketed_paste_replaces_selection_atomically(home)
         test_typed_text_replaces_selection(home)
         test_shift_down_selects_last_wrapped_line(home)
+        test_up_on_first_line_moves_to_start(home)
         test_ghostty_shift_enter_is_enter(home)
         test_eol_after_trailing_tab(home)
         test_block_indent(home)

@@ -16,6 +16,13 @@ partenza da cui il log sarà accurato in avanti.
 
 ## Fatto
 
+- [x] **Fix: Freccia Su sulla prima riga porta all'inizio del testo**
+  - _Inserito: 2026-09-29 · Completato: 2026-09-29_
+  - Sulla prima riga logica (o sulla prima riga video con soft-wrap),
+    Freccia Su sposta il cursore al primo carattere invece di lasciare
+    invariata la colonna. Il limite superiore è così coerente con Freccia
+    Giù a fine documento, che porta alla fine dell'ultima riga.
+
 - [x] **Decoder UTF-8 rigoroso con recupero di un byte**
   - _Inserito: 2026-09-27 · Completato: 2026-09-27_
   - La decodifica riceve la lunghezza disponibile e rifiuta sequenze
