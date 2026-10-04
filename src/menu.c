@@ -38,6 +38,12 @@ static const struct menuDefinition menus[] = {
 };
 static const int32_t menu_count = (int32_t)(sizeof(menus) / sizeof(menus[0]));
 
+/**
+ * @brief Find the first actionable entry in a menu.
+ *
+ * @details menu_index must identify a built-in menu.
+ * @return an item index, skipping separator entries.
+ */
 static int32_t menuFirstItem(int32_t menu_index) {
     for (int32_t i = 0; i < menus[menu_index].item_count; i++) {
         if (menus[menu_index].items[i] != CMD_NONE) return i;
@@ -45,6 +51,12 @@ static int32_t menuFirstItem(int32_t menu_index) {
     return 0;
 }
 
+/**
+ * @brief Move between actionable items with wraparound.
+ *
+ * @details menu_index and item are valid table indices and delta is +1 or -1.
+ * @return the next item index, skipping separators.
+ */
 static int32_t menuNextItem(int32_t menu_index, int32_t item, int32_t delta) {
     int32_t count = menus[menu_index].item_count;
     do {
@@ -53,6 +65,12 @@ static int32_t menuNextItem(int32_t menu_index, int32_t item, int32_t delta) {
     return item;
 }
 
+/**
+ * @brief Locate a menu title's starting terminal column.
+ *
+ * @details menu_index is zero-based; the returned screen column is one-based
+ * and includes spacing before earlier titles.
+ */
 static int32_t menuStartColumn(int32_t menu_index) {
     int32_t col = 1;
     for (int32_t i = 0; i < menu_index; i++)
@@ -60,6 +78,12 @@ static int32_t menuStartColumn(int32_t menu_index) {
     return col;
 }
 
+/**
+ * @brief Measure a popup's content width including shortcuts and checkmarks.
+ *
+ * @details definition must refer to valid command entries.
+ * @return a column width excluding the border characters.
+ */
 static int32_t menuWidth(const struct menuDefinition *definition) {
     int32_t width = 0;
     for (int32_t i = 0; i < definition->item_count; i++) {
@@ -74,6 +98,12 @@ static int32_t menuWidth(const struct menuDefinition *definition) {
     return width;
 }
 
+/**
+ * @brief Append text preceded by an absolute terminal cursor position.
+ *
+ * @details row and col are one-based. append must copy bytes immediately;
+ * context is passed through unchanged.
+ */
 static void menuAppendAt(menuAppendFn append, void *context, int32_t row,
     int32_t col, const char *text) {
     char position[32];
@@ -82,6 +112,13 @@ static void menuAppendAt(menuAppendFn append, void *context, int32_t row,
     append(context, text, (int32_t)strlen(text));
 }
 
+/**
+ * @brief Append a horizontal popup border or separator.
+ *
+ * @details row and col are one-based, width is the number of interior rule
+ * cells. left and right are the three-byte UTF-8 border glyphs used by this
+ * module.
+ */
 static void menuAppendRule(menuAppendFn append, void *context, int32_t row,
     int32_t col, const char *left, const char *right, int32_t width) {
     menuAppendAt(append, context, row, col, left);
@@ -89,18 +126,37 @@ static void menuAppendRule(menuAppendFn append, void *context, int32_t row,
     append(context, right, 3);
 }
 
+/**
+ * @brief Initialize a closed menu with the first actionable entry selected.
+ *
+ * @details Call on a new editorMenu before passing it to input or drawing
+ * helpers.
+ */
 void menuInit(struct editorMenu *menu) {
     menu->open = 0;
     menu->selected_menu = 0;
     menu->selected_item = menuFirstItem(0);
 }
 
+/**
+ * @brief Open the menu at the first title and actionable entry.
+ *
+ * @details Resets the previous menu selection; does not draw or change
+ * terminal reporting modes.
+ */
 void menuOpen(struct editorMenu *menu) {
     menu->open = 1;
     menu->selected_menu = 0;
     menu->selected_item = menuFirstItem(0);
 }
 
+/**
+ * @brief Update menu navigation and return an accepted command.
+ *
+ * @details key is a decoded editorKey or raw byte.
+ * @return CMD_NONE for navigation, dismissal or an inactive menu; the caller
+ * executes any returned command.
+ */
 enum editorCommand menuHandleKey(struct editorMenu *menu, int32_t key) {
     if (key == F10_KEY) {
         if (menu->open) menu->open = 0;
@@ -126,6 +182,18 @@ enum editorCommand menuHandleKey(struct editorMenu *menu, int32_t key) {
     return CMD_NONE;
 }
 
+/**
+ * @brief Update menu navigation from a decoded mouse report.
+ *
+ * @details row, col and menu_row are one-based terminal coordinates. pressed
+ * selects on button-down and motion handles hover; release over an item
+ * returns its command and closes the popup.
+ * @param row One-based terminal row of the mouse report.
+ * @param col One-based terminal column of the mouse report.
+ * @param menu_row One-based terminal row occupied by the menu bar.
+ * @param pressed Whether the report is a button press.
+ * @param motion Whether the report is a motion event.
+ */
 enum editorCommand menuHandleMouse(struct editorMenu *menu, int32_t row,
     int32_t col, int32_t menu_row, uint8_t pressed, uint8_t motion) {
     if (row == menu_row) {
@@ -160,6 +228,12 @@ enum editorCommand menuHandleMouse(struct editorMenu *menu, int32_t row,
     return CMD_NONE;
 }
 
+/**
+ * @brief Append the menu titles using the current UI colors.
+ *
+ * @details append copies bytes to the caller's output buffer through context.
+ * Call at the bar's screen position; this helper also appends the line ending.
+ */
 void menuDrawBar(const struct editorMenu *menu,
     const struct editorSettings *settings, menuAppendFn append, void *context) {
     if (settings->color_background != COLOR_TERMINAL_DEFAULT)
@@ -180,6 +254,13 @@ void menuDrawBar(const struct editorMenu *menu,
     if (editor_bg[0]) append(context, editor_bg, (int32_t)strlen(editor_bg));
 }
 
+/**
+ * @brief Append an open menu's border, items and setting checkmarks.
+ *
+ * @details menu_row is the one-based bar row. Uses absolute cursor positions
+ * through append; does nothing when closed. The caller restores final frame
+ * attributes.
+ */
 void menuDrawPopup(const struct editorMenu *menu,
     const struct editorSettings *settings, int32_t menu_row,
     menuAppendFn append, void *context) {

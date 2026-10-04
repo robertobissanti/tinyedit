@@ -10,7 +10,8 @@
  * clipboardCopy() takes a buffer + length (not necessarily NUL-terminated).
  * clipboardPaste() returns a malloc'd, NUL-terminated string the caller
  * must free with clipboardFree(); *outlen receives its length excluding
- * the NUL terminator. Returns NULL on total failure (never on "empty").
+ * the NUL terminator. An empty clipboard produces an allocated empty string; failed external
+ * access falls back to the in-process buffer.
  */
 
 #ifndef __TE_CLIPBOARD_H
@@ -29,23 +30,45 @@ typedef enum {
     CLIPBOARD_BACKEND_XCLIP
 } ClipboardBackend;
 
-/* Copies `len` bytes from `data` to the clipboard. Returns 1 on success,
- * 0 on failure (in which case the previous clipboard contents, if any,
- * are left untouched). */
+/**
+ * @brief Copy bytes to the system clipboard, with an in-process fallback.
+ *
+ * @details data need not be NUL-terminated. If the external tool fails, stores
+ * len bytes internally and still returns 1; allocation failure exits through
+ * the checked allocator.
+ */
 uint8_t clipboardCopy(const char *data, size_t len);
 
-/* Returns a malloc'd NUL-terminated copy of the current clipboard
- * contents, or NULL if the clipboard is empty or unreadable. */
+/**
+ * @brief Fetch clipboard text, falling back to the in-process copy.
+ *
+ * @details Release with clipboardFree(); outlen may be NULL and excludes NUL.
+ * @return owned NUL-terminated text, including an empty allocation for empty
+ * fallback contents.
+ */
 char *clipboardPaste(size_t *outlen);
 
+/**
+ * @brief Release text returned by clipboardPaste().
+ *
+ * @details Accepts NULL; does not clear the underlying clipboard contents.
+ */
 void clipboardFree(char *ptr);
 
-/* Returns which backend is actually in use (probes lazily on first
- * call if not yet determined). */
+/**
+ * @brief Get the selected clipboard backend, probing on first use.
+ *
+ * @details Runtime command failures use the internal fallback without changing
+ * that identifier.
+ * @return the cached detection result.
+ */
 ClipboardBackend clipboardBackend(void);
 
-/* Human-readable name of the active backend, e.g. "pbcopy/pbpaste",
- * "wl-clipboard", "xclip", "internal buffer (no system clipboard found)". */
+/**
+ * @brief Get a readable name for the detected clipboard backend.
+ *
+ * @return a borrowed literal suitable for status text; do not free it.
+ */
 const char *clipboardBackendName(void);
 
 #endif /* __TE_CLIPBOARD_H */

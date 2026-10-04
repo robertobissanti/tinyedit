@@ -14,15 +14,17 @@
  * Module map (keep this list in sync whenever a source module is added,
  * removed, or given a materially different responsibility):
  *   alloc.c        checked allocation helpers
- *   backup.c       crash-recovery snapshots and atomic-save support
+ *   backup.c       crash-recovery snapshots
  *   buffer.c       document rows and text-buffer mutations
  *   clipboard.c    system clipboard integration and local fallback
  *   command.c      shared command metadata and setting-toggle links
- *   editor_state.c editor-state initialization and cleanup
+ *   editor_state.c selection ranges and shared ASCII auto-close policy
+ *   fileio.c       home-path expansion, staged loading and atomic replacement
  *   history.c      undo and redo snapshots
  *   linenoise.c    historical line-editor implementation; not built
  *   menu.c         rectangular menu overlay and its input navigation
  *   render.c       shared layout calculations for rows and wrapped text
+ *   search.c       compiled queries, text search and source-coordinate results
  *   settings.c     persistent configuration parsing and serialization
  *   syntax.c       filetype detection and syntax highlighting
  *   terminal.c     raw terminal setup, input decoding, and terminal I/O
@@ -39,6 +41,7 @@
 #include "backup.h"
 #include "buffer.h"
 #include "editor_state.h"
+#include "fileio.h"
 #include "history.h"
 #include "render.h"
 #include "clipboard.h"
@@ -51,7 +54,6 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <regex.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,9 +68,8 @@
 static struct editorConfig E;
 static struct editorSettings S;
 static struct editorMenu M;
+static struct editorEditBatch edit_batch = {0, -1, 0};
 static uint8_t menu_mouse_motion_enabled;
-static int32_t last_cy = -1, last_cx = -1, last_end_y = -1,
-    last_end_x = 0, last_len = 0;
 
 static const char *const void_tags[] = {
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
@@ -113,13 +114,6 @@ static const char *splashLines[] = {
 };
 static const int32_t splashLineCount =
     (int32_t)(sizeof(splashLines) / sizeof(splashLines[0]));
-
-static const struct autoClosePair autoCloseTable[] = {
-    { '(', ')' }, { '{', '}' }, { '[', ']' },
-    { '"', '"' }, { '\'', '\'' }, { '$', '$' }, { '`', '`' },
-};
-static const int32_t autoCloseTableCount =
-    (int32_t)(sizeof(autoCloseTable) / sizeof(autoCloseTable[0]));
 
 static const struct autoCloseMultiByte autoCloseMultiByteTable[] = {
     { "\xc2\xab", 2, "\xc2\xbb", 2 },             /* « » */
@@ -179,8 +173,12 @@ static const struct helpEntry helpEntries[] = {
 };
 static const int32_t helpEntryCount = (int32_t)(sizeof(helpEntries) / sizeof(helpEntries[0]));
 
-/* The Ghostty Kitty-keyboard mode is opt-in. Keep the on-screen language in
- * step with it, without changing the underlying Ctrl-based key handling. */
+/**
+ * @brief Choose the modifier name shown in shortcut hints.
+ *
+ * @details Use for UI text; the return value is a borrowed literal, selected
+ * from the live settings.
+ */
 static const char *editorPrimaryModifier(void) {
 #ifdef __APPLE__
     return S.mac_command_keys ? "Cmd" : "Ctrl";
@@ -189,6 +187,11 @@ static const char *editorPrimaryModifier(void) {
 #endif
 }
 
+/**
+ * @brief Adapt shortcut text to the active Ctrl or Command mode.
+ *
+ * @details Write into dst with its byte capacity dstsize; output is NUL-terminated when capacity is nonzero and may be truncated.
+ */
 static void editorShortcutText(char *dst, size_t dstsize, const char *src) {
     size_t used = 0;
     if (dstsize == 0) return;
@@ -208,15 +211,12 @@ static void editorShortcutText(char *dst, size_t dstsize, const char *src) {
     dst[used] = '\0';
 }
 
-/* Toggled by Ctrl-G inside the Ctrl-F search prompt (see
- * editorFindCallback()): when set, editorFindFrom() treats the query
- * as a POSIX extended regular expression (via <regex.h>, no external
- * dependency -- already part of libc) instead of a literal substring.
- * Reset to 0 at the start of every editorFind() call rather than
- * persisted setting-wise -- regex mode is a per-search choice, not a
- * standing preference (mirrors E.search.direction, which is also reset per
- * search rather than remembered across them). */
 /* ---- terminal adapter -------------------------------------------------- */
+/**
+ * @brief Read one input event using the live keyboard settings.
+ *
+ * @return a raw byte or an editorKey value from terminalReadKey().
+ */
 static int32_t editorReadKey(void) {
     return terminalReadKey(
 #ifdef __APPLE__
@@ -226,23 +226,46 @@ static int32_t editorReadKey(void) {
 }
 
 
+/**
+ * @brief Translate a source-byte cursor offset into a display column.
+ *
+ * @details Pass a valid character boundary in row and use the result for
+ * layout, with the current tab width.
+ */
 static int32_t editorRowCxToRx(erow *row, int32_t cx) {
     return bufferRowCxToRx(row, cx, S.tab_stop);
 }
 
-/* Map a rendered display column to a source-byte cursor offset. Tabs
- * have visual width but only one source byte, so mouse placement must
- * use this same tab expansion as editorRowCxToRx(). */
+/**
+ * @brief Find the source-byte position corresponding to a display column.
+ *
+ * @details A column inside a tab or wide glyph maps to its start; columns past
+ * the text map to the row end.
+ */
 static int32_t editorRowRxToCx(erow *row, int32_t target_rx) {
     return bufferRowRxToCx(row, target_rx, S.tab_stop);
 }
 
-/* Finds the delimiter under the cursor, or the one immediately to its left,
- * and its matching ASCII bracket. Matching deliberately operates on raw text
- * rather than auto-close history: pasted and pre-existing pairs behave the
- * same way. UTF-8 is stepped as complete characters while scanning, so a
- * cursor or match never lands inside a multibyte sequence. */
-static uint8_t editorMatchingPairAtCursor(int32_t *anchor_y, int32_t *anchor_x,
+static void editorInvalidateDocumentCaches(void) {
+    searchInvalidateText(&E.search.query);
+    E.document.display_cache.chars_valid = 0;
+    E.document.display_cache.pair_valid = 0;
+}
+
+/**
+ * @brief Locate the bracket at the cursor and its nested matching partner.
+ *
+ * @details Scans text, including strings and comments, without a syntax
+ * parser.
+ * @return 1 and fills zero-based row and source-byte outputs only on success.
+ *
+ * @note Finds the delimiter under the cursor, or the one immediately to its
+ * left, and its matching ASCII bracket. Matching deliberately operates on raw
+ * text rather than auto-close history: pasted and pre-existing pairs behave
+ * the same way. UTF-8 is stepped as complete characters while scanning, so a
+ * cursor or match never lands inside a multibyte sequence.
+ */
+static uint8_t editorFindMatchingPair(int32_t *anchor_y, int32_t *anchor_x,
     int32_t *match_y, int32_t *match_x) {
     int32_t y = E.document.cursor.cy;
     int32_t x = E.document.cursor.cx;
@@ -309,33 +332,48 @@ static uint8_t editorMatchingPairAtCursor(int32_t *anchor_y, int32_t *anchor_x,
     return 0;
 }
 
-/* Placeholder glyphs for S.show_invisibles, single ASCII bytes on
- * purpose: row->render is a byte buffer that the rest of the editor
- * (wrap segmentation, cursor/rx mapping, selection) indexes assuming
- * 1 byte in chars maps to the SAME BYTE COUNT it always would in
- * render -- a real middle-dot/arrow glyph is 2-3 UTF-8 bytes and would
- * silently break row->rsize and every byte-offset computed from it.
- * Using single-byte substitutes keeps every existing computation
- * valid; the tradeoff is a less pretty glyph than mainstream editors'
- * Unicode dot/arrow. End-of-line has no substitute character here --
- * it's drawn separately, once per row, right after the visible text
- * in editorDrawRows(), since it isn't replacing an existing byte. */
-/* Re-tokenizes every row from `from` onward, stopping as soon as a
- * row's hl_open_comment AND hl_open_math both come out the same as
- * before the recompute -- beyond that point no later row's
- * highlighting can change, since syntaxHighlightRow() only depends on
- * its own text plus those two carried-over bits. Needed because
- * editing a row can open or close a multi-line block comment or LaTeX
- * "\[...\]" math span, which shifts every row after it.
- * syntaxHighlightRow() itself no-ops (clearing row->hl) when
- * S.syntax_highlight is off or E.document.file.filename's extension isn't a
- * recognized language, so this doesn't need to check that first. */
-/* `force` skips the early-break below: it exists for callers where every
- * row's hl_open_comment/hl_open_math is still its post-editorInsertRow()
- * default of 0 rather than a value produced by a real tokenize pass (e.g.
- * right after a "Save as" gives an untitled buffer its first filetype), so
- * a row matching that default doesn't mean its highlighting is settled. */
+static uint8_t editorMatchingPairAtCursor(int32_t *anchor_y, int32_t *anchor_x,
+    int32_t *match_y, int32_t *match_x) {
+    struct editorDisplayCache *cache = &E.document.display_cache;
+    if (!cache->pair_valid || cache->cursor_y != E.document.cursor.cy ||
+            cache->cursor_x != E.document.cursor.cx) {
+        cache->has_pair = editorFindMatchingPair(&cache->anchor_y, &cache->anchor_x,
+            &cache->match_y, &cache->match_x);
+        cache->cursor_y = E.document.cursor.cy;
+        cache->cursor_x = E.document.cursor.cx;
+        cache->pair_valid = 1;
+    }
+    if (!cache->has_pair) return 0;
+    *anchor_y = cache->anchor_y;
+    *anchor_x = cache->anchor_x;
+    *match_y = cache->match_y;
+    *match_x = cache->match_x;
+    return 1;
+}
+
+static void editorBeginEdit(void) {
+    if (edit_batch.depth++ == 0) {
+        edit_batch.first_row = -1;
+        edit_batch.undo_recorded = 0;
+    }
+}
+
+static void editorTouchRowsFrom(int32_t from) {
+    if (edit_batch.first_row < 0 || from < edit_batch.first_row)
+        edit_batch.first_row = from;
+}
+
+/**
+ * @brief Propagate syntax changes through the rows that depend on them.
+ *
+ * @details Pass a valid starting row; force retokenizes all following rows.
+ * Otherwise stop once comment, math, front matter and emphasis states settle.
+ */
 static void editorRehighlightFrom(int32_t from, uint8_t force) {
+    if (edit_batch.depth) {
+        editorTouchRowsFrom(from);
+        return;
+    }
     uint8_t open_comment = from > 0 ? E.document.buffer.rows[from - 1].hl_open_comment : 0;
     uint8_t open_math = from > 0 ? E.document.buffer.rows[from - 1].hl_open_math : 0;
     uint8_t open_frontmatter = from > 0 ? E.document.buffer.rows[from - 1].hl_open_frontmatter : 0;
@@ -356,10 +394,19 @@ static void editorRehighlightFrom(int32_t from, uint8_t force) {
     }
 }
 
-static void editorUpdateRow(erow *row) {
-    int32_t tabs = 0;
-    for (int32_t j = 0; j < row->size; j++)
-        if (row->chars[j] == '\t') tabs++;
+/**
+ * @brief Rebuild a changed row's display text and invalidate wrapping.
+ *
+ * @details Source mutations must be complete. Syntax propagation is separate
+ * so compound commands never tokenize intermediate or partial UTF-8 text.
+ */
+static void editorRebuildRow(erow *row) {
+    size_t tabs = 0;
+    for (size_t pos = 0; pos < (size_t)row->size; ) {
+        if (row->chars[pos] == '\t') tabs++;
+        pos += row->chars[pos] == '\t' ? 1 :
+            utf8NextCharLen(row->chars, pos, (size_t)row->size);
+    }
 
     free(row->render);
     free(row->seg_start);
@@ -368,51 +415,107 @@ static void editorUpdateRow(erow *row) {
     row->seg_start_rx = NULL;
     row->seg_count = 0;
     row->seg_wrapcols = -1;
-    row->render = teMalloc((size_t)(row->size + tabs * (S.tab_stop - 1) + 1));
+    size_t padding = (size_t)(S.tab_stop - 1);
+    if (padding != 0 && tabs > (SIZE_MAX - (size_t)row->size - 1) / padding) {
+        errno = ENOMEM;
+        terminalDie("render size");
+    }
+    size_t capacity = (size_t)row->size + tabs * padding + 1;
+    if (capacity - 1 > INT32_MAX) {
+        errno = ENOMEM;
+        terminalDie("render size");
+    }
+    row->render = teMalloc(capacity);
 
-    int32_t idx = 0;
-    for (int32_t j = 0; j < row->size; j++) {
-        if (row->chars[j] == '\t') {
+    int32_t idx = 0, rx = 0;
+    row->grapheme_count = 0;
+    for (size_t pos = 0; pos < (size_t)row->size; ) {
+        size_t len = row->chars[pos] == '\t' ? 1 :
+            utf8NextCharLen(row->chars, pos, (size_t)row->size);
+        if (row->chars[pos] == '\t') {
+            int32_t width = S.tab_stop - rx % S.tab_stop;
             row->render[idx++] = S.show_invisibles ? INVISIBLE_TAB_GLYPH : ' ';
-            while (idx % S.tab_stop != 0) row->render[idx++] = ' ';
-        } else if (row->chars[j] == ' ' && S.show_invisibles) {
-            row->render[idx++] = INVISIBLE_SPACE_GLYPH;
+            for (int32_t fill = 1; fill < width; fill++) row->render[idx++] = ' ';
+            rx += width;
         } else {
-            row->render[idx++] = row->chars[j];
+            memcpy(row->render + idx, row->chars + pos, len);
+            if (row->chars[pos] == ' ' && S.show_invisibles)
+                row->render[idx] = INVISIBLE_SPACE_GLYPH;
+            idx += (int32_t)len;
+            rx += utf8SingleCharWidth(row->chars + pos, len);
         }
+        pos += len;
+        row->grapheme_count++;
     }
     row->render[idx] = '\0';
     row->rsize = idx;
 
-    /* Index into E.document.buffer.rows: editorUpdateRow() is also called before a row
-     * has been linked into E.document.buffer.rows (e.g. editorInsertRow() calls it on
-     * E.document.buffer.rows[at] after already growing/placing it, so this is safe;
-     * see call sites below). */
-    int32_t idx_in_buffer = (int32_t)(row - E.document.buffer.rows);
-    uint8_t prev_open_comment = idx_in_buffer > 0 ? E.document.buffer.rows[idx_in_buffer - 1].hl_open_comment : 0;
-    uint8_t prev_open_math = idx_in_buffer > 0 ? E.document.buffer.rows[idx_in_buffer - 1].hl_open_math : 0;
-    uint8_t prev_open_frontmatter =
-        idx_in_buffer > 0 ? E.document.buffer.rows[idx_in_buffer - 1].hl_open_frontmatter : 0;
-    uint8_t prev_open_emphasis =
-        idx_in_buffer > 0 ? E.document.buffer.rows[idx_in_buffer - 1].hl_open_emphasis : 0;
-    syntaxHighlightRow(row, E.document.file.filename, (uint8_t)S.syntax_highlight, prev_open_comment, prev_open_math,
-        prev_open_frontmatter, idx_in_buffer, prev_open_emphasis);
-    if (idx_in_buffer >= 0 && idx_in_buffer + 1 < E.document.buffer.row_count)
-        editorRehighlightFrom(idx_in_buffer + 1, 0);
+    row->render_dirty = 0;
 }
 
-/* Recomputes row->render for every row -- needed whenever a setting
- * that editorUpdateRow() reads (tab_stop, show_invisibles) changes
- * after rows already exist, since editorUpdateRow() is otherwise only
- * called on the specific row(s) an edit touches. Without this, rows
- * untouched since a settings change keep rendering with the old
- * tab_stop/invisibles state until the user happens to edit them --
- * likely a preexisting gap for tab_stop alone, closed here as a side
- * effect of also needing it for show_invisibles. */
+static void editorUpdateRow(erow *row) {
+    editorInvalidateDocumentCaches();
+    int32_t index = (int32_t)(row - E.document.buffer.rows);
+    if (edit_batch.depth) {
+        row->render_dirty = 1;
+        editorTouchRowsFrom(index);
+        return;
+    }
+    editorRebuildRow(row);
+    editorRehighlightFrom(index, 0);
+}
+
+static void editorEndEdit(void) {
+    if (--edit_batch.depth != 0 || edit_batch.first_row < 0) return;
+    int32_t first = edit_batch.first_row;
+    int32_t last = first;
+    for (int32_t i = first; i < E.document.buffer.row_count; i++) {
+        if (!E.document.buffer.rows[i].render_dirty) continue;
+        editorRebuildRow(&E.document.buffer.rows[i]);
+        last = i;
+    }
+    /* Changed rows cannot use the convergence shortcut: their previous
+     * outgoing state may match even though their own tokens changed. */
+    for (int32_t i = first; i <= last && i < E.document.buffer.row_count; i++) {
+        erow *row = &E.document.buffer.rows[i];
+        erow *previous = i > 0 ? &E.document.buffer.rows[i - 1] : NULL;
+        syntaxHighlightRow(row, E.document.file.filename, (uint8_t)S.syntax_highlight,
+            previous ? previous->hl_open_comment : 0,
+            previous ? previous->hl_open_math : 0,
+            previous ? previous->hl_open_frontmatter : 0, i,
+            previous ? previous->hl_open_emphasis : 0);
+    }
+    if (last + 1 < E.document.buffer.row_count) editorRehighlightFrom(last + 1, 0);
+    edit_batch.first_row = -1;
+}
+
+/**
+ * @brief Refresh cached display text after a change to global rendering settings.
+ *
+ * @details Use when tabs, invisible characters or highlighting change; source
+ * text and undo history remain intact.
+ *
+ * @note Recomputes row->render for every row -- needed whenever a setting that
+ * editorUpdateRow() reads (tab_stop, show_invisibles) changes after rows
+ * already exist, since editorUpdateRow() is otherwise only called on the
+ * specific row(s) an edit touches. Without this, rows untouched since a
+ * settings change keep rendering with the old tab_stop/invisibles state until
+ * the user happens to edit them -- likely a preexisting gap for tab_stop
+ * alone, closed here as a side effect of also needing it for show_invisibles.
+ */
 static void editorUpdateAllRows(void) {
+    editorInvalidateDocumentCaches();
+    editorBeginEdit();
     for (int32_t i = 0; i < E.document.buffer.row_count; i++) editorUpdateRow(&E.document.buffer.rows[i]);
+    editorEndEdit();
 }
 
+/**
+ * @brief Insert a logical row and prepare it for display.
+ *
+ * @details at is a zero-based insertion index and s contains len bytes without
+ * a line ending. Marks the document dirty; the caller owns undo recording.
+ */
 static void editorInsertRow(int32_t at, const char *s, size_t len) {
     if (at < 0 || at > E.document.buffer.row_count) return;
     bufferInsertRow(&E.document.buffer, at, s, len);
@@ -420,19 +523,38 @@ static void editorInsertRow(int32_t at, const char *s, size_t len) {
     E.document.file.dirty = 1;
 }
 
+/**
+ * @brief Remove a logical row and update dependent highlighting.
+ *
+ * @details Invalid indices are ignored. Marks the document dirty without
+ * creating an undo snapshot.
+ */
 static void editorDelRow(int32_t at) {
     if (at < 0 || at >= E.document.buffer.row_count) return;
+    editorInvalidateDocumentCaches();
     bufferDeleteRow(&E.document.buffer, at);
     if (at < E.document.buffer.row_count) editorRehighlightFrom(at, 0);
     E.document.file.dirty = 1;
 }
 
+/**
+ * @brief Insert one raw byte and refresh the edited row.
+ *
+ * @details at is a source-byte offset, c is a byte rather than a Unicode code
+ * point. Marks dirty but leaves undo grouping to the caller.
+ */
 static void editorRowInsertChar(erow *row, int32_t at, int32_t c) {
     bufferRowInsertByte(row, at, c);
     editorUpdateRow(row);
     E.document.file.dirty = 1;
 }
 
+/**
+ * @brief Insert a byte span into a row and refresh its display caches.
+ *
+ * @details text supplies len bytes and must remain valid during insertion. No
+ * line splitting or undo snapshot is performed.
+ */
 static void editorRowInsertString(erow *row, int32_t at, const char *text, size_t len) {
     if (len == 0) return;
     bufferRowInsert(row, at, text, len);
@@ -440,15 +562,14 @@ static void editorRowInsertString(erow *row, int32_t at, const char *text, size_
     E.document.file.dirty = 1;
 }
 
+/**
+ * @brief Append source bytes to a row and refresh its display caches.
+ *
+ * @details s supplies len bytes. Marks dirty without recording undo; use to
+ * join rows as part of a larger action.
+ */
 static void editorRowAppendString(erow *row, char *s, size_t len) {
     bufferRowAppend(row, s, len);
-    editorUpdateRow(row);
-    E.document.file.dirty = 1;
-}
-
-static void editorRowDelChar(erow *row, int32_t at) {
-    if (at < 0 || at >= row->size) return;
-    bufferRowDeleteByte(row, at);
     editorUpdateRow(row);
     E.document.file.dirty = 1;
 }
@@ -457,10 +578,24 @@ static void editorRowDelChar(erow *row, int32_t at) {
 
 static void editorSetStatusMessage(const char *fmt, ...);
 
+/**
+ * @brief Remember the document before an editing action.
+ *
+ * @details Call before mutation. type controls whether nearby insertions or
+ * deletions share an undo step; every new edit clears redo.
+ */
 static void editorPushUndo(enum undoEditType type) {
+    if (edit_batch.depth && edit_batch.undo_recorded) return;
+    if (edit_batch.depth) edit_batch.undo_recorded = 1;
     historyRecordEdit(&E.document, S.undo_max_depth, type, time(NULL));
 }
 
+/**
+ * @brief Restore the preceding text and cursor snapshot.
+ *
+ * @details Updates row caches and status text. Reports an empty undo stack
+ * without changing the document.
+ */
 static void editorUndo(void) {
     undoSnapshot snapshot;
     if (!historyBeginUndo(&E.document, &snapshot)) {
@@ -473,6 +608,12 @@ static void editorUndo(void) {
     editorSetStatusMessage("Undo");
 }
 
+/**
+ * @brief Reapply the next text and cursor snapshot.
+ *
+ * @details Updates row caches and status text. Reports an empty redo stack
+ * without changing the document.
+ */
 static void editorRedo(void) {
     undoSnapshot snapshot;
     if (!historyBeginRedo(&E.document, &snapshot)) {
@@ -487,22 +628,35 @@ static void editorRedo(void) {
 
 /* ---- editor operations --------------------------------------------------- */
 
-/* Inserts one byte without taking an undo snapshot. Callers that group
- * several mutations into one user action use this raw form after pushing
- * exactly one snapshot themselves. */
+/**
+ * @brief Insert one byte at the cursor as part of a larger action.
+ *
+ * @details Creates a row at EOF if needed and advances cx by one byte. The
+ * caller must record the action's undo snapshot first.
+ */
 static void editorInsertCharRaw(int32_t c) {
     if (E.document.cursor.cy == E.document.buffer.row_count) editorInsertRow(E.document.buffer.row_count, "", 0);
     editorRowInsertChar(&E.document.buffer.rows[E.document.cursor.cy], E.document.cursor.cx, c);
     E.document.cursor.cx++;
 }
 
+/**
+ * @brief Insert a typed byte with undo tracking.
+ *
+ * @details Use for ordinary typing; consecutive insertions may coalesce into
+ * one undo step.
+ */
 static void editorInsertChar(int32_t c) {
     editorPushUndo(EDIT_INSERT);
     editorInsertCharRaw(c);
 }
 
-/* Splits the current row without creating an undo snapshot. Callers that
- * expose this as one user action must push exactly one snapshot themselves. */
+/**
+ * @brief Split the current line and move to the start of the new row.
+ *
+ * @details Does not copy indentation or record undo. Use after recording a
+ * snapshot when composing a multiline edit.
+ */
 static void editorInsertNewlineRaw(void) {
     if (E.document.cursor.cx == 0) {
         editorInsertRow(E.document.cursor.cy, "", 0);
@@ -518,13 +672,20 @@ static void editorInsertNewlineRaw(void) {
     E.document.cursor.cx = 0;
 }
 
-/* Enter as typed by the user (as opposed to a newline embedded in
- * pasted/recovered text, which goes through editorInsertNewlineRaw()
- * directly and must NOT be reindented -- the source already has
- * whatever indentation it has). When S.auto_indent is on, copies the
- * leading whitespace (spaces/tabs, nothing else) of the line the
- * cursor was on before the split onto the new line, so continuing to
- * type keeps the same indent level without retyping it by hand. */
+/**
+ * @brief Handle Enter with optional inherited indentation.
+ *
+ * @details Records one undo step for both the split and copied indentation;
+ * pasted newlines should use the raw helper instead.
+ *
+ * @note Enter as typed by the user (as opposed to a newline embedded in
+ * pasted/recovered text, which goes through editorInsertNewlineRaw() directly
+ * and must NOT be reindented -- the source already has whatever indentation it
+ * has). When S.auto_indent is on, copies the leading whitespace (spaces/tabs,
+ * nothing else) of the line the cursor was on before the split onto the new
+ * line, so continuing to type keeps the same indent level without retyping it
+ * by hand.
+ */
 static void editorInsertNewlineAutoIndent(void) {
     int32_t src_row = E.document.cursor.cy;
     int32_t indent_len = 0;
@@ -539,20 +700,30 @@ static void editorInsertNewlineAutoIndent(void) {
         if (indent_len > E.document.cursor.cx) indent_len = E.document.cursor.cx;
     }
 
+    editorBeginEdit();
     editorPushUndo(EDIT_OTHER);
     editorInsertNewlineRaw();
 
     if (indent_len > 0) {
         erow *row = &E.document.buffer.rows[src_row];
-        for (int32_t i = 0; i < indent_len; i++)
-            editorInsertCharRaw((unsigned char)row->chars[i]);
+        editorRowInsertString(&E.document.buffer.rows[E.document.cursor.cy],
+            E.document.cursor.cx, row->chars, (size_t)indent_len);
+        E.document.cursor.cx += indent_len;
     }
+    editorEndEdit();
 }
 
+/**
+ * @brief Apply Backspace to the preceding grapheme or line boundary.
+ *
+ * @details Records undo, joins rows at column zero, and moves the cursor.
+ * Selection deletion is handled by the dispatcher before calling this helper.
+ */
 static void editorDelChar(void) {
     if (E.document.cursor.cy == E.document.buffer.row_count) return;
     if (E.document.cursor.cx == 0 && E.document.cursor.cy == 0) return;
 
+    editorBeginEdit();
     editorPushUndo(EDIT_DELETE);
 
     erow *row = &E.document.buffer.rows[E.document.cursor.cy];
@@ -563,8 +734,9 @@ static void editorDelChar(void) {
          * skin-tone modifier in a single press. */
         size_t del_count = utf8PrevCharLen(row->chars, (size_t)E.document.cursor.cx);
         if (del_count == 0) del_count = 1;
-        for (size_t k = 0; k < del_count; k++)
-            editorRowDelChar(row, E.document.cursor.cx - 1 - (int32_t)k);
+        bufferRowDeleteRange(row, E.document.cursor.cx - (int32_t)del_count, E.document.cursor.cx);
+        editorUpdateRow(row);
+        E.document.file.dirty = 1;
         E.document.cursor.cx -= (int32_t)del_count;
     } else {
         E.document.cursor.cx = E.document.buffer.rows[E.document.cursor.cy - 1].size;
@@ -572,16 +744,29 @@ static void editorDelChar(void) {
         editorDelRow(E.document.cursor.cy);
         E.document.cursor.cy--;
     }
+    editorEndEdit();
 }
 
 /* ---- file i/o ------------------------------------------------------------- */
 
+/**
+ * @brief Resolve the line ending to use for serialization.
+ *
+ * @details An explicit LF or CRLF setting wins; auto uses the format detected
+ * when opening the file.
+ */
 static enum lineEndingMode editorEffectiveLineEnding(void) {
     if (S.line_ending == LINE_ENDING_LF || S.line_ending == LINE_ENDING_CRLF)
         return (enum lineEndingMode)S.line_ending;
     return E.document.file.detected_line_ending;
 }
 
+/**
+ * @brief Serialize the active document for saving or backup.
+ *
+ * @details Writes its byte count to buflen. The caller must free the returned
+ * allocation and use the count; it is not NUL-terminated.
+ */
 static char *editorRowsToString(size_t *buflen) {
     return bufferSerialize(&E.document.buffer, editorEffectiveLineEnding(),
         E.document.file.final_newline, buflen);
@@ -593,16 +778,25 @@ static void editorRefreshScreen(void);
 static int32_t editorReadKey(void);
 static int32_t editorReadMultiByteKey(uint8_t lead, char *out);
 static void editorFreeUndoRedo(void);
+static void editorResetDocument(void);
+static void editorCancelMouseDrag(void);
 static void abAppend(struct abuf *ab, const char *s, int32_t len);
 static void abFree(struct abuf *ab);
 static void editorMenuAppend(void *context, const char *text, int32_t len);
 
-/* Prompt input is kept verbatim, but spaces/tabs are always rendered as
+/**
+ * @brief Make whitespace visible in a single-line prompt.
+ *
+ * @details buf contains len bytes.
+ * @return a new NUL-terminated display string to free; the original prompt
+ * input is untouched.
+ *
+ * @note Prompt input is kept verbatim, but spaces/tabs are always rendered as
  * compact placeholders so whitespace is unambiguous while searching or
- * replacing.
- * Newlines from a clipboard paste are displayed as "\n" so a one-line
- * message bar remains one line, while the underlying replacement text
- * still retains the real newline. */
+ * replacing. Newlines from a clipboard paste are displayed as "\n" so a one-
+ * line message bar remains one line, while the underlying replacement text
+ * still retains the real newline.
+ */
 static char *editorPromptDisplayText(const char *buf, size_t len) {
     size_t extra = 0;
     for (size_t i = 0; i < len; i++)
@@ -625,43 +819,54 @@ static char *editorPromptDisplayText(const char *buf, size_t len) {
     return display;
 }
 
+/**
+ * @brief Append input bytes to an existing prompt allocation.
+ *
+ * @details Grows owned storage as needed, including the NUL terminator.
+ * Updates capacity and used length; text must not alias the prompt buffer.
+ * Size overflow exits through the terminal cleanup handlers.
+ */
 static void editorPromptAppend(char **buf, size_t *bufsize, size_t *buflen,
     const char *text, size_t len) {
-    while (*buflen + len + 1 > *bufsize) *bufsize *= 2;
+    if (*buflen == SIZE_MAX || len > SIZE_MAX - *buflen - 1) {
+        errno = ENOMEM;
+        terminalDie("prompt size");
+    }
+    size_t needed = *buflen + len + 1;
+    if (needed > *bufsize) {
+        size_t capacity = *bufsize > 0 ? *bufsize : 1;
+        while (capacity < needed) {
+            if (capacity > SIZE_MAX / 2) {
+                capacity = needed;
+                break;
+            }
+            capacity *= 2;
+        }
+        *buf = teRealloc(*buf, capacity);
+        *bufsize = capacity;
+    }
     memcpy(*buf + *buflen, text, len);
     *buflen += len;
     (*buf)[*buflen] = '\0';
 }
 
-/* Displays a prompt in the message bar and lets the user type a response
- * with basic line editing (Backspace, Enter, Esc to cancel). Returns a
- * malloc'd string (caller must free), or NULL if the user pressed Esc.
+/**
+ * @brief Run an editable prompt with optional live search feedback.
  *
- * If callback is non-NULL, it is invoked after every keystroke (including
- * the initial empty buffer) as callback(buf, key), so callers can drive
- * live side effects such as incremental-search highlighting. The callback
- * is also invoked once more with key == '\r' or '\x1b' right before the
- * prompt returns, so it can do final cleanup/confirmation. */
-/* `prompt` takes exactly one "%s" (filled with the buffer being typed)
- * unless `status_fn` is non-NULL, in which case it takes two: the
- * first filled with status_fn()'s return value (re-evaluated every
- * redraw, so it can reflect state the callback toggles mid-prompt,
- * e.g. editorFind()'s regex-mode indicator), the second with the
- * buffer as usual. Kept as a single optional extra field rather than a
- * generic varargs prompt-formatting scheme -- the only caller that
- * needs a live-updating prompt is search, not worth a bigger API for
- * one user.
+ * @details prompt is a printf-style format for the input, plus a mode string
+ * when status_fn is supplied; short_prompt may be NULL. callback sees the
+ * current input and each handled key.
+ * @param prompt Format with one %s for input, or mode followed by input when
+ * status_fn is set.
+ * @param short_prompt Optional compact format with the same placeholder order.
+ * @param status_fn Optional callback returning a borrowed mode label on each
+ * redraw.
+ * @param callback Optional callback invoked after handled input, including
+ * acceptance and cancellation.
+ * @return owned text on acceptance or NULL on cancellation.
  *
- * `short_prompt` is optional (NULL for callers that don't need it,
- * e.g. "Save as:"): when the fully-formatted `prompt` wouldn't fit on
- * the message bar alongside the buffer being typed, this switches to
- * `short_prompt` instead (same %s rules as `prompt`) -- e.g. Search's
- * long form spelling out every shortcut shrinks to "Search: " once the
- * query grows too long for both to fit. If even `short_prompt` doesn't
- * fit, editorDrawMessageBar()'s tail-scroll behavior takes over from
- * there (this function doesn't need to know about that layer -- it
- * only picks which of the two full strings to hand to
- * editorSetStatusMessage()). */
+
+ */
 static char *editorPromptCB(const char *prompt, const char *short_prompt,
     const char *(*status_fn)(void), void (*callback)(char *, int32_t)) {
     size_t bufsize = 128;
@@ -747,59 +952,88 @@ static char *editorPromptCB(const char *prompt, const char *short_prompt,
     }
 }
 
+/**
+ * @brief Ask for text using the editor's message bar.
+ *
+ * @details prompt contains a single %s placeholder.
+ * @return a NUL-terminated allocation to free, or NULL when the user cancels.
+ */
 static char *editorPrompt(const char *prompt) {
     return editorPromptCB(prompt, NULL, NULL, NULL);
 }
 
-/* Discards every row currently in the buffer (but not E.document.file.filename),
- * resetting to a blank document. Used before reloading content from
- * scratch -- e.g. replacing what editorOpen() read from disk with a
- * newer crash-recovery backup, see editorOfferBackupRecovery(). */
+/**
+ * @brief Release the active document's text rows.
+ *
+ * @details Use during document replacement; this clears the buffer but does
+ * not reset filename, cursor or history.
+ *
+ * @note Discards every row currently in the buffer (but not
+ * E.document.file.filename), resetting to a blank document. Used before
+ * reloading content from scratch -- e.g. replacing what editorOpen() read from
+ * disk with a newer crash-recovery backup, see editorOfferBackupRecovery().
+ */
 static void editorClearRows(void) {
+    editorInvalidateDocumentCaches();
     bufferClear(&E.document.buffer);
     E.document.cursor.cx = 0;
     E.document.cursor.cy = 0;
+    editorCancelMouseDrag();
 }
 
-/* Restore editable rows from a backup without mistaking its final newline
- * for an extra empty row. Keep the backup's final-line boundary for saving. */
+/**
+ * @brief Load recovered bytes as logical rows and detect line endings.
+ *
+ * @details Builds a candidate before replacing active rows. data is bounded by
+ * len; the final newline is metadata, not an extra editable row.
+ */
 static void editorLoadLines(const char *data, size_t len) {
-    E.document.file.final_newline = len == 0 || data[len - 1] == '\n';
+    struct editorDocument candidate = {0};
+    candidate.file.final_newline = 1;
     size_t start = 0;
-    for (size_t i = 0; i <= len; i++) {
-        if (i == len || data[i] == '\n') {
-            size_t linelen = i - start;
-            if (linelen > 0 && data[start + linelen - 1] == '\r') linelen--;
-            /* The final newline belongs to the last row's file ending;
-             * it does not create another editable row. */
-            if (i < len || linelen > 0) editorInsertRow(E.document.buffer.row_count, data + start, linelen);
-            start = i + 1;
-        }
+    for (size_t i = 0; i < len; i++) {
+        if (data[i] != '\n') continue;
+        if (!fileioAppendLine(&candidate, data + start, i - start + 1))
+            terminalDie("recovery size");
+        start = i + 1;
     }
+    if (start < len && !fileioAppendLine(&candidate, data + start, len - start))
+        terminalDie("recovery size");
+    editorClearRows();
+    E.document.buffer = candidate.buffer;
+    E.document.file.final_newline = candidate.file.final_newline;
+    E.document.file.detected_line_ending = candidate.file.detected_line_ending;
+    E.document.file.line_endings_mixed = candidate.file.line_endings_mixed;
+    editorUpdateAllRows();
 }
 
-/* Resolves the status-bar filetype for the just-opened file's
- * extension, in the order the two config sources are authoritative in:
+/**
+ * @brief Resolve and remember a language label for the current filename.
  *
- *   1. ~/.tinyeditrc (or the built-in table) already names it. The
- *      name is settled; the only open question is whether the syntax
- *      .conf that would highlight it is actually installed. A built-in
- *      language carries its own compiled-in tokenizer, so only a name
- *      that came from a user override can be missing one -- that's the
- *      case worth a warning, since the user sees a language name in
- *      the status bar but no colors and would otherwise have no hint
- *      why.
- *   2. Nothing names it, but an installed .conf claims the extension
- *      and declares a "filetype" key. Record it in ~/.tinyeditrc so
- *      the extension is known from now on, and persist immediately.
+ * @details Call after naming a document, outside rendering. A user syntax
+ * configuration may supply a new label that is persisted to ~/.tinyeditrc.
  *
- * Anything else (no name anywhere, or a .conf without a filetype key)
- * leaves the field absent, exactly as before.
+ * @note Resolves the status-bar filetype for the just-opened file's extension,
+ * in the order the two config sources are authoritative in:
  *
- * Called once per file open rather than from editorFiletypeLabel(),
- * which runs on every status-bar redraw -- resolving and potentially
- * writing ~/.tinyeditrc at that rate would be wasteful and would put a
- * disk write in the render path. */
+ * 1. ~/.tinyeditrc (or the built-in table) already names it. The name is
+ * settled; the only open question is whether the syntax .conf that would
+ * highlight it is actually installed. A built-in language carries its own
+ * compiled-in tokenizer, so only a name that came from a user override can be
+ * missing one -- that's the case worth a warning, since the user sees a
+ * language name in the status bar but no colors and would otherwise have no
+ * hint why. 2. Nothing names it, but an installed .conf claims the extension
+ * and declares a "filetype" key. Record it in ~/.tinyeditrc so the extension
+ * is known from now on, and persist immediately.
+ *
+ * Anything else (no name anywhere, or a .conf without a filetype key) leaves
+ * the field absent, exactly as before.
+ *
+ * Called once per file open rather than from editorFiletypeLabel(), which runs
+ * on every status-bar redraw -- resolving and potentially writing
+ * ~/.tinyeditrc at that rate would be wasteful and would put a disk write in
+ * the render path.
+ */
 static void editorResolveFiletype(void) {
     if (!E.document.file.filename) return;
     const char *dot = strrchr(E.document.file.filename, '.');
@@ -815,12 +1049,19 @@ static void editorResolveFiletype(void) {
     settingsSave(&S);
 }
 
-/* Warns when the open file's extension has a filetype name but no
- * highlighting to go with it -- see editorResolveFiletype() above for
- * why only a user-declared name can end up in that state. Split out
- * from that function, and called after the startup hint is set, so the
- * sticky hint doesn't immediately overwrite this message (same
- * ordering constraint the backup-recovery message has). */
+/**
+ * @brief Explain why a named filetype has no syntax colors.
+ *
+ * @details Call after startup hints so this message stays visible. Checks user
+ * and built-in highlighting before warning.
+ *
+ * @note Warns when the open file's extension has a filetype name but no
+ * highlighting to go with it -- see editorResolveFiletype() above for why only
+ * a user-declared name can end up in that state. Split out from that function,
+ * and called after the startup hint is set, so the sticky hint doesn't
+ * immediately overwrite this message (same ordering constraint the backup-
+ * recovery message has).
+ */
 static void editorWarnMissingHighlightConfig(void) {
     if (!E.document.file.filename) return;
     const char *dot = strrchr(E.document.file.filename, '.');
@@ -834,62 +1075,48 @@ static void editorWarnMissingHighlightConfig(void) {
     editorSetStatusMessage("Filetype '%s': highlight config missing", name);
 }
 
-static void editorOpen(const char *filename) {
-    free(E.document.file.filename);
-    E.document.file.filename = teStrdup(filename);
-
-    /* Before the read, so it runs for a brand-new file too: the
-     * extension is known from the name alone, and a new .njk should
-     * get its filetype recorded just like an existing one. */
+/**
+ * @brief Associate a filename and load its rows into the active buffer.
+ *
+ * @details Reads an independent candidate before replacing the active document.
+ * A missing file becomes a named new buffer; I/O errors preserve current state.
+ * @return 1 on commit, 0 with errno on failure.
+ */
+static uint8_t editorOpen(const char *filename) {
+    char *path = fileioExpandHomePath(filename);
+    if (!path) return 0;
+    struct editorDocument candidate;
+    uint8_t loaded = fileioLoadDocument(path, &candidate);
+    int saved_errno = errno;
+    free(path);
+    if (!loaded) { errno = saved_errno; return 0; }
+    /* No current text, history or backup is released until reading and
+     * closing the candidate have both succeeded. */
+    editorResetDocument();
+    E.document = candidate;
     editorResolveFiletype();
-
-    FILE *fp = fopen(filename, "r");
-    if (!fp) {
-        if (errno == ENOENT) return; /* new file */
-        terminalDie("fopen");
-    }
-
-    E.document.file.detected_line_ending = LINE_ENDING_LF;
-    E.document.file.line_endings_mixed = 0;
-    E.document.file.final_newline = 1;
-    uint8_t saw_line_ending = 0;
-    char *line = NULL;
-    size_t linecap = 0;
-    ssize_t linelen;
-    while ((linelen = getline(&line, &linecap, fp)) != -1) {
-        enum lineEndingMode this_ending = LINE_ENDING_LF;
-        uint8_t has_ending = linelen > 0 && line[linelen - 1] == '\n';
-        E.document.file.final_newline = has_ending;
-        if (has_ending && linelen > 1 && line[linelen - 2] == '\r')
-            this_ending = LINE_ENDING_CRLF;
-        if (has_ending) {
-            if (!saw_line_ending) {
-                E.document.file.detected_line_ending = this_ending;
-                saw_line_ending = 1;
-            } else if (this_ending != E.document.file.detected_line_ending) {
-                E.document.file.line_endings_mixed = 1;
-            }
-        }
-        while (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r'))
-            linelen--;
-        editorInsertRow(E.document.buffer.row_count, line, (size_t)linelen);
-    }
-    free(line);
-    fclose(fp);
-    E.document.file.dirty = 0;
+    editorUpdateAllRows();
     if (E.document.file.line_endings_mixed)
         editorSetStatusMessage("Mixed line endings: auto uses %s",
             E.document.file.detected_line_ending == LINE_ENDING_CRLF ? "CRLF" : "LF");
+    return 1;
 }
 
-/* Writes a crash-recovery backup if S.backup_interval seconds have
- * passed since the last one and the buffer has unsaved changes (a
- * clean buffer has nothing to recover that isn't already safely on
- * disk, so writing one would be pure overhead). Called once per main
- * loop iteration -- cheap when not due, since it's just a time(NULL)
- * and comparison until the interval actually elapses. A brand new
- * buffer with no filename yet is skipped: there's nowhere stable to
- * derive a backup path from until the user picks a name (Ctrl-S). */
+/**
+ * @brief Write a recovery copy when the dirty document's backup is due.
+ *
+ * @details Call from the main loop. Unnamed documents, disabled backups and
+ * intervals that have not elapsed are skipped.
+ *
+ * @note Writes a crash-recovery backup if S.backup_interval seconds have
+ * passed since the last one and the buffer has unsaved changes (a clean buffer
+ * has nothing to recover that isn't already safely on disk, so writing one
+ * would be pure overhead). Called once per main loop iteration -- cheap when
+ * not due, since it's just a time(NULL) and comparison until the interval
+ * actually elapses. A brand new buffer with no filename yet is skipped:
+ * there's nowhere stable to derive a backup path from until the user picks a
+ * name (Ctrl-S).
+ */
 static void editorMaybeBackup(void) {
     int32_t interval = S.backup_interval;
     if (interval <= 0 || !E.document.file.dirty || !E.document.file.filename) return;
@@ -905,20 +1132,12 @@ static void editorMaybeBackup(void) {
     E.document.file.last_backup_time = now;
 }
 
-/* If a crash-recovery backup exists for E.document.file.filename, asks the user
- * whether to load it in place of what editorOpen() just read from
- * disk. Called once at startup, after editorOpen(). A backup existing
- * at all is exactly the crash signal (see backup.h): a clean exit
- * always removes its own backup, so one surviving to the next
- * startup means the previous session never got to do that. Marks the
- * buffer dirty on recovery (it now differs from what's on disk) and
- * leaves the backup file itself alone -- it gets cleaned up on the
- * next successful save or clean quit like any other session's. */
-/* Draws one line of the recovery screen, centered, padded to
- * E.view.screencols with `bg` as background so the whole row reads as a
- * solid colored bar rather than text floating on the normal
- * background -- this is what makes the screen impossible to miss
- * compared to a message-bar prompt buried at the bottom. */
+/**
+ * @brief Append a centered, padded line to the recovery warning.
+ *
+ * @details ab receives output bytes; bg is an ANSI background or attribute
+ * sequence and text is NUL-terminated.
+ */
 static void editorRecoveryScreenLine(struct abuf *ab, const char *bg, const char *text) {
     int32_t textlen = (int32_t)strlen(text);
     if (textlen > E.view.screencols) textlen = E.view.screencols;
@@ -931,13 +1150,12 @@ static void editorRecoveryScreenLine(struct abuf *ab, const char *bg, const char
     abAppend(ab, "\x1b[m\r\n", 5);
 }
 
-/* Full-screen, high-visibility warning shown at startup when a
- * crash-recovery backup exists for the file being opened (see
- * backup.h) -- deliberately impossible to miss (solid yellow-on-black
- * bar filling the screen, not a message-bar line easily glossed over)
- * because silently losing unsaved work is a much worse outcome than
- * one extra confirmation the user didn't need. Any key other than
- * y/Y declines recovery and opens the file as read from disk. */
+/**
+ * @brief Display the recovery warning before asking for a decision.
+ *
+ * @details Writes the frame to the terminal; reading the answer and loading
+ * the backup are the caller's responsibility.
+ */
 static void editorRecoveryScreen(void) {
     /* Bold + reverse-video (swaps the terminal's own foreground/
      * background) instead of a hardcoded color pair -- readable on
@@ -970,6 +1188,12 @@ static void editorRecoveryScreen(void) {
     abFree(&ab);
 }
 
+/**
+ * @brief Offer to replace the loaded document with its recovery copy.
+ *
+ * @details Call after opening the file. Only y/Y accepts; successful recovery
+ * marks dirty and keeps the backup until save or clean exit.
+ */
 static void editorOfferBackupRecovery(void) {
     if (!E.document.file.filename || !backupExists(E.document.file.filename)) return;
 
@@ -987,77 +1211,72 @@ static void editorOfferBackupRecovery(void) {
         return;
     }
 
-    editorClearRows();
     editorLoadLines(content, len);
     free(content);
     E.document.file.dirty = 1;
     editorSetStatusMessage("Recovered unsaved changes from backup.");
 }
 
-static uint8_t editorWriteAll(int fd, const char *buf, size_t len) {
-    size_t written = 0;
-    while (written < len) {
-        ssize_t n = write(fd, buf + written, len - written);
-        if (n > 0) written += (size_t)n;
-        else if (n == -1 && errno == EINTR) continue;
-        else return 0;
+/**
+ * @brief Save to a candidate path and commit identity after durable replacement.
+ * @details An uncertain replacement keeps the old identity and recovery data;
+ * it must not be mistaken for an untouched target. Undo history is preserved.
+ */
+static enum fileSaveResult editorSaveToPath(const char *filename) {
+    char *path = fileioExpandHomePath(filename);
+    if (!path) {
+        editorSetStatusMessage("Can't save! Path error: %s", strerror(errno));
+        return FILE_SAVE_FAILED;
     }
-    return 1;
-}
-
-static uint8_t editorAtomicSave(const char *filename, const char *buf, size_t len) {
-    char *resolved = realpath(filename, NULL);
-    const char *target = resolved ? resolved : filename;
-    size_t target_len = strlen(target);
-    const char suffix[] = ".tinyedit.XXXXXX";
-    char *tmppath = teMalloc(target_len + sizeof(suffix));
-    if (!tmppath) {
-        free(resolved);
-        errno = ENOMEM;
-        return 0;
-    }
-    memcpy(tmppath, target, target_len);
-    memcpy(tmppath + target_len, suffix, sizeof(suffix));
-
-    struct stat existing;
-    uint8_t existed = stat(target, &existing) == 0;
-    int fd = mkstemp(tmppath);
-    if (fd == -1) {
-        free(tmppath);
-        free(resolved);
-        return 0;
-    }
-
-    mode_t mode;
-    if (existed) {
-        mode = existing.st_mode & 07777;
+    size_t len;
+    char *bytes = editorRowsToString(&len);
+    enum fileSaveResult result = fileioAtomicSave(path, bytes, len);
+    int saved_errno = errno;
+    free(bytes);
+    if (result == FILE_SAVE_DURABLE) {
+        char *name = teStrdup(path);
+        if (E.document.file.filename) backupRemove(E.document.file.filename);
+        backupRemove(name);
+        free(E.document.file.filename);
+        E.document.file.filename = name;
+        E.document.file.dirty = 0;
+        E.document.file.save_uncertain = 0;
+        E.document.file.last_backup_time = 0;
+        editorResolveFiletype();
+        editorRehighlightFrom(0, 1);
+        editorSetStatusMessage("%zu bytes written to disk", len);
+    } else if (result == FILE_SAVE_UNCERTAIN) {
+        E.document.file.dirty = 1;
+        E.document.file.save_uncertain = 1;
+        uint8_t renamed = !E.document.file.filename ||
+            strcmp(path, E.document.file.filename) != 0;
+        editorSetStatusMessageSticky(
+            "Target written, durability unconfirmed; name unchanged. Retry %s: %s",
+            renamed ? "Save as" : "save", strerror(saved_errno));
     } else {
-        mode_t mask = umask(0);
-        umask(mask);
-        mode = 0644 & ~mask;
+        editorSetStatusMessage("Can't save! I/O error: %s", strerror(saved_errno));
     }
-
-    uint8_t ok = fchmod(fd, mode) == 0 && editorWriteAll(fd, buf, len) && fsync(fd) == 0;
-    if (close(fd) != 0) ok = 0;
-    if (ok && rename(tmppath, target) != 0) ok = 0;
-
-    if (!ok) {
-        int saved_errno = errno;
-        unlink(tmppath);
-        errno = saved_errno;
-    }
-    free(tmppath);
-    free(resolved);
-    return ok;
+    free(path);
+    errno = saved_errno;
+    return result;
 }
 
-/* `force_prompt` makes an already-named buffer go through "Save as"
- * again (F4/Ctrl-Shift-S) instead of silently overwriting E.document.file.filename,
- * which is what a plain save (Ctrl-S) does when a name already exists. */
+/**
+ * @brief Save the active document, asking for a name when needed.
+ *
+ * @details force_prompt selects Save as. On success clears dirty and removes
+ * the backup; cancellation or I/O failure is reported in the message bar.
+ *
+ * @note `force_prompt` makes an already-named buffer go through "Save as"
+ * again (F4/Ctrl-Shift-S) instead of silently overwriting
+ * E.document.file.filename, which is what a plain save (Ctrl-S) does when a
+ * name already exists.
+ */
 static void editorSaveInternal(uint8_t force_prompt) {
+    char *name = NULL;
     if (E.document.file.filename == NULL || force_prompt) {
-        char *name = editorPrompt("Save as: %s (Esc to cancel)");
-        if (name == NULL) {
+        name = editorPrompt("Save as: %s (Esc to cancel)");
+        if (!name) {
             editorSetStatusMessage("Save aborted.");
             return;
         }
@@ -1066,57 +1285,52 @@ static void editorSaveInternal(uint8_t force_prompt) {
             editorSetStatusMessage("Save aborted: empty filename.");
             return;
         }
-        free(E.document.file.filename);
-        E.document.file.filename = name;
-        /* Filetype is derived from E.document.file.filename's extension, so a new
-         * name can turn on/change highlighting for rows tokenized
-         * under a different (or no) filetype -- recompute now instead
-         * of waiting for the next edit to trigger it. */
-        editorRehighlightFrom(0, 1);
     }
-
-    size_t len;
-    char *buf = editorRowsToString(&len);
-
-    if (editorAtomicSave(E.document.file.filename, buf, len)) {
-        free(buf);
-        E.document.file.dirty = 0;
-        /* The buffer is now identical to what's on disk --
-         * the crash-recovery backup (if any) would only ever
-         * offer to "recover" something we just saved, so
-         * drop it instead of leaving it to confuse the next
-         * startup's crash check. */
-        backupRemove(E.document.file.filename);
-        editorSetStatusMessage("%zu bytes written to disk", len);
-        return;
-    }
-    free(buf);
-    editorSetStatusMessage("Can't save! I/O error: %s", strerror(errno));
+    editorSaveToPath(name ? name : E.document.file.filename);
+    free(name);
 }
 
+/**
+ * @brief Save to the current filename, or ask for one if unnamed.
+ *
+ * @details Delegates to editorSaveInternal() with the normal save behavior.
+ */
 static void editorSave(void) {
     editorSaveInternal(0);
 }
 
+/**
+ * @brief Ask for a filename and save under that name.
+ *
+ * @details Uses the shared save path even if the document already has a
+ * filename.
+ */
 static void editorSaveAs(void) {
     editorSaveInternal(1);
 }
 
-/* Whether the buffer differs from what's on disk, compared byte for
- * byte. E.document.file.dirty only ever goes from 0 to 1: undoing every edit, or
- * retyping what was deleted, leaves it set even though nothing actually
- * changed, and the user then gets asked to save a file that is already
- * identical. Checking the real contents catches all of those without
- * having to keep dirty exact after every keystroke -- this runs once,
- * when leaving the document, so reading the file back costs nothing
- * during editing.
+/**
+ * @brief Check whether the serialized document actually differs from its file.
  *
- * Any I/O failure answers "yes, it differs": if the file can't be read
- * the safe assumption is that there is something to lose, so the user
- * still gets the prompt. A buffer with no filename is likewise always
- * different -- there is nothing on disk to match. */
+ * @details Use before leaving a dirty document to avoid needless save prompts
+ * after undo.
+ * @return 1 for changed text, an unnamed document or an unreadable file.
+ *
+ * @note Whether the buffer differs from what's on disk, compared byte for
+ * byte. E.document.file.dirty only ever goes from 0 to 1: undoing every edit,
+ * or retyping what was deleted, leaves it set even though nothing actually
+ * changed, and the user then gets asked to save a file that is already
+ * identical. Checking the real contents catches all of those without having to
+ * keep dirty exact after every keystroke -- this runs once, when leaving the
+ * document, so reading the file back costs nothing during editing.
+ *
+ * Any I/O failure answers "yes, it differs": if the file can't be read the
+ * safe assumption is that there is something to lose, so the user still gets
+ * the prompt. A buffer with no filename is likewise always different -- there
+ * is nothing on disk to match.
+ */
 static uint8_t editorDiffersFromDisk(void) {
-    if (!E.document.file.filename) return 1;
+    if (!E.document.file.filename || E.document.file.save_uncertain) return 1;
 
     FILE *fp = fopen(E.document.file.filename, "rb");
     if (!fp) return 1;
@@ -1140,9 +1354,17 @@ static uint8_t editorDiffersFromDisk(void) {
     return differs;
 }
 
-/* Shared save/discard/cancel gate for every operation that would leave the
- * current document (quit, close, or open another file). Returns 1 only when
- * it is safe to proceed; a failed/cancelled save leaves the document open. */
+/**
+ * @brief Resolve unsaved changes before leaving the document.
+ *
+ * @details action is the readable operation name in the prompt.
+ * @return 1 to proceed, 0 on cancellation or an unsuccessful save.
+ *
+ * @note Shared save/discard/cancel gate for every operation that would leave
+ * the current document (quit, close, or open another file). Returns 1 only
+ * when it is safe to proceed; a failed/cancelled save leaves the document
+ * open.
+ */
 static uint8_t editorConfirmDocumentChange(const char *action) {
     if (!E.document.file.dirty) return 1;
 
@@ -1167,10 +1389,20 @@ static uint8_t editorConfirmDocumentChange(const char *action) {
     return 0;
 }
 
-/* Releases every piece of state owned by the current document while keeping
- * terminal dimensions and user settings intact. The next document starts
- * with independent cursor, selection, search, backup, and undo state. */
+/**
+ * @brief Release the current document and reset all document-specific state.
+ *
+ * @details Use only after resolving unsaved changes. Removes its backup and
+ * history while preserving terminal dimensions and live settings.
+ *
+ * @note Releases every piece of state owned by the current document while
+ * keeping terminal dimensions and user settings intact. The next document
+ * starts with independent cursor, selection, search, backup, and undo state.
+ */
 static void editorResetDocument(void) {
+    searchQueryFree(&E.search.query);
+    E.search.last_cy = -1;
+    E.search.last_end_y = -1;
     if (E.document.file.filename) backupRemove(E.document.file.filename);
     editorClearRows();
     free(E.document.file.filename);
@@ -1187,10 +1419,12 @@ static void editorResetDocument(void) {
     E.document.file.line_endings_mixed = 0;
     E.document.file.final_newline = 1;
     E.document.file.dirty = 0;
+    E.document.file.save_uncertain = 0;
     E.document.selection.active = 0;
     E.document.selection.anchor_x = 0;
     E.document.selection.anchor_y = 0;
     E.document.selection.pinned = 0;
+    editorCancelMouseDrag();
     E.search.search_match_y = -1;
     E.search.search_match_x = 0;
     E.search.search_match_len = 0;
@@ -1201,8 +1435,12 @@ static void editorResetDocument(void) {
     E.document.history.last_edit_time = 0;
 }
 
-/* Ctrl-W closes only the current document. tinyedit remains alive with a
- * fresh unnamed buffer, ready for typing or Ctrl-O. */
+/**
+ * @brief Close the document after resolving unsaved changes.
+ *
+ * @details Leaves the editor running with a fresh unnamed buffer; cancellation
+ * keeps the current document.
+ */
 static void editorCloseFile(void) {
     if (!editorConfirmDocumentChange("closing")) return;
     editorResetDocument();
@@ -1210,10 +1448,18 @@ static void editorCloseFile(void) {
         editorPrimaryModifier(), editorPrimaryModifier());
 }
 
-/* Ctrl-O switches the single active document. The current document remains
- * in place if save confirmation or path entry is cancelled, or if an existing
- * target cannot be read. ENOENT is intentional: like Vim, this opens a named
- * empty buffer and the file is created on the first successful save. */
+/**
+ * @brief Ask for another path and switch the active document.
+ *
+ * @details Checks unsaved changes and fully reads the target before resetting
+ * state. A missing target is a new named buffer; cancellation keeps the
+ * current document.
+ *
+ * @note Ctrl-O switches the single active document. The current document
+ * remains in place if save confirmation or path entry is cancelled, or if an
+ * existing target cannot be read. ENOENT is intentional: like Vim, this opens
+ * a named empty buffer and the file is created on the first successful save.
+ */
 static void editorOpenFile(void) {
     if (!editorConfirmDocumentChange("opening another file")) return;
 
@@ -1224,28 +1470,12 @@ static void editorOpenFile(void) {
     }
 
     struct stat st;
-    uint8_t exists = stat(name, &st) == 0;
-    if (exists && S_ISDIR(st.st_mode)) {
-        editorSetStatusMessage("Can't open a directory.");
+    if (!editorOpen(name)) {
+        editorSetStatusMessage("Can't open file: %s", strerror(errno));
         free(name);
         return;
     }
-    if (exists) {
-        FILE *probe = fopen(name, "r");
-        if (!probe) {
-            editorSetStatusMessage("Can't open file: %s", strerror(errno));
-            free(name);
-            return;
-        }
-        fclose(probe);
-    } else if (errno != ENOENT) {
-        editorSetStatusMessage("Can't open path: %s", strerror(errno));
-        free(name);
-        return;
-    }
-
-    editorResetDocument();
-    editorOpen(name);
+    uint8_t exists = stat(E.document.file.filename, &st) == 0;
     free(name);
     editorOfferBackupRecovery();
     if (!E.document.file.dirty) {
@@ -1254,6 +1484,12 @@ static void editorOpenFile(void) {
     }
 }
 
+/**
+ * @brief Leave the editor after resolving unsaved changes.
+ *
+ * @details Removes the document's recovery copy and calls exit(), allowing
+ * registered terminal cleanup handlers to run.
+ */
 static void editorQuit(void) {
     if (!editorConfirmDocumentChange("quitting")) return;
 
@@ -1266,30 +1502,60 @@ static void editorQuit(void) {
 
 /* ---- append buffer -------------------------------------------------------- */
 
+/**
+ * @brief Append output bytes to the frame being assembled.
+ *
+ * @details ab must be initialized with ABUF_INIT; s contains len bytes. The
+ * buffer grows as needed and is not NUL-terminated.
+ */
 static void abAppend(struct abuf *ab, const char *s, int32_t len) {
-    char *new = teRealloc(ab->b, (size_t)(ab->len + len));
-    if (new == NULL) return;
-    memcpy(&new[ab->len], s, (size_t)len);
-    ab->b = new;
+    if (len <= 0) return;
+    if (len > INT32_MAX - ab->len) { errno = EOVERFLOW; terminalDie("frame size"); }
+    size_t needed = (size_t)ab->len + (size_t)len;
+    if (needed > ab->capacity) {
+        size_t capacity = ab->capacity ? ab->capacity : 256;
+        while (capacity < needed) capacity *= 2;
+        ab->b = teRealloc(ab->b, capacity);
+        ab->capacity = capacity;
+    }
+    memcpy(ab->b + ab->len, s, (size_t)len);
     ab->len += len;
 }
 
+/**
+ * @brief Adapt the menu output callback to the editor's frame buffer.
+ *
+ * @details context must point to an initialized abuf; text contains len bytes
+ * that are copied immediately.
+ */
 static void editorMenuAppend(void *context, const char *text, int32_t len) {
     abAppend((struct abuf *)context, text, len);
 }
 
+/**
+ * @brief Release the storage used by a rendered frame.
+ *
+ * @details Call once after writing the frame; the abuf fields are not reset
+ * and must not be reused without initialization.
+ */
 static void abFree(struct abuf *ab) { free(ab->b); }
 
-/* Resets SGR attributes (colors, reverse-video, bold, ...) the same as
- * a literal "\x1b[m" everywhere else in this file, but immediately
- * re-applies the configured background color (see color_background in
- * settings.h) if one is set -- otherwise every reset scattered through
- * editorDrawRowSegment() (one per highlighted character/glyph, see its
- * per-char syn_color/is_invisible_glyph resets) would also erase the
- * background for the very next character, defeating a whole-editor
- * background the instant any syntax highlighting or selection is
- * active. Callers that don't need to distinguish should always use
- * this over a bare "\x1b[m" for that reason. */
+/**
+ * @brief Reset text attributes while restoring the editor background.
+ *
+ * @details Use during document rendering instead of a bare SGR reset so syntax
+ * and selection colors do not erase the configured background.
+ *
+ * @note Resets SGR attributes (colors, reverse-video, bold, ...) the same as a
+ * literal "\x1b[m" everywhere else in this file, but immediately re-applies
+ * the configured background color (see color_background in settings.h) if one
+ * is set -- otherwise every reset scattered through editorDrawRowSegment()
+ * (one per highlighted character/glyph, see its per-char
+ * syn_color/is_invisible_glyph resets) would also erase the background for the
+ * very next character, defeating a whole-editor background the instant any
+ * syntax highlighting or selection is active. Callers that don't need to
+ * distinguish should always use this over a bare "\x1b[m" for that reason.
+ */
 static void abAppendReset(struct abuf *ab) {
     abAppend(ab, "\x1b[m", 3);
     const char *bg = ansiBgColorCode(S.color_background);
@@ -1298,130 +1564,144 @@ static void abAppendReset(struct abuf *ab) {
 
 /* ---- output ---------------------------------------------------------------- */
 
-/* Width of the left-hand line-number gutter, including one space of
- * padding before the text starts. Zero when gutter is disabled. Grows
- * with E.document.buffer.row_count so files with 1000+ lines still right-align cleanly. */
+/**
+ * @brief Get the current line-number gutter width in screen columns.
+ *
+ * @return zero when line numbers are hidden; includes the padding between
+ * numbers and text.
+ *
+ * @note Width of the left-hand line-number gutter, including one space of
+ * padding before the text starts. Zero when gutter is disabled. Grows with
+ * E.document.buffer.row_count so files with 1000+ lines still right-align
+ * cleanly.
+ */
 static int32_t editorGutterWidth(void) {
     return renderGutterWidth(&E.document.buffer, (uint8_t)S.show_line_numbers);
 }
 
-/* Usable text area width: total screen columns minus the gutter. */
+/**
+ * @brief Get the screen columns available to document text.
+ *
+ * @details Subtracts the gutter from the terminal width and never returns a
+ * negative value.
+ */
 static int32_t editorTextCols(void) {
     return renderTextCols(&E.view, &E.document.buffer, (uint8_t)S.show_line_numbers);
 }
 
-/* Effective soft-wrap width in render columns. Wrap is always active
- * (no horizontal scrolling in this editor): text always wraps at the
- * window edge (editorTextCols() - 1 column of right-hand margin) at
- * minimum. soft_wrap == 0 means "no extra limit, just the window
- * edge"; soft_wrap > 0 additionally caps the width to that value when
- * the window is wider than it (e.g. to keep prose readable on a wide
- * terminal), while still following the window edge on a narrower one. */
+/**
+ * @brief Choose the effective wrapping width for the current viewport.
+ *
+ * @return at least one display column, applying the configured cap and the
+ * right-hand margin.
+ *
+ * @note Effective soft-wrap width in render columns. Wrap is always active (no
+ * horizontal scrolling in this editor): text always wraps at the window edge
+ * (editorTextCols() - 1 column of right-hand margin) at minimum. soft_wrap ==
+ * 0 means "no extra limit, just the window edge"; soft_wrap > 0 additionally
+ * caps the width to that value when the window is wider than it (e.g. to keep
+ * prose readable on a wide terminal), while still following the window edge on
+ * a narrower one.
+ */
 static int32_t editorSoftWrapCols(void) {
     return renderSoftWrapCols(&E.view, &E.document.buffer,
         (uint8_t)S.show_line_numbers, S.soft_wrap);
 }
 
-/* Splits row->render into visual segments of at most `wrapcols` render
- * columns each, breaking at the last space at or before the limit
- * (word-wrap) or hard-breaking mid-word if no space is found. Fills
- * seg_start[] with the BYTE offset into row->render where each
- * segment begins (needed to index/memcpy render directly) and, in
- * parallel, seg_start_rx[] with the render-COLUMN offset of that same
- * point -- the two diverge as soon as the row contains any multi-byte
- * UTF-8 character or wide glyph before the wrap point (1 byte is not
- * always 1 column). Callers that compare against a column value (e.g.
- * E.document.cursor.rx, itself computed by editorRowCxToRx() which is UTF-8-aware)
- * MUST use seg_start_rx[], not seg_start[] -- mixing the two silently
- * misplaces the cursor/inserted text on any row with non-ASCII text
- * before a wrap point. seg_start_rx may be NULL if the caller only
- * needs byte offsets (e.g. to memcpy/render). Segment i covers
- * [seg_start[i], seg_start[i+1]) in bytes / [seg_start_rx[i],
- * seg_start_rx[i+1]) in columns, and the last segment ends at
- * row->rsize bytes. Always produces at least 1 segment (even for an
- * empty row), and never splits inside a multi-column character
- * (CJK/wide glyphs), since it walks grapheme clusters via
- * utf8NextCharLen/utf8SingleCharWidth same as the rest of the
- * renderer. Results are cached on the row and have no fixed segment
- * limit; a long generated line remains fully reachable. */
+/**
+ * @brief Ensure the row's wrap boundaries are available.
+ *
+ * @details wrapcols is measured in display columns.
+ * @return the segment count; row owns separate cached byte offsets and
+ * display-column offsets.
+ */
 static int32_t editorRowSegments(erow *row, int32_t wrapcols) {
     return renderRowSegments(row, wrapcols);
 }
 
-/* Render-column just past the last visible character of segment `i`
- * (out of `nseg` segments starting at `seg_start`), i.e. where the
- * cursor should land on End or after typing the last visible
- * character of that segment. This is NOT simply seg_start[i+1]: when
- * a segment wraps after a space (see editorRowSegments()), that space
- * is logically part of segment i but isn't drawn on its video row --
- * seg_start[i+1] already points past it, at the start of the next
- * word. Using seg_start[i+1] directly as "end of segment" would place
- * the cursor (and any character typed there) one position into the
- * next visual line instead of at the end of the current one. */
+/**
+ * @brief Find the render-byte end of a segment after trimming spaces.
+ *
+ * @details i is a valid segment index in seg_start.
+ * @return an exclusive byte offset, not a screen column.
+ */
 static int32_t editorSegVisibleEnd(erow *row, int32_t nseg, const int32_t *seg_start, int32_t i) {
     return renderSegmentVisibleEnd(row, nseg, seg_start, i);
 }
 
-/* Column equivalent of editorSegVisibleEnd() -- the render-COLUMN
- * just past the last visible character of segment `i`, for callers
- * that need to compare/combine it with other column values (E.document.cursor.rx,
- * editorSegColToCx()'s target_col) instead of indexing row->render
- * directly. Each trimmed trailing space is exactly 1 column wide
- * (ASCII ' ', never a wide/multi-byte glyph -- editorRowSegments()
- * only ever records last_space_pos for byte 0x20), so the column
- * count is simply the byte count minus the number of trimmed bytes. */
+/**
+ * @brief Find the display-column end of a segment after trimming spaces.
+ *
+ * @details Use alongside rx values for End navigation. seg_start stores bytes
+ * and seg_start_rx stores display columns.
+ */
 static int32_t editorSegVisibleEndRx(erow *row, int32_t nseg, const int32_t *seg_start,
     const int32_t *seg_start_rx, int32_t i) {
     return renderSegmentVisibleEndRx(row, nseg, seg_start, seg_start_rx, i, S.tab_stop);
 }
 
-/* Finds which visual segment of `row` contains render-column `rx`, and
- * the column within that segment. Used to translate the logical
- * cursor position into (segment index, in-segment column) for
- * scrolling/rendering with wrap active. */
+/**
+ * @brief Translate a row-wide display column into a wrap segment and local column.
+ *
+ * @details Writes zero-based outputs and builds the row's wrap cache if
+ * necessary.
+ *
+ * @note Finds which visual segment of `row` contains render-column `rx`, and
+ * the column within that segment. Used to translate the logical cursor
+ * position into (segment index, in-segment column) for scrolling/rendering
+ * with wrap active.
+ */
 static void editorRxToSegment(erow *row, int32_t wrapcols, int32_t rx, int32_t *seg_idx, int32_t *seg_col) {
     renderRxToSegment(row, wrapcols, rx, seg_idx, seg_col);
 }
 
-/* Number of visual (video) rows a logical file row occupies -- 1 when
- * wrap is off or the row is empty, or the wrap segment count. */
-/* Converts a (filerow, segment index) pair into an absolute video-row
- * number, counting every visual segment of every row from 0 up to
- * (but not including) filerow, plus `seg` segments into filerow
- * itself. This is the wrapped-mode equivalent of "filerow" alone in
- * unwrapped mode -- E.view.rowoff and the viewport's y position are both
- * expressed in this unit when wrap is active. O(numrows) per call;
- * fine at the scale this editor targets (see IDEAS.md on large files),
- * called at most a couple times per keypress/redraw. */
+/**
+ * @brief Convert a logical row and segment into an absolute visual row.
+ *
+ * @details filerow and seg are zero-based. Uses wrapcols to count all
+ * preceding wrapped rows.
+ */
 static int32_t editorVideoRowOf(int32_t filerow, int32_t seg, int32_t wrapcols) {
     return renderVideoRowOf(&E.document.buffer, filerow, seg, wrapcols);
 }
 
-/* Inverse of editorVideoRowOf(): given an absolute video-row number,
- * finds which (filerow, segment) it falls in. Clamps to the last row
- * if `vy` is past the end of the file. */
+/**
+ * @brief Map an absolute visual row back to its logical row and segment.
+ *
+ * @details Writes zero-based outputs; positions beyond the text fall back to
+ * the last logical row and segment zero.
+ */
 static void editorFileRowAtVideoRow(int32_t vy, int32_t wrapcols, int32_t *out_filerow, int32_t *out_seg) {
     renderFileRowAtVideoRow(&E.document.buffer, vy, wrapcols, out_filerow, out_seg);
 }
 
-/* Total number of video rows across the whole file (sum of every
- * row's visual height). Used to clamp scrolling past the end. */
+/**
+ * @brief Count the visual rows occupied by the active document.
+ *
+ * @details Use to bound viewport scrolling; an empty document returns zero.
+ */
 static int32_t editorTotalVideoRows(int32_t wrapcols) {
     return renderTotalVideoRows(&E.document.buffer, wrapcols);
 }
 
-/* Converts a 1-based (screen_col, screen_row) terminal coordinate --
- * exactly what an SGR mouse report gives (see MOUSE_EVENT_KEY) -- into
- * a (file row, file column) cursor position, clamped to the nearest
- * valid spot if the click landed outside the text (e.g. past the end
- * of a short line, in the gutter, or below the last line). Inverse of
- * the cursor-positioning math in editorRefreshScreen() (see
- * "cursor_row + 1 + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0)" / "cursor_col +
- * editorGutterWidth() + 1" there) -- kept as its own function since
- * both need the exact same coordinate transform and must not drift
- * apart from each other. Clicks in the gutter or status/message bars
- * are the caller's responsibility to filter out first (this function
- * assumes a click inside the text area). */
+/**
+ * @brief Map terminal mouse coordinates to an addressable text position.
+ *
+ * @details screen_col and screen_row are one-based. Filter non-text UI clicks
+ * first; outputs are a zero-based logical row and source-byte offset.
+ *
+ * @note Converts a 1-based (screen_col, screen_row) terminal coordinate --
+ * exactly what an SGR mouse report gives (see MOUSE_EVENT_KEY) -- into a (file
+ * row, file column) cursor position, clamped to the nearest valid spot if the
+ * click landed outside the text (e.g. past the end of a short line, in the
+ * gutter, or below the last line). Inverse of the cursor-positioning math in
+ * editorRefreshScreen() (see "cursor_row + 1 + (S.show_top_bar ? 1 : 0) +
+ * (S.show_menu ? 1 : 0)" / "cursor_col + editorGutterWidth() + 1" there) --
+ * kept as its own function since both need the exact same coordinate transform
+ * and must not drift apart from each other. Clicks in the gutter or
+ * status/message bars are the caller's responsibility to filter out first
+ * (this function assumes a click inside the text area).
+ */
 static void editorMouseToCursor(int32_t screen_col, int32_t screen_row, int32_t *out_cy, int32_t *out_cx) {
     int32_t gutter = editorGutterWidth();
     int32_t wrapcols = editorSoftWrapCols();
@@ -1468,6 +1748,12 @@ static void editorMouseToCursor(int32_t screen_col, int32_t screen_row, int32_t 
     *out_cx = cx;
 }
 
+/**
+ * @brief Update cursor display coordinates and keep its context in view.
+ *
+ * @details Call before drawing. Consumes the one-shot free_scroll flag so
+ * mouse-wheel scrolling can leave the cursor stationary.
+ */
 static void editorScroll(void) {
     E.document.cursor.rx = 0;
     if (E.document.cursor.cy < E.document.buffer.row_count)
@@ -1535,10 +1821,18 @@ static void editorScroll(void) {
     }
 }
 
-/* Draws the render-byte range [seg_from, seg_to) of `filerow` into
- * `ab`, applying selection/search-match highlight -- the body shared
- * by both the unwrapped (one call per file row) and wrapped (one call
- * per visual segment) paths in editorDrawRows(). */
+/**
+ * @brief Append a portion of a row with syntax, search and selection colors.
+ *
+ * @details seg_from and seg_to delimit a half-open render-byte range.
+ * Selection and bracket x coordinates refer to source bytes; y coordinates are
+ * logical rows.
+ *
+ * @note Draws the render-byte range [seg_from, seg_to) of `filerow` into `ab`,
+ * applying selection/search-match highlight -- the body shared by both the
+ * unwrapped (one call per file row) and wrapped (one call per visual segment)
+ * paths in editorDrawRows().
+ */
 static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_from, int32_t seg_to,
     uint8_t has_sel, int32_t sel_y0, int32_t sel_x0, int32_t sel_y1, int32_t sel_x1,
     uint8_t has_pair, int32_t pair_y0, int32_t pair_x0, int32_t pair_y1, int32_t pair_x1) {
@@ -1559,7 +1853,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
         match_end = filerow == E.search.search_match_end_y ? E.search.search_match_end_x : row->size;
     }
 
-    int32_t source_byte = 0, render_byte = 0;
+    int32_t source_byte = 0, render_byte = 0, source_rx = 0;
     uint8_t in_sel = 0;
     for (int32_t j = 0; j < len; ) {
         int32_t rendercol = seg_from + j;
@@ -1567,11 +1861,16 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
          * while this loop walks render[]. A tab occupies several render
          * bytes, all of which represent the same source byte. */
         while (source_byte < row->size && render_byte < rendercol) {
-            int32_t width = row->chars[source_byte] == '\t'
-                ? S.tab_stop - render_byte % S.tab_stop : 1;
-            if (render_byte + width > rendercol) break;
-            render_byte += width;
-            source_byte++;
+            uint8_t is_tab = row->chars[source_byte] == '\t';
+            size_t step = is_tab ? 1 : utf8NextCharLen(row->chars,
+                (size_t)source_byte, (size_t)row->size);
+            int32_t width = is_tab ? S.tab_stop - source_rx % S.tab_stop :
+                utf8SingleCharWidth(row->chars + source_byte, step);
+            int32_t render_step = is_tab ? width : (int32_t)step;
+            if (render_byte + render_step > rendercol) break;
+            render_byte += render_step;
+            source_byte += (int32_t)step;
+            source_rx += width;
         }
         int32_t filecol = source_byte;
         size_t char_len = utf8NextCharLen(line, (size_t)j, (size_t)len);
@@ -1648,9 +1947,18 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
     if (in_sel) abAppendReset(ab);
 }
 
-/* A logical newline lives between two rows, rather than in either row's
+/**
+ * @brief Decide whether selection or search highlighting crosses a row boundary.
+ *
+ * @details Used to highlight the end-of-line cell even when invisible markers
+ * are off.
+ * @return 1 when the newline after filerow lies within a selection or a
+ * multiline search match.
+ *
+ * @note A logical newline lives between two rows, rather than in either row's
  * chars buffer. Give it one visible cell when a selection or regex match
- * crosses it, so blank selected rows and \n matches don't disappear. */
+ * crosses it, so blank selected rows and \n matches don't disappear.
+ */
 static uint8_t editorRowTerminatorHighlighted(int32_t filerow, uint8_t has_sel,
     int32_t sel_y0, int32_t sel_y1) {
     if (has_sel && filerow >= sel_y0 && filerow < sel_y1) return 1;
@@ -1658,6 +1966,12 @@ static uint8_t editorRowTerminatorHighlighted(int32_t filerow, uint8_t has_sel,
         filerow >= E.search.search_match_y && filerow < E.search.search_match_end_y;
 }
 
+/**
+ * @brief Append a highlighted end-of-line cell.
+ *
+ * @details Uses the selection color and optional invisible glyph, then
+ * restores the normal rendering attributes.
+ */
 static void editorDrawHighlightedTerminator(struct abuf *ab) {
     const char *sel_color = ansiColorCode(S.color_selection);
     abAppend(ab, sel_color, (int32_t)strlen(sel_color));
@@ -1666,6 +1980,12 @@ static void editorDrawHighlightedTerminator(struct abuf *ab) {
     abAppendReset(ab);
 }
 
+/**
+ * @brief Append the line number or padding for a wrapped continuation.
+ *
+ * @details gutter is a width in columns and filerow is zero-based.
+ * Continuations keep the same gutter width without repeating the number.
+ */
 static void editorDrawGutter(struct abuf *ab, int32_t gutter, int32_t filerow, uint8_t is_continuation) {
     if (gutter <= 0) return;
     char numbuf[16];
@@ -1682,13 +2002,18 @@ static void editorDrawGutter(struct abuf *ab, int32_t gutter, int32_t filerow, u
     abAppendReset(ab);
 }
 
-/* Splash lines shown on the empty buffer, centered as a block. NULL is
- * a blank spacer line. Kept short and few: this is the first thing a
- * new user sees and the only place the basic keys are advertised
- * without knowing to press F1, but it still has to fit a small
- * terminal, so it lists the way out and the way to get help rather
- * than trying to summarize the whole keymap. */
-
+/**
+ * @brief Choose a startup or Info slogan, avoiding the previous choice.
+ *
+ * @details Updates the UI slogan index. Uses system randomness when available
+ * and a pseudorandom fallback otherwise.
+ *
+ * @note Splash lines shown on the empty buffer, centered as a block. NULL is a
+ * blank spacer line. Kept short and few: this is the first thing a new user
+ * sees and the only place the basic keys are advertised without knowing to
+ * press F1, but it still has to fit a small terminal, so it lists the way out
+ * and the way to get help rather than trying to summarize the whole keymap.
+ */
 static void editorChooseSlogan(void) {
     uint32_t count = (uint32_t)(sizeof(slogans) / sizeof(slogans[0]));
     uint32_t previous = count;
@@ -1726,10 +2051,17 @@ static void editorChooseSlogan(void) {
     if (!splashLines[1]) splashLines[1] = sessionSlogan;
 }
 
-/* Draws the splash line belonging to video row `y`, or a plain "~" when
+/**
+ * @brief Append one row of the empty editor's splash screen.
+ *
+ * @details y is a zero-based viewport row and textcols is the available
+ * display width.
+ *
+ * @note Draws the splash line belonging to video row `y`, or a plain "~" when
  * that row isn't part of the block. The block is centered both ways and
- * skipped entirely on a terminal too short to hold it, where "~"
- * everywhere is better than a half-drawn banner. */
+ * skipped entirely on a terminal too short to hold it, where "~" everywhere is
+ * better than a half-drawn banner.
+ */
 static void editorDrawSplashRow(struct abuf *ab, int32_t y, int32_t textcols) {
     /* All-or-nothing: a block that doesn't fit is dropped rather than
      * clipped, so a short terminal never shows a banner missing its
@@ -1780,6 +2112,12 @@ static void editorDrawSplashRow(struct abuf *ab, int32_t y, int32_t textcols) {
     abAppend(ab, display_line, len);
 }
 
+/**
+ * @brief Append the visible document rows or the startup splash.
+ *
+ * @details Uses the current viewport and cached wrapping; selection, search
+ * and bracket highlighting are computed for this frame.
+ */
 static void editorDrawRows(struct abuf *ab) {
     int32_t sel_y0 = 0, sel_x0 = 0, sel_y1 = 0, sel_x1 = 0;
     uint8_t has_sel = editorSelectionRange(&E.document.selection, &E.document.cursor, &sel_y0, &sel_x0, &sel_y1, &sel_x1);
@@ -1817,13 +2155,17 @@ static void editorDrawRows(struct abuf *ab) {
         return;
     }
 
-    /* Wrapped mode: each video row corresponds to one visual segment
-     * of a logical row, resolved via editorFileRowAtVideoRow(). */
+    /* Locate the first visible segment once, then walk forward. */
+    int32_t filerow = 0, seg = 0;
+    int32_t remaining = E.view.rowoff;
+    while (filerow < E.document.buffer.row_count) {
+        int32_t height = editorRowSegments(&E.document.buffer.rows[filerow], wrapcols);
+        if (remaining < height) { seg = remaining; break; }
+        remaining -= height;
+        filerow++;
+    }
     for (int32_t y = 0; y < E.view.screenrows; y++) {
-        int32_t vy = y + E.view.rowoff;
-        int32_t filerow, seg;
-
-        if (vy >= editorTotalVideoRows(wrapcols)) {
+        if (filerow >= E.document.buffer.row_count) {
             if (E.document.buffer.row_count == 0) {
                 editorDrawGutter(ab, gutter, 0, 1);
                 editorDrawSplashRow(ab, y, textcols);
@@ -1835,8 +2177,6 @@ static void editorDrawRows(struct abuf *ab) {
             abAppend(ab, "\r\n", 2);
             continue;
         }
-
-        editorFileRowAtVideoRow(vy, wrapcols, &filerow, &seg);
 
         erow *row = &E.document.buffer.rows[filerow];
         int32_t nseg = editorRowSegments(row, wrapcols);
@@ -1873,37 +2213,50 @@ static void editorDrawRows(struct abuf *ab) {
 
         abAppend(ab, "\x1b[K", 3);
         abAppend(ab, "\r\n", 2);
+        if (++seg == nseg) { filerow++; seg = 0; }
     }
 }
 
-/* Counts grapheme clusters (not bytes, not raw codepoints) across the
- * whole buffer, using the same utf8NextCharLen() boundary logic as
- * cursor movement -- so an emoji with a skin-tone modifier counts as
- * one character here too, consistent with how it's edited/deleted as
- * one unit elsewhere in the editor. Newlines between rows count as one
- * character each, matching how the file is written to disk
- * (editorRowsToString() joins rows with '\n'). */
+/**
+ * @brief Count editable graphemes and boundaries between logical rows.
+ *
+ * @return a character count for the UI, not a byte count; the file's optional
+ * final newline is excluded.
+ *
+ * @note Counts grapheme clusters (not bytes, not raw codepoints) across the
+ * whole buffer, using the same utf8NextCharLen() boundary logic as cursor
+ * movement -- so an emoji with a skin-tone modifier counts as one character
+ * here too, consistent with how it's edited/deleted as one unit elsewhere in
+ * the editor. Newlines between rows count as one character each, matching how
+ * the file is written to disk (editorRowsToString() joins rows with '\n').
+ */
 static int32_t editorCountChars(void) {
-    int32_t count = 0;
-    for (int32_t i = 0; i < E.document.buffer.row_count; i++) {
-        erow *row = &E.document.buffer.rows[i];
-        size_t pos = 0;
-        while (pos < (size_t)row->size) {
-            size_t clen = utf8NextCharLen(row->chars, pos, (size_t)row->size);
-            if (clen == 0) clen = 1;
-            pos += clen;
-            count++;
+    struct editorDisplayCache *cache = &E.document.display_cache;
+    if (!cache->chars_valid) {
+        int32_t count = E.document.buffer.row_count > 0 ? E.document.buffer.row_count - 1 : 0;
+        for (int32_t i = 0; i < E.document.buffer.row_count; i++) {
+            int32_t addition = E.document.buffer.rows[i].grapheme_count;
+            if (addition > INT32_MAX - count) { count = INT32_MAX; break; }
+            count += addition;
         }
-        if (i < E.document.buffer.row_count - 1) count++; /* newline joining this row to the next */
+        cache->chars = count;
+        cache->chars_valid = 1;
     }
-    return count;
+    return cache->chars;
 }
 
-/* Filetype name for the status bar, derived from E.document.file.filename's
- * extension (e.g. "tinyedit.c" -> "C"), via the built-in table plus
- * any ~/.tinyeditrc "filetype.<ext> = <Name>" overrides. Returns NULL
- * if there's no filename, no extension, or the extension is unknown --
- * callers should omit the field entirely rather than show a blank. */
+/**
+ * @brief Look up the current document's readable language name.
+ *
+ * @details It performs no configuration writes during redraw.
+ * @return a borrowed label or NULL when no extension is known.
+ *
+ * @note Filetype name for the status bar, derived from
+ * E.document.file.filename's extension (e.g. "tinyedit.c" -> "C"), via the
+ * built-in table plus any ~/.tinyeditrc "filetype.<ext> = <Name>" overrides.
+ * Returns NULL if there's no filename, no extension, or the extension is
+ * unknown -- callers should omit the field entirely rather than show a blank.
+ */
 static const char *editorFiletypeLabel(void) {
     if (!E.document.file.filename) return NULL;
     const char *dot = strrchr(E.document.file.filename, '.');
@@ -1914,13 +2267,21 @@ static const char *editorFiletypeLabel(void) {
     return filetypeForExtension(dot + 1);
 }
 
-/* Top title bar (optional, show_top_bar): filename/path + dirty
- * indicator. Kept separate from the bottom status bar, which shows
- * transient position/count info instead -- the top bar acts as a
- * persistent title that stays visible while scrolling. */
-/* The bars reset the editor's background before applying their own
- * background/foreground pair. abAppendReset() restores the editor's
- * background after each bar, so a custom bar never leaks into text rows. */
+/**
+ * @brief Append the optional document title bar.
+ *
+ * @details Shows filename and modified state using the configured bar colors;
+ * does nothing when the top bar is disabled.
+ *
+ * @note Top title bar (optional, show_top_bar): filename/path + dirty
+ * indicator. Kept separate from the bottom status bar, which shows transient
+ * position/count info instead -- the top bar acts as a persistent title that
+ * stays visible while scrolling.
+ *
+ * @note The bars reset the editor's background before applying their own
+ * background/foreground pair. abAppendReset() restores the editor's background
+ * after each bar, so a custom bar never leaks into text rows.
+ */
 static void editorDrawTopBar(struct abuf *ab) {
     if (!S.show_top_bar) return;
 
@@ -1930,21 +2291,41 @@ static void editorDrawTopBar(struct abuf *ab) {
     if (bar_bg[0]) abAppend(ab, bar_bg, (int32_t)strlen(bar_bg));
     abAppend(ab, bar_fg, (int32_t)strlen(bar_fg));
 
-    char status[160];
-    int32_t len = snprintf(status, sizeof(status), " %s%s",
-        E.document.file.filename ? E.document.file.filename : "[No Name]", E.document.file.dirty ? " (modified)" : "");
-    if (len < 0) len = 0;
-    if (len > E.view.screencols) len = E.view.screencols;
-
-    abAppend(ab, status, len);
-    while (len < E.view.screencols) {
+    const char *parts[] = {
+        E.document.file.filename ? E.document.file.filename : "[No Name]",
+        E.document.file.dirty ? " (modified)" : ""
+    };
+    int32_t cols = 0;
+    if (E.view.screencols > 0) {
         abAppend(ab, " ", 1);
-        len++;
+        cols = 1;
+    }
+    for (size_t part = 0; part < sizeof(parts) / sizeof(parts[0]); part++) {
+        size_t size = strlen(parts[part]), pos = 0;
+        while (pos < size) {
+            size_t len = utf8NextCharLen(parts[part], pos, size);
+            int32_t width = utf8SingleCharWidth(parts[part] + pos, len);
+            if (width > E.view.screencols - cols) break;
+            abAppend(ab, parts[part] + pos, (int32_t)len);
+            cols += width;
+            pos += len;
+        }
+        if (pos < size) break;
+    }
+    while (cols < E.view.screencols) {
+        abAppend(ab, " ", 1);
+        cols++;
     }
     abAppendReset(ab);
     abAppend(ab, "\r\n", 2);
 }
 
+/**
+ * @brief Append document statistics and cursor position.
+ *
+ * @details Uses the current settings for colors and filename placement, then
+ * restores the document background.
+ */
 static void editorDrawStatusBar(struct abuf *ab) {
     if (S.color_background != COLOR_TERMINAL_DEFAULT) abAppend(ab, "\x1b[49m", 5);
     const char *bar_bg = ansiBgColorCode(S.color_statusbar);
@@ -1976,6 +2357,10 @@ static void editorDrawStatusBar(struct abuf *ab) {
     else
         rlen = snprintf(rstatus, sizeof(rstatus), "%s%s | %d/%d: C %d",
             ending, mixed, E.document.cursor.cy + 1, E.document.buffer.row_count, E.document.cursor.cx + 1);
+    if (len < 0) len = 0;
+    if ((size_t)len >= sizeof(status)) len = (int32_t)sizeof(status) - 1;
+    if (rlen < 0) rlen = 0;
+    if ((size_t)rlen >= sizeof(rstatus)) rlen = (int32_t)sizeof(rstatus) - 1;
     if (len > E.view.screencols) len = E.view.screencols;
     abAppend(ab, status, len);
     while (len < E.view.screencols) {
@@ -1991,6 +2376,12 @@ static void editorDrawStatusBar(struct abuf *ab) {
     abAppend(ab, "\r\n", 2);
 }
 
+/**
+ * @brief Append the current prompt or status message.
+ *
+ * @details Respects message expiry and sticky messages; long active prompts
+ * show the input tail so ongoing typing stays visible.
+ */
 static void editorDrawMessageBar(struct abuf *ab) {
     abAppend(ab, "\x1b[K", 3);
     int32_t msglen = (int32_t)strlen(E.ui.statusmsg);
@@ -2023,6 +2414,12 @@ static void editorDrawMessageBar(struct abuf *ab) {
     }
 }
 
+/**
+ * @brief Redraw the editor and position the terminal cursor.
+ *
+ * @details Handles pending resize, updates scrolling, assembles the frame and
+ * writes it to stdout; also draws the menu overlay when open.
+ */
 static void editorRefreshScreen(void) {
     uint8_t need_full_clear = 0;
     if (winsize_changed) {
@@ -2093,6 +2490,12 @@ static void editorRefreshScreen(void) {
     abFree(&ab);
 }
 
+/**
+ * @brief Show a formatted message that expires after a short interval.
+ *
+ * @details fmt and its arguments follow printf conventions. Replaces the
+ * previous message and disables sticky mode.
+ */
 static void editorSetStatusMessage(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -2102,11 +2505,18 @@ static void editorSetStatusMessage(const char *fmt, ...) {
     E.ui.statusmsg_sticky = 0;
 }
 
-/* Like editorSetStatusMessage(), but the message stays in the message
- * bar until replaced by another call to either function -- no 5s
- * timeout. Used for the startup shortcut hint, which should remain
- * visible until the user does something that produces a real status
- * update, not vanish on its own after a few seconds. */
+/**
+ * @brief Show a formatted message until another message replaces it.
+ *
+ * @details fmt and its arguments follow printf conventions. Use for startup
+ * guidance that should survive idle time.
+ *
+ * @note Like editorSetStatusMessage(), but the message stays in the message
+ * bar until replaced by another call to either function -- no 5s timeout. Used
+ * for the startup shortcut hint, which should remain visible until the user
+ * does something that produces a real status update, not vanish on its own
+ * after a few seconds.
+ */
 static void editorSetStatusMessageSticky(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -2118,12 +2528,19 @@ static void editorSetStatusMessageSticky(const char *fmt, ...) {
 
 /* ---- input ------------------------------------------------------------------ */
 
-/* Converts an (rx, in-segment column) target on a given video row back
+/**
+ * @brief Find a source-byte cursor position for a local segment column.
+ *
+ * @details seg_from_rx and target_col are display columns. Stops at the first
+ * character boundary reaching the target, or the row end.
+ *
+ * @note Converts an (rx, in-segment column) target on a given video row back
  * into a cx (char offset) on that row's logical line -- inverse of
- * editorRowCxToRx() restricted to one visual segment. Used by Up/Down
- * in wrapped mode to preserve the cursor's horizontal position when
- * moving between visual segments, same idea as unwrapped Up/Down
- * preserving E.document.cursor.rx via editorRowCxToRx()/clamping below. */
+ * editorRowCxToRx() restricted to one visual segment. Used by Up/Down in
+ * wrapped mode to preserve the cursor's horizontal position when moving
+ * between visual segments, same idea as unwrapped Up/Down preserving
+ * E.document.cursor.rx via editorRowCxToRx()/clamping below.
+ */
 static int32_t editorSegColToCx(erow *row, int32_t seg_from_rx, int32_t target_col) {
     int32_t target_rx = seg_from_rx + target_col;
     int32_t rx = 0, j = 0;
@@ -2143,11 +2560,18 @@ static int32_t editorSegColToCx(erow *row, int32_t seg_from_rx, int32_t target_c
     return j;
 }
 
-/* Up/Down cursor movement when soft-wrap is active: moves by one
- * visual segment instead of one logical row (see TODO.md -- decided
- * to match modern editor behavior instead of jumping whole paragraphs
- * on a wrapped long line). Preserves the target render column across
- * segments/rows, same intent as the unwrapped path preserving E.document.cursor.rx. */
+/**
+ * @brief Move Up or Down by one visual row.
+ *
+ * @details key must be ARROW_UP or ARROW_DOWN and the cursor must address an
+ * existing row. Recomputes its display column before each move.
+ *
+ * @note Up/Down cursor movement when soft-wrap is active: moves by one visual
+ * segment instead of one logical row (see TODO.md -- decided to match modern
+ * editor behavior instead of jumping whole paragraphs on a wrapped long line).
+ * Preserves the target render column across segments/rows, same intent as the
+ * unwrapped path preserving E.document.cursor.rx.
+ */
 static void editorMoveCursorWrapped(int32_t key, int32_t wrapcols) {
     int32_t seg_idx, seg_col;
     /* Derive rx from the current file position instead of trusting the
@@ -2185,6 +2609,12 @@ static void editorMoveCursorWrapped(int32_t key, int32_t wrapcols) {
     E.document.cursor.cx = editorSegColToCx(target_row, target_row->seg_start_rx[target_seg], seg_col);
 }
 
+/**
+ * @brief Move the cursor by a character or vertical row.
+ *
+ * @details key is an arrow key. Horizontal motion follows grapheme boundaries;
+ * vertical motion uses visual segments when wrapping is active.
+ */
 static void editorMoveCursor(int32_t key) {
     int32_t wrapcols = editorSoftWrapCols();
     if (wrapcols > 0 && (key == ARROW_UP || key == ARROW_DOWN) && E.document.cursor.cy < E.document.buffer.row_count) {
@@ -2243,9 +2673,12 @@ static void editorMoveCursor(int32_t key) {
     if (E.document.cursor.cx > rowlen) E.document.cursor.cx = rowlen;
 }
 
-/* Word-wise cursor movement for Alt+Left / Alt+Right. Skips whitespace
- * then a run of non-whitespace characters, crossing line boundaries
- * when the cursor is already at the start/end of a line. */
+/**
+ * @brief Move across whitespace and the adjoining word.
+ *
+ * @details forward selects the direction. Updates the byte-based cursor and
+ * crosses a line boundary when already at its edge.
+ */
 static void editorMoveCursorWord(uint8_t forward) {
     if (forward) {
         if (E.document.cursor.cy >= E.document.buffer.row_count) return;
@@ -2291,19 +2724,25 @@ static void editorMoveCursorWord(uint8_t forward) {
     }
 }
 
-/* Normalizes the selection anchor vs the current cursor position into an
- * ordered [start, end) range. Returns 0 and leaves outputs untouched if
- * there is no active selection. */
-/* Serializes the given [start_y,start_x) .. [end_y,end_x) half-open range
- * into a malloc'd NUL-terminated buffer, joining lines with '\n'.
- * *outlen receives the length excluding the NUL terminator. */
+/**
+ * @brief Copy a selected text range with LF separators.
+ *
+ * @details Coordinates are ordered, valid, zero-based rows and source-byte
+ * offsets with an exclusive end.
+ * @return owned NUL-terminated text; outlen excludes the NUL.
+ */
 static char *editorSerializeRange(int32_t start_y, int32_t start_x, int32_t end_y, int32_t end_x, size_t *outlen) {
     return bufferSerializeRange(&E.document.buffer, start_y, start_x, end_y, end_x, outlen);
 }
 
-/* Deletes the given [start_y,start_x) .. [end_y,end_x) half-open range from
- * the buffer and leaves the cursor at start_y,start_x. */
+/**
+ * @brief Remove a text range and leave the cursor at its start.
+ *
+ * @details Coordinates describe an ordered, valid half-open source range.
+ * Joins rows and marks dirty; the caller records undo before calling.
+ */
 static void editorDeleteRangeRaw(int32_t start_y, int32_t start_x, int32_t end_y, int32_t end_x) {
+    editorBeginEdit();
     if (start_y == end_y) {
         erow *row = &E.document.buffer.rows[start_y];
         bufferRowDeleteRange(row, start_x, end_x);
@@ -2325,16 +2764,31 @@ static void editorDeleteRangeRaw(int32_t start_y, int32_t start_x, int32_t end_y
     E.document.cursor.cy = start_y;
     E.document.cursor.cx = start_x;
     E.document.file.dirty = 1;
+    editorEndEdit();
 }
 
+/**
+ * @brief Delete a text range as a single undo action.
+ *
+ * @details Pass valid, ordered logical-row and source-byte endpoints; the end
+ * is exclusive.
+ */
 static void editorDeleteRange(int32_t start_y, int32_t start_x, int32_t end_y, int32_t end_x) {
+    editorBeginEdit();
     editorPushUndo(EDIT_OTHER);
     editorDeleteRangeRaw(start_y, start_x, end_y, end_x);
+    editorEndEdit();
 }
 
-/* Replaces the current selection with a typed newline as one undo step. */
+/**
+ * @brief Replace a captured selection with Enter and inherited indentation.
+ *
+ * @details sy/sx and ey/ex are valid half-open source endpoints. Deletion,
+ * splitting and indentation share one undo step; clears the selection.
+ */
 static void editorReplaceSelectionWithNewline(int32_t sy, int32_t sx,
     int32_t ey, int32_t ex) {
+    editorBeginEdit();
     editorPushUndo(EDIT_OTHER);
     editorDeleteRangeRaw(sy, sx, ey, ex);
 
@@ -2351,15 +2805,23 @@ static void editorReplaceSelectionWithNewline(int32_t sy, int32_t sx,
     editorInsertNewlineRaw();
     if (indent_len > 0) {
         erow *row = &E.document.buffer.rows[src_row];
-        for (int32_t i = 0; i < indent_len; i++)
-            editorInsertCharRaw((unsigned char)row->chars[i]);
+        editorRowInsertString(&E.document.buffer.rows[E.document.cursor.cy],
+            E.document.cursor.cx, row->chars, (size_t)indent_len);
+        E.document.cursor.cx += indent_len;
     }
     E.document.selection.active = 0;
+    editorEndEdit();
 }
 
-/* Inserts `text` (which may contain '\n') at the current cursor position,
- * splitting into new rows as needed, without taking an undo snapshot. */
+/**
+ * @brief Insert multiline bytes at the cursor without changing their indentation.
+ *
+ * @details text contains len bytes, split at LF. Advances the cursor and marks
+ * dirty; the caller records undo for the whole action.
+ */
 static void editorInsertTextRaw(const char *text, size_t len) {
+    editorBeginEdit();
+
     size_t start = 0;
     for (size_t i = 0; i <= len; i++) {
         if (i == len || text[i] == '\n') {
@@ -2375,29 +2837,44 @@ static void editorInsertTextRaw(const char *text, size_t len) {
             start = i + 1;
         }
     }
+    editorEndEdit();
 }
 
-/* Replaces the selection captured before key dispatch and keeps deletion plus
- * insertion in one undo step. With no selection this is a plain bulk insert. */
+/**
+ * @brief Insert bulk text, replacing the selection captured before dispatch.
+ *
+ * @details had_sel controls whether sy/sx..ey/ex is deleted. Deletion and
+ * insertion share one undo step, and the selection is cleared afterward.
+ */
 static void editorReplaceSelectionWithText(uint8_t had_sel,
     int32_t sy, int32_t sx, int32_t ey, int32_t ex,
     const char *text, size_t len) {
     if (!had_sel && len == 0) return;
+    editorBeginEdit();
     editorPushUndo(EDIT_OTHER);
     if (had_sel) editorDeleteRangeRaw(sy, sx, ey, ex);
     if (len > 0) editorInsertTextRaw(text, len);
     E.document.selection.active = 0;
+    editorEndEdit();
 }
 
-/* Removes up to one indent level's worth of leading whitespace from
- * `row`, returning how many bytes went away. Mirrors what one indent
- * step inserts, but tolerantly: a single leading tab counts as a whole
- * level regardless of tab_stop, and otherwise up to tab_stop spaces are
- * removed, stopping early at the first non-space so a partially
- * indented line loses only what it actually has. Deliberately handles
- * both tabs and spaces whatever insert_spaces_for_tab says -- outdent
- * has to cope with whatever indentation the file already contains, not
- * just the flavor this editor would produce. */
+/**
+ * @brief Remove one level of leading indentation and refresh the row.
+ *
+ * @details Accepts a tab or up to the configured number of spaces, independent
+ * of the insertion style.
+ * @return the number of source bytes removed.
+ *
+ * @note Removes up to one indent level's worth of leading whitespace from
+ * `row`, returning how many bytes went away. Mirrors what one indent step
+ * inserts, but tolerantly: a single leading tab counts as a whole level
+ * regardless of tab_stop, and otherwise up to tab_stop spaces are removed,
+ * stopping early at the first non-space so a partially indented line loses
+ * only what it actually has. Deliberately handles both tabs and spaces
+ * whatever insert_spaces_for_tab says -- outdent has to cope with whatever
+ * indentation the file already contains, not just the flavor this editor would
+ * produce.
+ */
 static int32_t editorRowOutdent(erow *row) {
     int32_t removed = bufferRowOutdent(row, S.tab_stop);
     if (removed > 0) {
@@ -2407,12 +2884,19 @@ static int32_t editorRowOutdent(erow *row) {
     return removed;
 }
 
-/* Shifts every line touched by the selection one indent level right
- * (`outdent` false) or left (true), as one undo step, keeping the
- * selection over the same lines afterward so the shortcut can be
- * repeated. Blank lines are skipped when indenting -- trailing
- * whitespace on an otherwise empty line is noise, and no editor that
- * does block indent adds it. */
+/**
+ * @brief Shift the selected lines by one indentation level.
+ *
+ * @details outdent chooses removal instead of insertion. Records one undo
+ * action and adjusts both selection endpoints so repeated presses remain
+ * useful.
+ *
+ * @note Shifts every line touched by the selection one indent level right
+ * (`outdent` false) or left (true), as one undo step, keeping the selection
+ * over the same lines afterward so the shortcut can be repeated. Blank lines
+ * are skipped when indenting -- trailing whitespace on an otherwise empty line
+ * is noise, and no editor that does block indent adds it.
+ */
 static void editorIndentSelection(uint8_t outdent) {
     int32_t sel_y0, sel_x0, sel_y1, sel_x1;
     if (!editorSelectionRange(&E.document.selection, &E.document.cursor, &sel_y0, &sel_x0, &sel_y1, &sel_x1)) return;
@@ -2426,6 +2910,7 @@ static void editorIndentSelection(uint8_t outdent) {
     int32_t first = sel_y0;
     int32_t last = (sel_y1 > sel_y0 && sel_x1 == 0) ? sel_y1 - 1 : sel_y1;
 
+    editorBeginEdit();
     editorPushUndo(EDIT_OTHER);
 
     /* Per-line shift, so each selection endpoint can be moved by what
@@ -2440,7 +2925,10 @@ static void editorIndentSelection(uint8_t outdent) {
             delta = -editorRowOutdent(row);
         } else if (row->size > 0) {
             if (S.insert_spaces_for_tab) {
-                for (int32_t i = 0; i < S.tab_stop; i++) editorRowInsertChar(row, 0, ' ');
+                char *indent = teMalloc((size_t)S.tab_stop);
+                memset(indent, ' ', (size_t)S.tab_stop);
+                editorRowInsertString(row, 0, indent, (size_t)S.tab_stop);
+                free(indent);
                 delta = S.tab_stop;
             } else {
                 editorRowInsertChar(row, 0, '\t');
@@ -2484,17 +2972,26 @@ static void editorIndentSelection(uint8_t outdent) {
         E.document.cursor.cy = sel_y0; E.document.cursor.cx = sel_x0;
     }
     E.document.file.dirty = 1;
+    editorEndEdit();
 }
 
 /* ---- search / replace ------------------------------------------------------- */
 
 static void editorFindAndReplace(const char *query);
 
-/* In regex replacement text, translate the familiar control-character
+/**
+ * @brief Expand supported control escapes in replacement text.
+ *
+ * @details raw is NUL-terminated.
+ * @return owned NUL-terminated bytes with their count in out_len; unknown
+ * escapes remain literal.
+ *
+ * @note In regex replacement text, translate the familiar control-character
  * escapes that can be typed into the single-line prompt. Unknown escapes
- * remain untouched, so a path or a future backreference-like sequence is
- * never silently damaged. The decoded form can contain real newlines and
- * is therefore returned with an explicit byte length. */
+ * remain untouched, so a path or a future backreference-like sequence is never
+ * silently damaged. The decoded form can contain real newlines and is
+ * therefore returned with an explicit byte length.
+ */
 static char *editorDecodeRegexReplacement(const char *raw, size_t *out_len) {
     size_t raw_len = strlen(raw);
     char *decoded = teMalloc(raw_len + 1);
@@ -2520,298 +3017,47 @@ static char *editorDecodeRegexReplacement(const char *raw, size_t *out_len) {
     return decoded;
 }
 
-/* POSIX ERE deliberately has no portable \t/\n shorthand. Decode the
- * familiar controls ourselves before handing the pattern to regcomp(),
- * matching the replacement prompt's existing escape behaviour. */
-static char *editorDecodeRegexPattern(const char *raw) {
-    size_t len = strlen(raw);
-    char *decoded = teMalloc(len + 1);
-    size_t dst = 0;
-    for (size_t src = 0; src < len; src++) {
-        if (raw[src] == '\\' && src + 1 < len) {
-            char next = raw[src + 1];
-            /* Preserve \\ exactly. In particular, the regex \\n means
-             * a literal backslash followed by n, not an actual newline. */
-            if (next == '\\') {
-                decoded[dst++] = raw[src++];
-                decoded[dst++] = raw[src];
-                continue;
-            }
-            if (next == 't' || next == 'n' || next == 'r') {
-                src++;
-                /* The document normalizes CRLF and LF to the same logical
-                 * row boundary, so both regex spellings denote that boundary. */
-                decoded[dst++] = next == 't' ? '\t' : next == 'n' ? '\n' : '\n';
-                continue;
-            }
-        }
-        decoded[dst++] = raw[src];
-    }
-    decoded[dst] = '\0';
-    return decoded;
-}
-
-/* Joins only the in-document row boundaries: unlike bufferSerialize(), this
- * deliberately omits the implicit final newline added when a file is saved.
- * Search must operate on the text the user can address in the editor. */
-static char *editorSearchText(size_t *out_len) {
-    size_t total = 0;
-    for (int32_t y = 0; y < E.document.buffer.row_count; y++)
-        total += (size_t)E.document.buffer.rows[y].size +
-            (y + 1 < E.document.buffer.row_count ? 1 : 0);
-    char *text = teMalloc(total + 1);
-    char *dst = text;
-    for (int32_t y = 0; y < E.document.buffer.row_count; y++) {
-        erow *row = &E.document.buffer.rows[y];
-        memcpy(dst, row->chars, (size_t)row->size);
-        dst += row->size;
-        if (y + 1 < E.document.buffer.row_count) *dst++ = '\n';
-    }
-    *dst = '\0';
-    *out_len = total;
-    return text;
-}
-
-static size_t editorSearchOffsetForPosition(int32_t y, int32_t x) {
-    size_t offset = 0;
-    for (int32_t row = 0; row < y; row++)
-        offset += (size_t)E.document.buffer.rows[row].size + 1;
-    return offset + (size_t)x;
-}
-
-static void editorSearchPositionForOffset(size_t offset, int32_t *out_y, int32_t *out_x) {
-    for (int32_t y = 0; y < E.document.buffer.row_count; y++) {
-        int32_t size = E.document.buffer.rows[y].size;
-        if (offset <= (size_t)size) {
-            *out_y = y;
-            *out_x = (int32_t)offset;
-            return;
-        }
-        offset -= (size_t)size + 1;
-    }
-    *out_y = E.document.buffer.row_count - 1;
-    *out_x = E.document.buffer.rows[*out_y].size;
-}
-
-static uint8_t editorRegexFindLastInText(const regex_t *re, const char *text,
-    size_t len, size_t limit, size_t *out_start, size_t *out_len) {
-    uint8_t found = 0;
-    size_t search_from = 0;
-    while (search_from <= len) {
-        regmatch_t m;
-        if (regexec(re, text + search_from, 1, &m,
-                search_from > 0 ? REG_NOTBOL : 0) != 0)
-            break;
-        size_t start = search_from + (size_t)m.rm_so;
-        size_t match_len = (size_t)(m.rm_eo - m.rm_so);
-        if (start > limit) break;
-        *out_start = start;
-        *out_len = match_len;
-        found = 1;
-        search_from = start + (match_len > 0 ? match_len : 1);
-    }
-    return found;
-}
-
-/* Finds the LAST regex match on `row` that starts at or before column
- * `limit_x` (inclusive), storing its start offset/length in *out_x/
- * *out_len. Returns 1 if any match qualifies, 0 otherwise. There is no
- * POSIX-portable way to search backward with <regex.h> (REG_STARTEND,
- * which would let this restrict the search window directly, is a
- * BSD/macOS extension absent from glibc -- and this project targets
- * both macOS and Linux), so this re-runs regexec()
- * repeatedly from increasing start offsets and keeps the rightmost
- * match that still qualifies, mirroring how the literal-substring
- * backward search below already works (memcmp() at every offset up to
- * `limit_x`). Not the fastest reverse-regex-search algorithm, but rows
- * are typically well under a few hundred columns, and this only runs
- * on Shift/Arrow-Up/Left inside an interactive search, not per
- * keystroke of typing the query. */
-static uint8_t editorRegexFindLastOnRow(const regex_t *re, erow *row, int32_t limit_x,
-    int32_t *out_x, int32_t *out_len) {
-    uint8_t found = 0;
-    int32_t search_from = 0;
-    while (search_from <= row->size) {
-        regmatch_t m;
-        if (regexec(re, &row->chars[search_from], 1, &m, search_from > 0 ? REG_NOTBOL : 0) != 0)
-            break;
-        int32_t mx = search_from + (int32_t)m.rm_so;
-        int32_t mlen = (int32_t)(m.rm_eo - m.rm_so);
-        if (mx > limit_x) break;
-        *out_x = mx;
-        *out_len = mlen;
-        found = 1;
-        /* Advance the search start to just past this match's END (not
-         * its start) so the next iteration looks for the FOLLOWING
-         * match, not a sub-match nested inside the one just found --
-         * advancing to mx + 1 instead (one byte past the START) would
-         * resume scanning from INSIDE a multi-byte match, and
-         * regexec() would happily find a shorter match entirely
-         * contained within it (e.g. "[0-9]+" matching "222" at mx=5,
-         * then resuming at mx+1=6 finds "22" at the new mx=6, which
-         * overwrites out_x/out_len with a wrong, truncated result --
-         * this was the bug: Arrow-Up landed on a partial match instead
-         * of the real previous one). Always advances by at least 1
-         * (mlen can be 0 for a pattern that matches empty, e.g. "a*"),
-         * so an empty match can't loop forever, and overlapping
-         * non-nested matches starting after this one's end are still
-         * found normally by continuing the scan from there. */
-        search_from = mx + (mlen > 0 ? mlen : 1);
-    }
-    return found;
-}
-
-/* Searches for `query` starting at (from_y, from_x), moving in `dir`
- * (1 forward, -1 backward), wrapping around the whole file. When
- * E.search.regex_mode is set, `query` is compiled as a POSIX extended
- * regular expression (<regex.h>, part of libc, so it adds no external
- * dependency) instead of
- * matched as a literal substring; a malformed pattern is treated as
- * "no match" rather than surfacing regcomp()'s error, consistent with
- * how an empty query already means "no match" below rather than an
- * error dialog. On success sets E.document.cursor.cy/E.document.cursor.cx to the match start, updates
- * E.search_match_*, and returns 1. On failure clears E.search.search_match_y
- * to -1 and returns 0. */
-/* Finds a match from the requested position. Interactive search passes
- * wrap=1 so repeated arrows cycle through the document; replace passes
- * wrap=0 so a replacement that still matches the query cannot send the
- * traversal back to the beginning forever. */
+/* The search engine owns query compilation and returns source coordinates;
+ * only this adapter applies a result to the active session and cursor. */
 static uint8_t editorFindFrom(const char *query, int32_t from_y, int32_t from_x,
     int32_t dir, uint8_t wrap) {
-    size_t qlen = strlen(query);
-    if (qlen == 0 || E.document.buffer.row_count == 0) {
+    struct searchMatch match;
+    searchQueryPrepare(&E.search.query, query, E.search.regex_mode);
+    if (!searchFind(&E.search.query, &E.document.buffer, from_y, from_x, dir, wrap, &match)) {
         E.search.search_match_y = -1;
         E.search.search_match_end_y = -1;
         return 0;
     }
-
-    regex_t re;
-    uint8_t have_re = 0;
-    uint8_t cross_row_regex = 0;
-    if (E.search.regex_mode) {
-        char *pattern = editorDecodeRegexPattern(query);
-        cross_row_regex = strchr(pattern, '\n') != NULL;
-        int32_t compile_failed = regcomp(&re, pattern, REG_EXTENDED | REG_NEWLINE) != 0;
-        free(pattern);
-        if (compile_failed) {
-            E.search.search_match_y = -1;
-            E.search.search_match_end_y = -1;
-            return 0;
-        }
-        have_re = 1;
-    }
-
-    if (cross_row_regex) {
-        size_t text_len;
-        char *text = editorSearchText(&text_len);
-        size_t from = editorSearchOffsetForPosition(from_y, from_x);
-        if (from > text_len) from = text_len;
-        size_t start = 0, match_len = 0;
-        uint8_t found = 0;
-
-        if (dir == 1) {
-            regmatch_t m;
-            if (regexec(&re, text + from, 1, &m, from > 0 ? REG_NOTBOL : 0) == 0) {
-                start = from + (size_t)m.rm_so;
-                match_len = (size_t)(m.rm_eo - m.rm_so);
-                found = 1;
-            }
-            if (!found && wrap && regexec(&re, text, 1, &m, 0) == 0) {
-                start = (size_t)m.rm_so;
-                match_len = (size_t)(m.rm_eo - m.rm_so);
-                found = 1;
-            }
-        } else {
-            found = editorRegexFindLastInText(&re, text, text_len, from, &start, &match_len);
-            if (!found && wrap)
-                found = editorRegexFindLastInText(&re, text, text_len, text_len, &start, &match_len);
-        }
-
-        if (found) {
-            editorSearchPositionForOffset(start, &E.document.cursor.cy, &E.document.cursor.cx);
-            E.search.search_match_y = E.document.cursor.cy;
-            E.search.search_match_x = E.document.cursor.cx;
-            E.search.search_match_len = (int32_t)match_len;
-            editorSearchPositionForOffset(start + match_len,
-                &E.search.search_match_end_y, &E.search.search_match_end_x);
-        } else {
-            E.search.search_match_y = -1;
-            E.search.search_match_end_y = -1;
-        }
-        free(text);
-        regfree(&re);
-        return found;
-    }
-
-    int32_t y = from_y;
-    int32_t x = from_x;
-    uint8_t result = 0;
-
-    for (int32_t steps = 0; steps <= E.document.buffer.row_count; steps++) {
-        erow *row = &E.document.buffer.rows[y];
-        int32_t mx = -1, mlen = 0;
-
-        if (have_re) {
-            if (dir == 1) {
-                if (x <= row->size) {
-                    regmatch_t m;
-                    if (regexec(&re, &row->chars[x], 1, &m, x > 0 ? REG_NOTBOL : 0) == 0) {
-                        mx = x + (int32_t)m.rm_so;
-                        mlen = (int32_t)(m.rm_eo - m.rm_so);
-                    }
-                }
-            } else {
-                if (editorRegexFindLastOnRow(&re, row, x, &mx, &mlen)) {
-                    /* mx/mlen already set by the helper. */
-                }
-            }
-        } else if (dir == 1) {
-            if (x <= row->size) {
-                char *match = strstr(&row->chars[x], query);
-                if (match) { mx = (int32_t)(match - row->chars); mlen = (int32_t)qlen; }
-            }
-        } else {
-            /* Backward: scan for the last match starting at or before
-             * column x on this row. */
-            int32_t limit = x;
-            if (limit > row->size - (int32_t)qlen) limit = row->size - (int32_t)qlen;
-            for (int32_t i = 0; i <= limit; i++) {
-                if (memcmp(&row->chars[i], query, qlen) == 0) mx = i;
-            }
-            if (mx >= 0) mlen = (int32_t)qlen;
-        }
-
-        if (mx >= 0) {
-            E.document.cursor.cy = y;
-            E.document.cursor.cx = mx;
-            E.search.search_match_y = y;
-            E.search.search_match_x = mx;
-            E.search.search_match_len = mlen;
-            E.search.search_match_end_y = y;
-            E.search.search_match_end_x = mx + mlen;
-            result = 1;
-            break;
-        }
-
-        if (dir == 1) {
-            if (!wrap && y == E.document.buffer.row_count - 1) break;
-            y = (y + 1) % E.document.buffer.row_count;
-            x = 0;
-        } else {
-            if (!wrap && y == 0) break;
-            y = (y - 1 + E.document.buffer.row_count) % E.document.buffer.row_count;
-            x = E.document.buffer.rows[y].size;
-        }
-    }
-
-    if (have_re) regfree(&re);
-    if (result) return 1;
-
-    E.search.search_match_y = -1;
-    E.search.search_match_end_y = -1;
-    return 0;
+    E.document.cursor.cy = match.start_y;
+    E.document.cursor.cx = match.start_x;
+    E.search.search_match_y = match.start_y;
+    E.search.search_match_x = match.start_x;
+    E.search.search_match_len = match.length;
+    E.search.search_match_end_y = match.end_y;
+    E.search.search_match_end_x = match.end_x;
+    return 1;
 }
 
+static void editorClearSearchNavigation(void) {
+    E.search.last_cy = -1;
+    E.search.last_cx = -1;
+    E.search.last_end_y = -1;
+    E.search.last_end_x = 0;
+    E.search.last_len = 0;
+}
+
+static void editorRememberSearchMatch(void) {
+    E.search.last_cy = E.search.search_match_y;
+    E.search.last_cx = E.search.search_match_x;
+    E.search.last_end_y = E.search.search_match_end_y;
+    E.search.last_end_x = E.search.search_match_end_x;
+    E.search.last_len = E.search.search_match_len;
+}
+
+/**
+ * @brief Handle search-session events and apply engine results to the view.
+ * @details Query ownership lives in E.search; Escape restores the saved view.
+ */
 static void editorFindCallback(char *query, int32_t key) {
     if (key == '\r' || key == '\x1b') {
         if (key == '\x1b') {
@@ -2822,14 +3068,9 @@ static void editorFindCallback(char *query, int32_t key) {
         }
         E.search.search_match_y = -1;
         E.search.search_match_end_y = -1;
-        last_cy = -1;
-        last_cx = -1;
-        last_end_y = -1;
-        last_end_x = 0;
-        last_len = 0;
+        editorClearSearchNavigation();
         return;
     }
-
     if (key == CTRL_KEY('r')) {
         E.search.switch_to_replace = 1;
         return;
@@ -2837,108 +3078,68 @@ static void editorFindCallback(char *query, int32_t key) {
 
     if (key == CTRL_KEY('g')) {
         E.search.regex_mode = !E.search.regex_mode;
-        /* Re-run the search from the saved starting position (as if
-         * the query had just been retyped) so toggling mode mid-search
-         * immediately reflects the new interpretation instead of
-         * waiting for the next keystroke -- same reset already done
-         * below when a key isn't a recognized navigation/mode key. */
-        last_cy = -1;
-        last_cx = -1;
-        last_end_y = -1;
-        last_end_x = 0;
-        last_len = 0;
-        if (strlen(query) > 0) {
-            int32_t from_y = E.search.saved_cy, from_x = E.search.saved_cx;
-            if (editorFindFrom(query, from_y, from_x, E.search.direction, 1)) {
-                last_cy = E.document.cursor.cy;
-                last_cx = E.document.cursor.cx;
-                last_end_y = E.search.search_match_end_y;
-                last_end_x = E.search.search_match_end_x;
-                last_len = E.search.search_match_len;
-            }
-        }
-        return;
-    }
-
-    if (key == ARROW_DOWN || key == ARROW_RIGHT) {
+        editorClearSearchNavigation();
+    } else if (key == ARROW_DOWN || key == ARROW_RIGHT) {
         E.search.direction = 1;
     } else if (key == ARROW_UP || key == ARROW_LEFT) {
         E.search.direction = -1;
     } else {
         E.search.direction = 1;
-        last_cy = -1;
-        last_cx = -1;
-        last_end_y = -1;
-        last_end_x = 0;
-        last_len = 0;
+        editorClearSearchNavigation();
     }
-
-    if (strlen(query) == 0) {
+    if (!E.search.query.pattern || strcmp(E.search.query.pattern, query) != 0)
+        editorClearSearchNavigation();
+    searchQueryPrepare(&E.search.query, query, E.search.regex_mode);
+    if (!*query || E.document.buffer.row_count == 0) {
         E.search.search_match_y = -1;
         E.search.search_match_end_y = -1;
+        editorClearSearchNavigation();
         return;
     }
 
-    int32_t from_y, from_x;
-    if (last_cy == -1) {
-        from_y = E.search.saved_cy;
-        from_x = E.search.saved_cx;
-    } else if (E.search.direction == 1) {
-        /* Resume just past the END of the previous match, not one byte
-         * past its START -- for a literal query the two are the same
-         * length-wise (every match is exactly qlen bytes), but a regex
-         * match's length varies with what it actually matched (e.g.
-         * "[0-9]+" matching "111" is 3 bytes). Starting from
-         * last_cx + 1 instead of last_cx + last_len would resume
-         * search from INSIDE the previous match whenever it's longer
-         * than 1 byte, finding an overlapping sub-match on the same
-         * text instead of advancing past it -- this was the bug
-         * reported by the user (Arrow-Down on a regex search got stuck
-         * re-matching pieces of the same match instead of moving to
-         * the next line). */
-        from_y = last_end_y;
-        from_x = last_end_x;
-        if (last_len == 0) from_x++;
-    } else if (last_cx > 0) {
-        /* Backward: resume just before the START of the previous match
-         * (searching for the last match that starts at or before this
-         * point -- see editorFindFrom()'s dir==-1 handling). Unlike the
-         * forward case, the match's length doesn't matter here: moving
-         * one byte before the match's own start is what excludes it
-         * from being found again, regardless of how long it is. */
-        from_y = last_cy;
-        from_x = last_cx - 1;
-    } else {
-        /* Previous match started at column 0 -- there's no valid
-         * "one byte before" on this row (clamping to 0 would just
-         * re-find the very same match at the very same spot, since
-         * editorFindFrom()'s dir==-1 search includes the row's column
-         * 0 in its search window). Skip straight to the end of the
-         * PREVIOUS row instead, same starting point editorFindFrom()
-         * itself uses when it wraps backward past a row with no match
-         * -- this was the bug: Arrow-Up got stuck re-finding a
-         * column-0 match forever instead of moving to the prior line. */
-        from_y = (last_cy - 1 + E.document.buffer.row_count) % E.document.buffer.row_count;
+    int32_t from_y = E.search.saved_cy, from_x = E.search.saved_cx;
+    if (E.search.last_cy >= 0 && E.search.direction == 1) {
+        from_y = E.search.last_end_y;
+        from_x = E.search.last_end_x;
+        if (E.search.last_len == 0) {
+            erow *row = &E.document.buffer.rows[from_y];
+            if (from_x < row->size)
+                from_x += (int32_t)utf8NextCharLen(row->chars, (size_t)from_x, (size_t)row->size);
+            else from_x++;
+        }
+    } else if (E.search.last_cy >= 0 && E.search.last_cx > 0) {
+        from_y = E.search.last_cy;
+        from_x = E.search.last_cx - 1;
+    } else if (E.search.last_cy >= 0) {
+        /* A column-zero match must be excluded by moving to the previous row. */
+        from_y = (E.search.last_cy - 1 + E.document.buffer.row_count) % E.document.buffer.row_count;
         from_x = E.document.buffer.rows[from_y].size;
     }
-
-    if (editorFindFrom(query, from_y, from_x, E.search.direction, 1)) {
-        last_cy = E.document.cursor.cy;
-        last_cx = E.document.cursor.cx;
-        last_end_y = E.search.search_match_end_y;
-        last_end_x = E.search.search_match_end_x;
-        last_len = E.search.search_match_len;
-    }
+    if (editorFindFrom(query, from_y, from_x, E.search.direction, 1))
+        editorRememberSearchMatch();
+    else editorClearSearchNavigation();
 }
 
-/* Fed to editorPromptCB() as status_fn -- re-evaluated on every prompt
- * redraw, so the "[regex]"/"[literal]" indicator updates the instant
- * Ctrl-G toggles E.search.regex_mode, without editorFind() needing to
- * rebuild the whole prompt string itself. */
+/**
+ * @brief Get the readable mode label for the search prompt.
+ *
+ * @return a borrowed literal reflecting the current per-search regex flag.
+ *
+ * @note Fed to editorPromptCB() as status_fn -- re-evaluated on every prompt
+ * redraw, so the "[regex]"/"[literal]" indicator updates the instant Ctrl-G
+ * toggles E.search.regex_mode, without editorFind() needing to rebuild the
+ * whole prompt string itself.
+ */
 static const char *editorFindModeIndicator(void) {
     return E.search.regex_mode ? "[regex]" : "[literal]";
 }
 
+/**
+ * @brief Run incremental search and optionally enter replacement.
+ *
+ * @details Starts in literal mode, saves the original view for cancellation
+ * and uses the prompt callback for live navigation.
+ */
 static void editorFind(void) {
     E.search.saved_cx = E.document.cursor.cx;
     E.search.saved_cy = E.document.cursor.cy;
@@ -2946,6 +3147,8 @@ static void editorFind(void) {
     E.search.saved_coloff = E.view.coloff;
     E.search.direction = 1;
     E.search.regex_mode = 0;
+    E.search.last_cy = -1;
+    E.search.last_end_y = -1;
 
     /* Long form spells out every shortcut -- shown while there's room
      * for it alongside the query. Once buf grows enough that the two
@@ -2969,13 +3172,16 @@ static void editorFind(void) {
     }
 
     if (query) free(query);
+    searchQueryFree(&E.search.query);
 }
 
-/* Search+replace, bound to Ctrl-R while inside the Ctrl-F search prompt
- * (rather than Ctrl-Shift-F, whose byte sequence is indistinguishable from
- * plain Ctrl-F on most raw ttys). Prompts for a search term via the normal
- * incremental-search callback, then for a replacement string, then walks
- * matches one at a time offering y/n/a (yes/no/all). */
+/**
+ * @brief Walk matches once and ask which occurrences to replace.
+ *
+ * @details query is borrowed from the search prompt and uses its current regex
+ * mode. All accepted replacements share one undo step; inserted matches are
+ * not revisited.
+ */
 static void editorFindAndReplace(const char *query) {
     if (!query || query[0] == '\0') return;
 
@@ -3045,9 +3251,11 @@ static void editorFindAndReplace(const char *query) {
         }
 
         if (do_replace) {
+            editorBeginEdit();
             if (count == 0) editorPushUndo(EDIT_OTHER);
             editorDeleteRangeRaw(y, x, end_y, end_x);
             editorInsertTextRaw(replacement, rlen);
+            editorEndEdit();
             count++;
             y = E.document.cursor.cy;
             x = E.document.cursor.cx;
@@ -3079,14 +3287,33 @@ static void editorFindAndReplace(const char *query) {
 
 /* ---- settings screen (F2) --------------------------------------------------- */
 
+/**
+ * @brief Access a setting field through its descriptor offset.
+ *
+ * @details s is the editable settings copy and d must describe one of its
+ * int32_t fields.
+ * @return a borrowed writable slot; equal field sizes are essential.
+ */
 static int32_t *settingsScreenSlot(struct editorSettings *s, const struct settingDescriptor *d) {
     return (int32_t *)((char *)s + d->offset);
 }
 
+/**
+ * @brief Recognize a syntax-color option for grouping and visibility.
+ *
+ * @details d is a valid setting descriptor.
+ * @return 1 when its key has the color_syntax_ prefix.
+ */
 static uint8_t editorSettingsIsSyntaxColor(const struct settingDescriptor *d) {
     return strncmp(d->key, "color_syntax_", strlen("color_syntax_")) == 0;
 }
 
+/**
+ * @brief Choose preview text appropriate to a syntax color.
+ *
+ * @return a borrowed sample literal for d, with a generic fallback for
+ * unfamiliar syntax keys.
+ */
 static const char *editorSettingsSyntaxColorSample(const struct settingDescriptor *d) {
     if (strcmp(d->key, "color_syntax_normal") == 0) return "text";
     if (strcmp(d->key, "color_syntax_keyword") == 0) return "printf";
@@ -3100,23 +3327,39 @@ static const char *editorSettingsSyntaxColorSample(const struct settingDescripto
     return "sample";
 }
 
+/**
+ * @brief Choose preview text for non-syntax color options.
+ *
+ * @return a borrowed sample for gutter or invisible-character colors,
+ * otherwise NULL.
+ */
 static const char *editorSettingsPlainColorSample(const struct settingDescriptor *d) {
     if (strcmp(d->key, "color_gutter") == 0) return " 42 ";
     if (strcmp(d->key, "color_invisibles") == 0) return ". > $";
     return NULL;
 }
 
-/* Any setting whose value is one of enum settingColor -- i.e. every
- * "color_*" key, syntax ones included. Recognized by key prefix rather
- * than by comparing d->enum_names against colorNames, since that array
- * is file-local to settings.c. */
+/**
+ * @brief Recognize an enum setting that uses the color palette.
+ *
+ * @return 1 only for enum descriptors whose keys begin with color_.
+ *
+ * @note Any setting whose value is one of enum settingColor -- i.e. every
+ * "color_*" key, syntax ones included. Recognized by key prefix rather than by
+ * comparing d->enum_names against colorNames, since that array is file-local
+ * to settings.c.
+ */
 static uint8_t editorSettingsIsColor(const struct settingDescriptor *d) {
     return d->type == SETTING_ENUM &&
         strncmp(d->key, "color_", strlen("color_")) == 0;
 }
 
-/* Syntax colors are subordinate to the syntax-highlighting switch: keep
- * them out of both the display and keyboard navigation while disabled. */
+/**
+ * @brief Count options currently available in the settings panel.
+ *
+ * @details edited is the draft settings copy. Syntax-color options are hidden
+ * when its highlighting switch is off.
+ */
 static int32_t editorSettingsVisibleCount(const struct editorSettings *edited) {
     int32_t count = 0;
     for (int32_t i = 0; i < settingDescriptorCount; i++) {
@@ -3126,6 +3369,12 @@ static int32_t editorSettingsVisibleCount(const struct editorSettings *edited) {
     return count;
 }
 
+/**
+ * @brief Resolve a visible panel index to the descriptor table.
+ *
+ * @details visible_idx is zero-based and uses the current edited settings.
+ * @return the descriptor index, or -1 if no visible entry exists.
+ */
 static int32_t editorSettingsDescriptorAt(const struct editorSettings *edited, int32_t visible_idx) {
     for (int32_t i = 0; i < settingDescriptorCount; i++) {
         if (!edited->syntax_highlight && editorSettingsIsSyntaxColor(&settingDescriptors[i]))
@@ -3135,6 +3384,12 @@ static int32_t editorSettingsDescriptorAt(const struct editorSettings *edited, i
     return -1;
 }
 
+/**
+ * @brief Measure the alignment width for visible option labels.
+ *
+ * @return the width used by the settings panel, including indentation for
+ * grouped syntax colors.
+ */
 static int32_t editorSettingsLabelWidth(const struct editorSettings *edited) {
     int32_t widest = 0;
     for (int32_t i = 0; i < settingDescriptorCount; i++) {
@@ -3149,13 +3404,20 @@ static int32_t editorSettingsLabelWidth(const struct editorSettings *edited) {
     return widest;
 }
 
-/* Steps a SETTING_ENUM value by `delta` (+1/-1), wrapping at both ends.
+/**
+ * @brief Step through an enum setting with wraparound.
+ *
+ * @details delta is +1 or -1 and slot is the editable value. Background
+ * pickers skip dim variants that look identical to dark ones.
+ *
+ * @note Steps a SETTING_ENUM value by `delta` (+1/-1), wrapping at both ends.
  * On color_background it skips the 8 "-dim" hues: the dim attribute is
- * foreground-only, so as a background each renders identically to its
- * "-dark" twin (see settingColorIsDim()) and offering both just makes
- * the picker look broken -- you cycle, the swatch doesn't change. A
- * -dim value already in ~/.tinyeditrc still loads and renders fine;
- * stepping away from it lands on a non-dim one and can't come back. */
+ * foreground-only, so as a background each renders identically to its "-dark"
+ * twin (see settingColorIsDim()) and offering both just makes the picker look
+ * broken -- you cycle, the swatch doesn't change. A -dim value already in
+ * ~/.tinyeditrc still loads and renders fine; stepping away from it lands on a
+ * non-dim one and can't come back.
+ */
 static void editorSettingsCycleEnum(const struct settingDescriptor *d, int32_t *slot, int32_t delta) {
     uint8_t skip_dim = strcmp(d->key, "color_background") == 0 ||
         strcmp(d->key, "color_statusbar") == 0;
@@ -3171,11 +3433,18 @@ static void editorSettingsCycleEnum(const struct settingDescriptor *d, int32_t *
     *slot = value;
 }
 
-/* `scroll_indicator` is '^' when this row is the topmost visible one
- * and there are more settings scrolled off above, 'v' when it's the
- * bottommost visible one and there are more below, or '\0' for no
- * indicator -- drawn in the first column (like the line-number
- * gutter) so it's visible regardless of which row is selected. */
+/**
+ * @brief Append one settings entry with its value and preview.
+ *
+ * @details idx is a descriptor-table index; selected controls highlighting.
+ * scroll_indicator is '^', 'v' or NUL, and label_width aligns values.
+ *
+ * @note `scroll_indicator` is '^' when this row is the topmost visible one and
+ * there are more settings scrolled off above, 'v' when it's the bottommost
+ * visible one and there are more below, or '\0' for no indicator -- drawn in
+ * the first column (like the line-number gutter) so it's visible regardless of
+ * which row is selected.
+ */
 static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected,
     const struct editorSettings *edited, char scroll_indicator, int32_t label_width) {
     const struct settingDescriptor *d = &settingDescriptors[idx];
@@ -3278,21 +3547,29 @@ static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected
     abAppend(ab, "\x1b[K\r\n", 5);
 }
 
-/* Full-screen settings overlay (F2). Edits a local copy of the live
- * settings so Esc can discard changes cleanly; Ctrl-S writes the copy
- * to ~/.tinyeditrc and makes it live. Reuses the same raw-mode input
- * loop style as the rest of the editor (editorReadKey + a per-frame
- * abuf redraw) rather than pulling in any new input machinery. */
-/* Static keybinding reference shown by F1. One entry per line; NULL
- * marks a section header (rendered bold/inverse instead of key+desc).
- * Kept as a flat array rather than scattered doc-comments so this is
- * the one place to update when a keybinding changes -- easy to miss
- * a case in editorProcessKeypress() otherwise. */
-
-/* Full-screen static help overlay (F1). No editable state, so unlike
- * editorSettingsScreen() this doesn't need a local copy or Ctrl-S --
- * any key closes it. Scrolls with Up/Down/PageUp/PageDown if the
- * keybinding list is taller than the terminal. */
+/**
+ * @brief Show the scrollable shortcut and configuration reference.
+ *
+ * @details Runs its own input loop until dismissal and adapts shortcut labels
+ * to the current modifier mode.
+ *
+ * @note Full-screen settings overlay (F2). Edits a local copy of the live
+ * settings so Esc can discard changes cleanly; Ctrl-S writes the copy to
+ * ~/.tinyeditrc and makes it live. Reuses the same raw-mode input loop style
+ * as the rest of the editor (editorReadKey + a per-frame abuf redraw) rather
+ * than pulling in any new input machinery.
+ *
+ * @note Static keybinding reference shown by F1. One entry per line; NULL
+ * marks a section header (rendered bold/inverse instead of key+desc). Kept as
+ * a flat array rather than scattered doc-comments so this is the one place to
+ * update when a keybinding changes -- easy to miss a case in
+ * editorProcessKeypress() otherwise.
+ *
+ * @note Full-screen static help overlay (F1). No editable state, so unlike
+ * editorSettingsScreen() this doesn't need a local copy or Ctrl-S -- any key
+ * closes it. Scrolls with Up/Down/PageUp/PageDown if the keybinding list is
+ * taller than the terminal.
+ */
 static void editorHelpScreen(void) {
     int32_t scroll = 0;
 
@@ -3381,6 +3658,12 @@ static void editorHelpScreen(void) {
     }
 }
 
+/**
+ * @brief Append a formatted Info row if screen space remains.
+ *
+ * @details rows_used tracks occupied rows and is incremented only when output
+ * is appended. fmt follows printf conventions.
+ */
 static void editorInfoAppendLine(struct abuf *ab, int32_t *rows_used, const char *fmt, ...) {
     char line[160];
     va_list ap;
@@ -3394,6 +3677,12 @@ static void editorInfoAppendLine(struct abuf *ab, int32_t *rows_used, const char
     (*rows_used)++;
 }
 
+/**
+ * @brief Append a highlighted section heading to the Info screen.
+ *
+ * @details title is NUL-terminated; rows_used is shared with the other Info
+ * helpers to avoid overflowing the viewport.
+ */
 static void editorInfoAppendSection(struct abuf *ab, int32_t *rows_used, const char *title) {
     const char *section_prefix = "\x1b[1m  ";
     abAppend(ab, section_prefix, (int32_t)strlen(section_prefix));
@@ -3402,19 +3691,31 @@ static void editorInfoAppendSection(struct abuf *ab, int32_t *rows_used, const c
     (*rows_used)++;
 }
 
+/**
+ * @brief Append a blank Info row if space remains.
+ *
+ * @details Updates rows_used only when the row fits in the available screen
+ * height.
+ */
 static void editorInfoAppendBlank(struct abuf *ab, int32_t *rows_used) {
     abAppend(ab, "\x1b[K\r\n", 5);
     (*rows_used)++;
 }
 
-/* Full-screen static overlay (F3): project identity (version,
- * author, license, homepage) plus live stats about the file currently
- * open -- kept as one screen rather than splitting "about tinyedit"
- * from "about this file" into two separate keys, since both are
- * "information, not action" in the same spirit and a user reaching
- * for one is likely to want the other close by. No editable state, so
- * like editorHelpScreen() any key closes it -- this only reads E/S,
- * never writes them. */
+/**
+ * @brief Show project information and statistics for the active file.
+ *
+ * @details Chooses a new slogan, draws the overlay and waits for a key before
+ * returning to editing.
+ *
+ * @note Full-screen static overlay (F3): project identity (version, author,
+ * license, homepage) plus live stats about the file currently open -- kept as
+ * one screen rather than splitting "about tinyedit" from "about this file"
+ * into two separate keys, since both are "information, not action" in the same
+ * spirit and a user reaching for one is likely to want the other close by. No
+ * editable state, so like editorHelpScreen() any key closes it -- this only
+ * reads E/S, never writes them.
+ */
 static void editorInfoScreen(void) {
     editorChooseSlogan();
     struct abuf ab = ABUF_INIT;
@@ -3471,29 +3772,42 @@ static void editorInfoScreen(void) {
     editorReadKey(); /* any key closes it */
 }
 
-/* Renders one frame of the F2 panel into `ab` -- factored out of
- * editorSettingsScreen()'s main loop so editorSettingsEditInt() can
- * redraw the same panel underneath its own inline numeric prompt,
- * instead of falling through to editorPrompt()/editorRefreshScreen()
- * which draws the main text buffer (the bug this fixes: typing a new
- * value for tab_stop/undo_max_depth/soft_wrap used to flash the
- * editor's own screen, with the file content briefly visible, because
- * editorPrompt() only knows how to redraw the main editor view). */
-/* Number of setting rows that fit on screen at once, below the 2-row
- * header and above the blank/note/help rows at the bottom (3 rows
- * reserved for those, matching what editorSettingsRender() always
- * writes after the option list -- the Ctrl-Shift-Z note is the only
- * conditional one and is deliberately not accounted for here, so the
- * reserved space is a safe upper bound rather than something that
- * shifts the visible row count depending on redo_key). Shared between
- * the renderer and the scroll-clamping logic in
- * editorSettingsScreen()/editorSettingsEditInt() so both agree on
- * exactly how many rows are visible. */
+/**
+ * @brief Calculate how many option rows fit in the settings panel.
+ *
+ * @return at least one row after allowing room for the panel header and
+ * footer.
+ *
+ * @note Renders one frame of the F2 panel into `ab` -- factored out of
+ * editorSettingsScreen()'s main loop so editorSettingsEditInt() can redraw the
+ * same panel underneath its own inline numeric prompt, instead of falling
+ * through to editorPrompt()/editorRefreshScreen() which draws the main text
+ * buffer (the bug this fixes: typing a new value for
+ * tab_stop/undo_max_depth/soft_wrap used to flash the editor's own screen,
+ * with the file content briefly visible, because editorPrompt() only knows how
+ * to redraw the main editor view).
+ *
+ * @note Number of setting rows that fit on screen at once, below the 2-row
+ * header and above the blank/note/help rows at the bottom (3 rows reserved for
+ * those, matching what editorSettingsRender() always writes after the option
+ * list -- the Ctrl-Shift-Z note is the only conditional one and is
+ * deliberately not accounted for here, so the reserved space is a safe upper
+ * bound rather than something that shifts the visible row count depending on
+ * redo_key). Shared between the renderer and the scroll-clamping logic in
+ * editorSettingsScreen()/editorSettingsEditInt() so both agree on exactly how
+ * many rows are visible.
+ */
 static int32_t editorSettingsVisibleRows(void) {
     int32_t visible = E.view.screenrows - 3;
     return visible > 0 ? visible : 1;
 }
 
+/**
+ * @brief Append the settings panel using the current draft values.
+ *
+ * @details cursor and scroll are indices in the visible options, not
+ * descriptor indices. msg may be NULL; the caller writes and frees ab.
+ */
 static void editorSettingsRender(struct abuf *ab, const struct editorSettings *edited,
     int32_t cursor, int32_t scroll, const char *msg) {
     abAppend(ab, "\x1b[?25l\x1b[H", 9);
@@ -3555,11 +3869,19 @@ static void editorSettingsRender(struct abuf *ab, const struct editorSettings *e
     abAppend(ab, "\x1b[H\x1b[?25h", 9);
 }
 
-/* Inline numeric input for a SETTING_INT field, redrawing the F2 panel
- * (via editorSettingsRender()) on every keystroke instead of handing
- * off to editorPrompt(), which only knows how to redraw the main
- * editor screen underneath. Returns 1 and writes *out on Enter with a
- * non-empty value, 0 on Esc (value unchanged). */
+/**
+ * @brief Read a numeric setting while keeping the panel visible.
+ *
+ * @details d supplies the accepted range; cursor and scroll preserve the panel
+ * view.
+ * @return 1 with a clamped value in out on acceptance, or 0 on cancellation.
+ *
+ * @note Inline numeric input for a SETTING_INT field, redrawing the F2 panel
+ * (via editorSettingsRender()) on every keystroke instead of handing off to
+ * editorPrompt(), which only knows how to redraw the main editor screen
+ * underneath. Returns 1 and writes *out on Enter with a non-empty value, 0 on
+ * Esc (value unchanged).
+ */
 static uint8_t editorSettingsEditInt(struct editorSettings *edited, int32_t cursor,
     int32_t scroll, const struct settingDescriptor *d, int32_t *out) {
     char buf[16];
@@ -3594,8 +3916,13 @@ static uint8_t editorSettingsEditInt(struct editorSettings *edited, int32_t curs
     }
 }
 
-/* Ctrl-S, F2 and Esc -> Yes must apply the same live updates before
- * saving. Changing only S leaves cached row rendering out of date. */
+/**
+ * @brief Apply draft settings to the live editor and persist them.
+ *
+ * @details Updates row caches, terminal modes and layout as needed. Live
+ * changes are applied even if writing ~/.tinyeditrc fails; the result is
+ * reported in the status bar.
+ */
 static void editorSettingsSave(const struct editorSettings *edited) {
     struct editorSettings previous = S;
 #ifdef __APPLE__
@@ -3641,6 +3968,13 @@ static void editorSettingsSave(const struct editorSettings *edited) {
     }
 }
 
+/**
+ * @brief Edit settings in a local draft with save and discard choices.
+ *
+ * @details Owns the F2 input loop. Changes become live only through
+ * editorSettingsSave(); leaving a changed draft offers save, discard or
+ * cancellation.
+ */
 static void editorSettingsScreen(void) {
     struct editorSettings edited = S;
     int32_t cursor = 0;
@@ -3751,31 +4085,12 @@ static void editorSettingsScreen(void) {
     }
 }
 
-/* Auto-close pair table for characters the user can actually type
- * from a keyboard (all single-byte ASCII): asymmetric pairs have a
- * distinct open/close character; symmetric ones (quotes, "$" for
- * inline LaTeX math, "`" for inline code) use the same character for
- * both, matching how every mainstream editor treats quote/backtick
- * auto-closing. Triple-backtick Markdown code fences are
- * deliberately NOT special-cased the way "$$" is below -- VS Code
- * tried exactly that, users found it more disruptive than helpful
- * (auto-inserting a closing fence gets in the way when typing
- * multi-line code blocks), and it was walked back. Curly quotes
- * («» "" '') aren't in this table -- see autoCloseMultiByteTable
- * below for why they're handled separately. */
-
-static const struct autoClosePair *editorAutoCloseFor(int32_t c) {
-    /* Single quote has its own opt-in (default off, see
-     * auto_close_single_quote in settings.h) on top of the general
-     * auto_close_pairs switch -- skip it here so callers see a NULL
-     * pair and fall back to plain insertion/skip-over-nothing, exactly
-     * as if it weren't in autoCloseTable at all. */
-    if (c == '\'' && !S.auto_close_single_quote) return NULL;
-    for (int32_t i = 0; i < autoCloseTableCount; i++)
-        if (autoCloseTable[i].open == c) return &autoCloseTable[i];
-    return NULL;
-}
-
+/**
+ * @brief Test the current filename's extension without case sensitivity.
+ *
+ * @details extension is NUL-terminated without a leading dot.
+ * @return 0 for unnamed files or absent extensions.
+ */
 static uint8_t editorFilenameHasExtension(const char *extension) {
     if (!E.document.file.filename) return 0;
     const char *dot = strrchr(E.document.file.filename, '.');
@@ -3790,25 +4105,53 @@ static uint8_t editorFilenameHasExtension(const char *extension) {
     return *actual == '\0' && *extension == '\0';
 }
 
+/**
+ * @brief Decide whether the current file supports tag auto-closing.
+ *
+ * @return 1 for XML, HTML or HTM extensions, with case-insensitive matching.
+ */
 static uint8_t editorIsXmlTagFile(void) {
     return editorFilenameHasExtension("xml") || editorFilenameHasExtension("html") ||
         editorFilenameHasExtension("htm");
 }
 
+/**
+ * @brief Decide whether HTML void-element rules apply.
+ *
+ * @return 1 for HTML or HTM; XML files deliberately do not use those
+ * exceptions.
+ */
 static uint8_t editorIsHtmlFile(void) {
     return editorFilenameHasExtension("html") || editorFilenameHasExtension("htm");
 }
 
+/**
+ * @brief Recognize a name opener supported by the tag-closing heuristic.
+ *
+ * @details byte is an unsigned input byte.
+ * @return 1 for a letter, underscore or colon; this is not a full XML name
+ * validator.
+ */
 static uint8_t editorIsXmlNameStart(uint8_t byte) {
     return isalpha(byte) || byte == '_' || byte == ':';
 }
 
+/**
+ * @brief Recognize a continuation byte supported in a tag name.
+ *
+ * @details Accepts the opener characters plus digits, hyphen and dot; used
+ * only by the lightweight tag-closing scan.
+ */
 static uint8_t editorIsXmlNameByte(uint8_t byte) {
     return editorIsXmlNameStart(byte) || isdigit(byte) || byte == '-' || byte == '.';
 }
 
-/* HTML void elements have no end tag. XML uses the same names freely, so
- * this check deliberately applies only to HTML files. */
+/**
+ * @brief Recognize an HTML element that must not receive an end tag.
+ *
+ * @details name is a byte span of length len, with no terminator required.
+ * @return 1 on a case-insensitive match with the built-in void list.
+ */
 static uint8_t editorIsHtmlVoidTag(const char *name, int32_t len) {
     const int32_t void_tag_count = (int32_t)(sizeof(void_tags) / sizeof(void_tags[0]));
 
@@ -3823,8 +4166,12 @@ static uint8_t editorIsHtmlVoidTag(const char *name, int32_t len) {
     return 0;
 }
 
-/* Called immediately after inserting '>'. Recognizes an opening XML tag on
- * the current row and places its closing tag after the cursor. */
+/**
+ * @brief Insert an end tag after a just-typed opening tag.
+ *
+ * @details Call after inserting '>' and recording undo. Leaves the cursor
+ * between tags, skipping self-closing tags and HTML void elements.
+ */
 static void editorTryAutoCloseXmlTag(void) {
     if (!editorIsXmlTagFile() || E.document.cursor.cy >= E.document.buffer.row_count) return;
 
@@ -3877,31 +4224,13 @@ static void editorTryAutoCloseXmlTag(void) {
     free(closing);
 }
 
-/* Curly-quote pairs: full auto-close (open inserts its match, wraps
- * the selection) same as the ASCII pairs, PLUS skip-over on the close
- * character -- even though none of these can be typed from a
- * physical keyboard directly (not on any standard layout, only
- * reachable via OS-level compose sequences or paste), once the OPEN
- * character has been composed/pasted, treating it exactly like a
- * regular open-bracket keypress from that point on is both correct
- * and simplest: there's no reason to special-case "how the character
- * arrived" once editorReadMultiByteKey() has assembled it. Each
- * open/close is the raw UTF-8 bytes (not a codepoint) since that's
- * what's compared against/written into row->chars. */
-
-/* Reads the remaining bytes of a UTF-8 sequence whose lead byte
- * (`lead`, already consumed from the input) was passed in, via
- * editorReadKey() -- correct because editorReadKey() returns
- * continuation bytes (0x80-0xBF) verbatim, the same as any other
- * non-ASCII, non-ESC byte (see its switch: only '\x1b' triggers
- * special handling). `out` receives the full sequence (lead byte
- * included), up to 4 bytes; returns the sequence length. This is the
- * ONLY place that needs to know the difference between "one byte" and
- * "one character" -- everywhere else in the codebase
- * deliberately treats input as a raw byte stream and lets bytes land
- * in row->chars in order, which is simpler and correct for insertion
- * but can't tell whole characters apart for the comparison this
- * function exists to make possible. */
+/**
+ * @brief Collect the continuation bytes of a just-read UTF-8 lead.
+ *
+ * @details out must hold at least four bytes; no NUL is appended.
+ * @return the bytes collected and queues a non-continuation event for later
+ * dispatch.
+ */
 static int32_t editorReadMultiByteKey(uint8_t lead, char *out) {
     int32_t expected_len = utf8ByteLen(lead);
     if (expected_len < 1) expected_len = 1;
@@ -3925,14 +4254,21 @@ static int32_t editorReadMultiByteKey(uint8_t lead, char *out) {
     return actual_len;
 }
 
-/* If the bytes right after the cursor equal one of
- * autoCloseMultiByteTable's close sequences AND that's exactly what
- * was just typed (`typed`/`typed_len`), moves the cursor past it and
- * returns 1 without touching the buffer. Returns 0 otherwise, leaving
- * the caller to insert `typed` normally -- this is what makes it safe
- * to call unconditionally instead of matching on buffer content alone
- * (which would skip over existing text regardless of what key was
- * actually pressed). */
+/**
+ * @brief Move past a matching Unicode closer instead of inserting it.
+ *
+ * @details typed supplies typed_len bytes.
+ * @return 1 only for a known closer already after the cursor; otherwise leaves
+ * text and cursor untouched.
+ *
+ * @note If the bytes right after the cursor equal one of
+ * autoCloseMultiByteTable's close sequences AND that's exactly what was just
+ * typed (`typed`/`typed_len`), moves the cursor past it and returns 1 without
+ * touching the buffer. Returns 0 otherwise, leaving the caller to insert
+ * `typed` normally -- this is what makes it safe to call unconditionally
+ * instead of matching on buffer content alone (which would skip over existing
+ * text regardless of what key was actually pressed).
+ */
 static uint8_t editorTrySkipMultiByteClose(const char *typed, int32_t typed_len) {
     uint8_t is_known_close = 0;
     for (int32_t i = 0; i < autoCloseMultiByteCount; i++) {
@@ -3953,22 +4289,14 @@ static uint8_t editorTrySkipMultiByteClose(const char *typed, int32_t typed_len)
     return 1;
 }
 
-/* Replaces editorInsertChar(c) for characters typed through the
- * default: case of editorProcessKeypress() -- handles auto-close
- * (open bracket/quote inserts its match right after the cursor, or
- * wraps the active selection), skip-over (typing a close character
- * that's already sitting right after the cursor moves past it instead
- * of duplicating it), and the same two for multi-byte curly quotes
- * («» "" '') -- reads any remaining bytes of a non-ASCII character up
- * front via editorReadMultiByteKey() before deciding, so the
- * comparison/insertion is against the whole character the user
- * actually typed (or composed/pasted), not a lone byte of it. Falls
- * back to plain insertion when S.auto_close_pairs is off or none of
- * the above applies. had_sel and the sel_* range:
- * the selection as it was BEFORE this keypress cleared E.document.selection.active (see
- * editorProcessKeypress()), needed for the wrap case since by the
- * time this runs the selection is already gone. */
-static void editorInsertCharAutoClose(int32_t c, uint8_t had_sel,
+/**
+ * @brief Handle typed text with pair insertion, wrapping and closer skipping.
+ *
+ * @details c is the first input byte. had_sel and the source-byte endpoints
+ * preserve the selection captured before dispatch; bracketed paste uses bulk
+ * insertion instead.
+ */
+static void editorApplyAutoClose(int32_t c, uint8_t had_sel,
     int32_t sel_y0, int32_t sel_x0, int32_t sel_y1, int32_t sel_x1) {
     if (!S.auto_close_pairs) {
         editorInsertChar(c);
@@ -3976,6 +4304,7 @@ static void editorInsertCharAutoClose(int32_t c, uint8_t had_sel,
     }
 
     if (c == '>' && !had_sel) {
+        editorPushUndo(EDIT_OTHER);
         editorInsertChar(c);
         editorTryAutoCloseXmlTag();
         return;
@@ -3993,6 +4322,7 @@ static void editorInsertCharAutoClose(int32_t c, uint8_t had_sel,
             const struct autoCloseMultiByte *mb = &autoCloseMultiByteTable[i];
             if (mb->open_len != seq_len || memcmp(mb->open, seq, (size_t)seq_len) != 0) continue;
 
+            editorPushUndo(EDIT_OTHER);
             if (had_sel) {
                 /* Wrap the selection, same ordering rationale as the
                  * ASCII case: close end-first so it doesn't shift the
@@ -4017,9 +4347,10 @@ static void editorInsertCharAutoClose(int32_t c, uint8_t had_sel,
         return;
     }
 
-    const struct autoClosePair *pair = editorAutoCloseFor(c);
+    const struct autoClosePair *pair = editorAutoClosePairFor(c, S.auto_close_single_quote != 0);
 
     if (pair && had_sel) {
+        editorPushUndo(EDIT_OTHER);
         /* Wrap the selection: close at the end first so inserting it
          * doesn't shift the still-to-be-used start coordinates when
          * start and end are on the same row. */
@@ -4070,6 +4401,7 @@ static void editorInsertCharAutoClose(int32_t c, uint8_t had_sel,
             erow *row = &E.document.buffer.rows[E.document.cursor.cy];
             uint8_t nothing_to_skip = E.document.cursor.cx >= row->size || row->chars[E.document.cursor.cx] != '$';
             if (nothing_to_skip && row->chars[E.document.cursor.cx - 1] == '$' && row->chars[E.document.cursor.cx - 2] == '$') {
+                editorPushUndo(EDIT_OTHER);
                 editorInsertChar('$');
                 editorInsertChar('$');
                 E.document.cursor.cx -= 2;
@@ -4093,6 +4425,7 @@ static void editorInsertCharAutoClose(int32_t c, uint8_t had_sel,
                 return;
             }
         }
+        editorPushUndo(EDIT_OTHER);
         editorInsertChar(c);
         editorInsertChar((unsigned char)pair->close);
         E.document.cursor.cx--;
@@ -4104,6 +4437,7 @@ static void editorInsertCharAutoClose(int32_t c, uint8_t had_sel,
          * places the cursor in between -- typing the OPEN character
          * never skips, only typing the matching CLOSE character
          * (handled by the branch below) does. */
+        editorPushUndo(EDIT_OTHER);
         editorInsertChar(c);
         editorInsertChar((unsigned char)pair->close);
         E.document.cursor.cx--;
@@ -4113,22 +4447,30 @@ static void editorInsertCharAutoClose(int32_t c, uint8_t had_sel,
     /* Not an opener -- check whether it's the closer of an asymmetric
      * pair, for skip-over (e.g. typing ')' right before an
      * auto-inserted ')'). */
-    for (int32_t i = 0; i < autoCloseTableCount; i++) {
-        if (autoCloseTable[i].close == c && autoCloseTable[i].open != autoCloseTable[i].close) {
-            if (E.document.cursor.cy < E.document.buffer.row_count) {
-                erow *row = &E.document.buffer.rows[E.document.cursor.cy];
-                if (E.document.cursor.cx < row->size && row->chars[E.document.cursor.cx] == c) {
-                    E.document.cursor.cx++;
-                    return;
-                }
-            }
-            break;
+    if (editorIsAsymmetricAutoClose(c) && E.document.cursor.cy < E.document.buffer.row_count) {
+        erow *row = &E.document.buffer.rows[E.document.cursor.cy];
+        if (E.document.cursor.cx < row->size && row->chars[E.document.cursor.cx] == c) {
+            E.document.cursor.cx++;
+            return;
         }
     }
 
     editorInsertChar(c);
 }
 
+static void editorInsertCharAutoClose(int32_t c, uint8_t had_sel,
+    int32_t sel_y0, int32_t sel_x0, int32_t sel_y1, int32_t sel_x1) {
+    editorBeginEdit();
+    editorApplyAutoClose(c, had_sel, sel_y0, sel_x0, sel_y1, sel_x1);
+    editorEndEdit();
+}
+
+/**
+ * @brief Translate a menu command into the existing keyboard action.
+ *
+ * @return a dispatch key or zero for a command without a key equivalent;
+ * setting toggles use a separate path.
+ */
 static int32_t editorMenuCommandKey(enum editorCommand command) {
     switch (command) {
         case CMD_INFO: return F3_KEY;
@@ -4150,6 +4492,12 @@ static int32_t editorMenuCommandKey(enum editorCommand command) {
     }
 }
 
+/**
+ * @brief Apply and persist a View-menu setting change.
+ *
+ * @details command must identify a boolean setting. Uses the shared settings
+ * update path and closes a menu that has just been disabled.
+ */
 static void editorToggleMenuSetting(enum editorCommand command) {
     struct editorSettings edited = S;
     if (!commandToggleSetting(command, &edited)) return;
@@ -4157,6 +4505,12 @@ static void editorToggleMenuSetting(enum editorCommand command) {
     editorSettingsSave(&edited);
 }
 
+/**
+ * @brief Keep terminal hover reporting aligned with the open menu.
+ *
+ * @details Call after menu state changes. Emits a mode change only when the
+ * required reporting state differs from the previous one.
+ */
 static void editorSyncMenuMouseMotion(void) {
     uint8_t enabled = S.mouse_enabled && S.show_menu && M.open;
     if (enabled == menu_mouse_motion_enabled) return;
@@ -4164,378 +4518,106 @@ static void editorSyncMenuMouseMotion(void) {
     menu_mouse_motion_enabled = enabled;
 }
 
-static void editorProcessKeypress(void) {
-    int32_t c = editorReadKey();
+/**
+ * @brief Release a document's transient mouse gesture without changing selection.
+ */
+static void editorCancelMouseDrag(void) {
+    E.document.mouse = (struct editorMouseState){0};
+}
 
-dispatch_key:
-    if (S.show_menu && c != MOUSE_EVENT_KEY &&
-        (M.open || c == F10_KEY)) {
-        enum editorCommand command = menuHandleKey(&M, c);
+/**
+ * @brief Apply one decoded mouse event or return its accepted menu command.
+ * @details Never reads the next event. Every report, including reports within
+ * a burst, passes through the same menu/text routing and release handling.
+ */
+static int32_t editorHandleMouseEvent(void) {
+    if (!mouseEventPress) editorCancelMouseDrag();
+    int32_t message_row = E.view.screenrows + (S.show_top_bar ? 1 : 0) +
+        (S.show_menu ? 1 : 0) + 2;
+    if (S.show_menu && !M.open && mouseEventPress && mouseEventRow == message_row &&
+        mouseEventCol >= E.view.screencols - 7) {
+        editorCancelMouseDrag();
+        menuOpen(&M);
         editorSyncMenuMouseMotion();
-        if (command == CMD_NONE) return;
-        if (commandIsSetting(command)) {
-            editorToggleMenuSetting(command);
-            return;
-        }
-        c = editorMenuCommandKey(command);
-        if (c == 0) return;
+        return 0;
     }
+    if (S.show_menu && M.open && !mouseEventPress &&
+        mouseEventRow == message_row && mouseEventCol >= E.view.screencols - 7)
+        return 0;
+    if (S.show_menu && (M.open ||
+        (mouseEventPress && mouseEventRow == (S.show_top_bar ? 2 : 1)))) {
+        editorCancelMouseDrag();
+        enum editorCommand command = menuHandleMouse(&M,
+            mouseEventRow, mouseEventCol, S.show_top_bar ? 2 : 1,
+            mouseEventPress, (mouseEventButton & 32) != 0);
+        editorSyncMenuMouseMotion();
+        if (commandIsSetting(command)) editorToggleMenuSetting(command);
+        else if (command != CMD_NONE) return editorMenuCommandKey(command);
+        return 0;
+    }
+    uint8_t shift_held = (mouseEventButton & 4) != 0;
+    int32_t mouse_button = mouseEventButton & ~28;
+    if (mouse_button == 64 || mouse_button == 65) {
+        /* Wheel gestures move the view independently of cursor and selection. */
+        int32_t wrapcols = editorSoftWrapCols();
+        int32_t delta = (mouse_button == 64) ? -3 : 3;
+        int32_t limit = wrapcols > 0 ? editorTotalVideoRows(wrapcols) : E.document.buffer.row_count;
+        E.view.rowoff += delta;
+        if (E.view.rowoff < 0) E.view.rowoff = 0;
+        if (E.view.rowoff > limit) E.view.rowoff = limit;
+        /* Skip cursor-following for this redraw; a following keyboard event
+         * clears this override before dispatch, even within the same burst. */
+        E.view.free_scroll = 1;
+    } else {
+        uint8_t in_text_area = mouseEventRow >= 1 + (S.show_top_bar ? 1 : 0) +
+            (S.show_menu ? 1 : 0) && mouseEventRow <= 1 +
+            (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0) + E.view.screenrows - 1 &&
+            mouseEventCol > editorGutterWidth();
 
-    /* Immutable snapshot for actions that consume or wrap the selection.
-     * Each switch branch owns its selection transition; there is no global
-     * pre-dispatch whitelist for new keys to accidentally bypass. */
-    int32_t had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1;
-    uint8_t had_sel = editorSelectionRange(&E.document.selection, &E.document.cursor, &had_sel_y0, &had_sel_x0, &had_sel_y1, &had_sel_x1);
+        if (mouseEventPress && mouse_button == 0) editorCancelMouseDrag();
+        if (in_text_area && mouse_button == 0 && mouseEventPress) {
+            /* A plain click remembers a local drag anchor without
+             * arming a collapsed selection; Shift-click instead
+             * retains its existing anchor, or starts from the
+             * cursor position immediately before the click. */
+            int32_t cy, cx;
+            editorMouseToCursor(mouseEventCol, mouseEventRow, &cy, &cx);
+            if (shift_held) {
+                if (!E.document.selection.active) {
+                    E.document.selection.active = 1;
+                    E.document.selection.anchor_x = E.document.cursor.cx;
+                    E.document.selection.anchor_y = E.document.cursor.cy;
+                }
+            } else {
+                E.document.selection.active = 0;
+                E.document.mouse.press_anchor_x = cx;
+                E.document.mouse.press_anchor_y = cy;
+            }
+            E.document.cursor.cy = cy;
+            E.document.cursor.cx = cx;
+            E.document.mouse.dragging = 1;
+        } else if (in_text_area && mouse_button == 32 && E.document.mouse.dragging) {
+            /* Arm from the press point only when motion creates a selection. */
+            if (!E.document.selection.active) {
+                E.document.selection.active = 1;
+                E.document.selection.anchor_x = E.document.mouse.press_anchor_x;
+                E.document.selection.anchor_y = E.document.mouse.press_anchor_y;
+            }
+            int32_t cy, cx;
+            editorMouseToCursor(mouseEventCol, mouseEventRow, &cy, &cx);
+            E.document.cursor.cy = cy;
+            E.document.cursor.cx = cx;
+        }
+    }
+    return 0;
+}
 
+/**
+ * @brief Apply navigation and its selection transition without reading input.
+ * @return 1 for a navigation key, otherwise 0 without changing state.
+ */
+static uint8_t editorHandleNavigationKey(int32_t c) {
     switch (c) {
-        case '\r':
-            if (had_sel)
-                editorReplaceSelectionWithNewline(had_sel_y0, had_sel_x0,
-                    had_sel_y1, had_sel_x1);
-            else
-                editorInsertNewlineAutoIndent();
-            E.document.selection.active = 0;
-            break;
-
-        case '\t':
-            if (had_sel) {
-                editorIndentSelection(0);
-            } else {
-                E.document.selection.active = 0;
-                if (S.insert_spaces_for_tab) {
-                    for (int32_t i = 0; i < S.tab_stop; i++) editorInsertChar(' ');
-                } else {
-                    editorInsertChar('\t');
-                }
-            }
-            break;
-
-        /* With no selection this outdents the current line, which is
-         * what Shift+Tab does everywhere else -- the cursor doesn't
-         * have to be in the indentation for "this line is indented one
-         * level too far" to be the obvious intent. */
-        case SHIFT_TAB:
-            if (had_sel) {
-                editorIndentSelection(1);
-            } else if (E.document.cursor.cy < E.document.buffer.row_count) {
-                E.document.selection.active = 0;
-                editorPushUndo(EDIT_OTHER);
-                int32_t removed = editorRowOutdent(&E.document.buffer.rows[E.document.cursor.cy]);
-                E.document.cursor.cx -= removed;
-                if (E.document.cursor.cx < 0) E.document.cursor.cx = 0;
-                if (removed) E.document.file.dirty = 1;
-            }
-            break;
-
-        case CTRL_KEY('q'):
-            E.document.selection.active = 0;
-            editorQuit();
-            return;
-
-        case CTRL_KEY('w'):
-            E.document.selection.active = 0;
-            editorCloseFile();
-            break;
-
-        case CTRL_KEY('o'):
-            E.document.selection.active = 0;
-            editorOpenFile();
-            break;
-
-        case CTRL_KEY('s'):
-            editorSave();
-            break;
-
-        case F4_KEY:
-        case SAVE_AS_KEY:
-            E.document.selection.active = 0;
-            editorSaveAs();
-            break;
-
-        case CTRL_KEY('a'):
-            if (E.document.buffer.row_count > 0) {
-                E.document.selection.active = 1;
-                E.document.selection.anchor_y = 0;
-                E.document.selection.anchor_x = 0;
-                E.document.cursor.cy = E.document.buffer.row_count - 1;
-                E.document.cursor.cx = E.document.buffer.rows[E.document.buffer.row_count - 1].size;
-            }
-            break;
-
-        case CTRL_KEY('c'):
-        case CTRL_KEY('x'): {
-            int32_t sy, sx, ey, ex;
-            if (editorSelectionRange(&E.document.selection, &E.document.cursor, &sy, &sx, &ey, &ex)) {
-                size_t len;
-                char *text = editorSerializeRange(sy, sx, ey, ex, &len);
-                clipboardCopy(text, len);
-                if (c == CTRL_KEY('x')) {
-                    editorDeleteRange(sy, sx, ey, ex);
-                    editorSetStatusMessage("%zu bytes cut", len);
-                    E.document.selection.active = 0;
-                } else {
-                    editorSetStatusMessage("%zu bytes copied", len);
-                }
-                free(text);
-            }
-            break;
-        }
-
-        case CTRL_KEY('v'): {
-            size_t len;
-            char *text = clipboardPaste(&len);
-            if (text) {
-                editorReplaceSelectionWithText(had_sel,
-                    had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1, text, len);
-                clipboardFree(text);
-                editorSetStatusMessage("pasted");
-            }
-            break;
-        }
-
-        /* Bracketed paste (terminal-native paste, e.g. Cmd+V into the
-         * terminal window rather than through this editor's own
-         * Ctrl-V/system-clipboard path above): editorReadKey() reports
-         * PASTE_START_KEY the instant it sees the ESC[200~ marker, then
-         * this reads the entire pasted block in one go and sends it through
-         * editorReplaceSelectionWithText() -- the same bulk path Ctrl-V uses,
-         * so a paste that
-         * arrives this way is both fast (one undo-snapshot/no
-         * per-character redraw, vs. an editorProcessKeypress() call per
-         * byte the old byte-by-byte path required) and correct
-         * (bypasses editorInsertCharAutoClose() entirely, so pasted
-         * '(', '\'', '`', etc. don't each trigger auto-close as if
-         * freshly typed -- see TODO.md for the bug this fixes: spurious
-         * closing characters left behind after a paste). */
-        case PASTE_START_KEY: {
-            size_t len;
-            char *text = terminalReadPastedText(&len);
-            editorReplaceSelectionWithText(had_sel,
-                had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1, text, len);
-            free(text);
-            editorSetStatusMessage("pasted");
-            break;
-        }
-
-        /* Mouse: click positions the cursor, Shift-click extends the
-         * selection, drag extends it from the click point, release stops
-         * tracking, and wheel scrolls without moving the cursor. SGR button
-         * codes: 0 = left button, 4 = Shift + left, 32 = left drag, 36 =
-         * Shift + left drag, 64/65 = wheel up/down.
-         * Clicks in the gutter or the status/message bars are ignored
-         * (editorMouseToCursor() assumes a text-area click; the row
-         * bounds check below is what actually filters those out,
-         * since gutter clicks still report a row inside the text
-         * area's row range -- just filtering out the two bottom rows,
-         * which this screen_row/S.show_top_bar math already keeps
-         * outside the video-row space editorMouseToCursor() maps). */
-        case MOUSE_EVENT_KEY: {
-            static uint8_t dragging = 0;
-            static int32_t press_anchor_x = 0, press_anchor_y = 0;
-
-            int32_t message_row = E.view.screenrows + (S.show_top_bar ? 1 : 0) +
-                (S.show_menu ? 1 : 0) + 2;
-            if (S.show_menu && !M.open && mouseEventPress && mouseEventRow == message_row &&
-                mouseEventCol >= E.view.screencols - 7) {
-                menuOpen(&M);
-                editorSyncMenuMouseMotion();
-                break;
-            }
-            if (S.show_menu && M.open && !mouseEventPress &&
-                mouseEventRow == message_row && mouseEventCol >= E.view.screencols - 7)
-                break;
-            if (S.show_menu && (M.open ||
-                (mouseEventPress && mouseEventRow == (S.show_top_bar ? 2 : 1)))) {
-                enum editorCommand command = menuHandleMouse(&M,
-                    mouseEventRow, mouseEventCol, S.show_top_bar ? 2 : 1,
-                    mouseEventPress, (mouseEventButton & 32) != 0);
-                editorSyncMenuMouseMotion();
-                if (commandIsSetting(command)) {
-                    editorToggleMenuSetting(command);
-                } else if (command != CMD_NONE) {
-                    c = editorMenuCommandKey(command);
-                    if (c != 0) goto dispatch_key;
-                }
-                break;
-            }
-
-            /* Coalescing loop: apply this event, then check whether
-             * another one is already queued (see terminalInputReady())
-             * and if so read+apply it too, WITHOUT returning to the
-             * main loop's editorRefreshScreen() in between. A single
-             * wheel gesture or a fast drag generates many SGR reports
-             * back-to-back; redrawing after every one makes the
-             * display visibly lag behind the gesture by the time it
-             * catches up (each redraw takes long enough that several
-             * more events queue up while it runs). Only the FINAL
-             * state after the whole burst needs to be drawn. */
-            uint8_t more = 1;
-            while (more) {
-                uint8_t shift_held = (mouseEventButton & 4) != 0;
-                int32_t mouse_button = mouseEventButton & ~28;
-                if (mouse_button == 64 || mouse_button == 65) {
-                    /* Wheel: scroll the VIEW only. Never touches
-                     * E.document.cursor.cy/E.document.cursor.cx or the selection -- the cursor and
-                     * whatever text is selected are conceptually
-                     * independent of what's currently visible on
-                     * screen (explicit user expectation), so the wheel
-                     * must not move either, no matter how far the view
-                     * scrolls away from them. Same granularity as a
-                     * few Arrow-Up/Down presses -- deliberately not a
-                     * full PageUp/PageDown, which would be too coarse
-                     * for incremental wheel ticks. */
-                    int32_t wrapcols = editorSoftWrapCols();
-                    int32_t delta = (mouse_button == 64) ? -3 : 3;
-                    int32_t limit = wrapcols > 0 ? editorTotalVideoRows(wrapcols) : E.document.buffer.row_count;
-                    E.view.rowoff += delta;
-                    if (E.view.rowoff < 0) E.view.rowoff = 0;
-                    if (E.view.rowoff > limit) E.view.rowoff = limit;
-                    /* editorScroll() (called every redraw) normally
-                     * forces E.view.rowoff back into the window
-                     * [cursor_vy - screenrows + 1, cursor_vy] so the
-                     * cursor stays on screen -- correct for actual
-                     * cursor movement, but since the wheel never moves
-                     * the cursor, that same logic would snap the view
-                     * right back to hug the (stationary) cursor on the
-                     * very next redraw, capping wheel scroll to roughly
-                     * one screenful before/after it (the bug originally
-                     * reported: "scrolla solo 2 pagine"). This flag
-                     * tells editorScroll() to skip that re-centering
-                     * just once; it's cleared automatically the moment
-                     * the cursor moves for a real reason (see
-                     * E.view.free_scroll's declaration in tinyedit.h), so
-                     * scrolling with the wheel and then, say, pressing
-                     * an arrow key immediately goes back to normal
-                     * "view follows cursor" behavior. */
-                    E.view.free_scroll = 1;
-                } else {
-                    uint8_t in_text_area = mouseEventRow >= 1 + (S.show_top_bar ? 1 : 0) +
-                        (S.show_menu ? 1 : 0) && mouseEventRow <= 1 +
-                        (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0) + E.view.screenrows - 1 &&
-                        mouseEventCol > editorGutterWidth();
-
-                    if (in_text_area && mouse_button == 0 && mouseEventPress) {
-                        /* A plain click remembers a local drag anchor without
-                         * arming a collapsed selection; Shift-click instead
-                         * retains its existing anchor, or starts from the
-                         * cursor position immediately before the click. */
-                        int32_t cy, cx;
-                        editorMouseToCursor(mouseEventCol, mouseEventRow, &cy, &cx);
-                        if (shift_held) {
-                            if (!E.document.selection.active) {
-                                E.document.selection.active = 1;
-                                E.document.selection.anchor_x = E.document.cursor.cx;
-                                E.document.selection.anchor_y = E.document.cursor.cy;
-                            }
-                        } else {
-                            E.document.selection.active = 0;
-                            press_anchor_x = cx;
-                            press_anchor_y = cy;
-                        }
-                        E.document.cursor.cy = cy;
-                        E.document.cursor.cx = cx;
-                        dragging = 1;
-                    } else if (in_text_area && mouse_button == 32 && dragging) {
-                        /* Drag: the cursor has now moved away from the
-                         * press point -- arm the selection (if not
-                         * already active) with the REMEMBERED press
-                         * point as anchor, then move the cursor (and
-                         * hence the live selection endpoint) to follow
-                         * the mouse. Once armed, the anchor is
-                         * E.document.selection.anchor_x/y like any other selection
-                         * (Shift+Arrow, Ctrl-A, ...) -- press_anchor_*
-                         * only matters for this initial arming. */
-                        if (!E.document.selection.active) {
-                            E.document.selection.active = 1;
-                            E.document.selection.anchor_x = press_anchor_x;
-                            E.document.selection.anchor_y = press_anchor_y;
-                        }
-                        int32_t cy, cx;
-                        editorMouseToCursor(mouseEventCol, mouseEventRow, &cy, &cx);
-                        E.document.cursor.cy = cy;
-                        E.document.cursor.cx = cx;
-                    } else if (!mouseEventPress) {
-                        /* Release: stop tracking drag motion. A click
-                         * with no drag in between leaves
-                         * sel_anchor_x/y == E.document.cursor.cx/E.document.cursor.cy, which
-                         * editorSelectionRange() already treats as "no
-                         * selection" -- no special-casing needed here
-                         * for "was this a click or a drag". */
-                        dragging = 0;
-                    }
-                }
-
-                more = 0;
-                if (terminalInputReady()) {
-                    int32_t next = editorReadKey();
-                    if (next == MOUSE_EVENT_KEY) more = 1;
-                    /* A non-mouse key arrived instead (e.g. the user
-                     * started typing right after scrolling) -- it's
-                     * already been consumed by editorReadKey() above,
-                     * but this switch has no path left to dispatch it
-                     * through, so it's dropped. Rare in practice (would
-                     * require keystrokes interleaved within the same
-                     * burst of already-buffered input), and dropping
-                     * one keystroke is a far smaller issue than the
-                     * lag this coalescing exists to fix -- not worth
-                     * the complexity of a pushback/replay mechanism
-                     * for it. */
-                }
-            }
-            break;
-        }
-
-        case CTRL_KEY('z'):
-            E.document.selection.active = 0;
-            editorUndo();
-            break;
-        case CTRL_KEY('y'):
-            /* Ctrl-Y always works as redo regardless of the configured
-             * redo_key: Ctrl-Shift-Z is frequently indistinguishable
-             * from plain Ctrl-Z on a raw tty (see TODO.md), so Ctrl-Y
-             * remains a reliable fallback even when the user picked
-             * ctrl-shift-z in settings. */
-            E.document.selection.active = 0;
-            editorRedo();
-            break;
-
-        case CTRL_KEY('f'):
-            E.document.selection.active = 0;
-            editorFind();
-            break;
-
-        case F1_KEY:
-            E.document.selection.active = 0;
-            editorHelpScreen();
-            break;
-
-        case F3_KEY:
-            E.document.selection.active = 0;
-            editorInfoScreen();
-            break;
-
-        case F2_KEY:
-            E.document.selection.active = 0;
-            editorSettingsScreen();
-            break;
-
-        case CTRL_KEY('t'):
-            /* Universal selection toggle: works on every terminal, even
-             * ones (e.g. Terminal.app on macOS) that can't report
-             * Shift+Arrow as a distinct sequence from a plain arrow. */
-            E.document.selection.pinned = !E.document.selection.pinned;
-            if (E.document.selection.pinned) {
-                E.document.selection.active = 1;
-                E.document.selection.anchor_x = E.document.cursor.cx;
-                E.document.selection.anchor_y = E.document.cursor.cy;
-                editorSetStatusMessage("Selection mode ON (arrows extend, %s-T to stop)",
-                    editorPrimaryModifier());
-            } else {
-                E.document.selection.active = 0;
-                editorSetStatusMessage("Selection mode off");
-            }
-            break;
-
         case DOC_HOME:
         case DOC_END:
             if (!E.document.selection.pinned) E.document.selection.active = 0;
@@ -4605,27 +4687,21 @@ dispatch_key:
             break;
         }
 
-        case BACKSPACE:
-        case CTRL_KEY('h'):
-        case DEL_KEY:
-            /* With a selection, both keys delete the whole range rather
-             * than one character, matching Ctrl-V/paste (which already
-             * replaced the selection) and every other editor. had_sel is
-             * the immutable copy captured before dispatch, so the handler
-             * doesn't depend on live selection state while mutating rows. */
-            if (had_sel) {
-                editorDeleteRange(had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1);
-            } else {
-                if (c == DEL_KEY) editorMoveCursor(ARROW_RIGHT);
-                editorDelChar();
-            }
-            E.document.selection.active = 0;
-            break;
-
         case PAGE_UP:
         case PAGE_DOWN:
         case SHIFT_PAGE_UP:
         case SHIFT_PAGE_DOWN: {
+            if (E.document.buffer.row_count == 0) {
+                E.document.cursor.cx = 0;
+                E.document.cursor.cy = 0;
+                E.document.cursor.rx = 0;
+                E.document.selection.active = 0;
+                E.document.selection.anchor_x = 0;
+                E.document.selection.anchor_y = 0;
+                E.view.rowoff = 0;
+                E.view.coloff = 0;
+                break;
+            }
             uint8_t is_up = (c == PAGE_UP || c == SHIFT_PAGE_UP);
             uint8_t extending = (c == SHIFT_PAGE_UP || c == SHIFT_PAGE_DOWN || E.document.selection.pinned);
 
@@ -4706,8 +4782,238 @@ dispatch_key:
             editorMoveCursorWord(1);
             break;
 
+        default: return 0;
+    }
+    return 1;
+}
+
+/**
+ * @brief Execute file, history or modal commands selected by a key.
+ * @details Modal commands own their prompts and input; ordinary dispatch does
+ * not consume additional events. Returns 0 for a non-command key.
+ */
+static uint8_t editorHandleCommandKey(int32_t c) {
+    switch (c) {
+        case CTRL_KEY('q'):
+            E.document.selection.active = 0;
+            editorQuit();
+            return 1;
+
+        case CTRL_KEY('w'):
+            E.document.selection.active = 0;
+            editorCloseFile();
+            break;
+
+        case CTRL_KEY('o'):
+            E.document.selection.active = 0;
+            editorOpenFile();
+            break;
+
+        case CTRL_KEY('s'):
+            editorSave();
+            break;
+
+        case F4_KEY:
+        case SAVE_AS_KEY:
+            E.document.selection.active = 0;
+            editorSaveAs();
+            break;
+
+        case CTRL_KEY('z'):
+            E.document.selection.active = 0;
+            editorUndo();
+            break;
+        case CTRL_KEY('y'):
+            /* Ctrl-Y always works as redo regardless of the configured
+             * redo_key: Ctrl-Shift-Z is frequently indistinguishable
+             * from plain Ctrl-Z on a raw tty (see TODO.md), so Ctrl-Y
+             * remains a reliable fallback even when the user picked
+             * ctrl-shift-z in settings. */
+            E.document.selection.active = 0;
+            editorRedo();
+            break;
+
+        case CTRL_KEY('f'):
+            E.document.selection.active = 0;
+            editorFind();
+            break;
+
+        case F1_KEY:
+            E.document.selection.active = 0;
+            editorHelpScreen();
+            break;
+
+        case F3_KEY:
+            E.document.selection.active = 0;
+            editorInfoScreen();
+            break;
+
+        case F2_KEY:
+            E.document.selection.active = 0;
+            editorSettingsScreen();
+            break;
+
         case CTRL_KEY('l'):
             /* Redraw/resize is not an editing action and preserves selection. */
+            break;
+
+        default: return 0;
+    }
+    return 1;
+}
+
+/**
+ * @brief Apply text and selection actions to the active document.
+ * @details Captures the immutable selection once; editing commands retain
+ * their own undo and rendering contracts. Paste and UTF-8 input own payload reads.
+ */
+static void editorHandleEditKey(int32_t c) {
+    editorBeginEdit();
+
+    /* Immutable snapshot for actions that consume or wrap the selection.
+     * Each switch branch owns its selection transition; there is no global
+     * pre-dispatch whitelist for new keys to accidentally bypass. */
+    int32_t had_sel_y0 = 0, had_sel_x0 = 0, had_sel_y1 = 0, had_sel_x1 = 0;
+    uint8_t had_sel = editorSelectionRange(&E.document.selection, &E.document.cursor, &had_sel_y0, &had_sel_x0, &had_sel_y1, &had_sel_x1);
+
+    switch (c) {
+        case '\r':
+            if (had_sel)
+                editorReplaceSelectionWithNewline(had_sel_y0, had_sel_x0,
+                    had_sel_y1, had_sel_x1);
+            else
+                editorInsertNewlineAutoIndent();
+            E.document.selection.active = 0;
+            break;
+
+        case '\t':
+            if (had_sel) {
+                editorIndentSelection(0);
+            } else {
+                E.document.selection.active = 0;
+                if (S.insert_spaces_for_tab) {
+                    editorPushUndo(EDIT_OTHER);
+                    for (int32_t i = 0; i < S.tab_stop; i++) editorInsertChar(' ');
+                } else {
+                    editorInsertChar('\t');
+                }
+            }
+            break;
+
+        /* With no selection this outdents the current line, which is
+         * what Shift+Tab does everywhere else -- the cursor doesn't
+         * have to be in the indentation for "this line is indented one
+         * level too far" to be the obvious intent. */
+        case SHIFT_TAB:
+            if (had_sel) {
+                editorIndentSelection(1);
+            } else if (E.document.cursor.cy < E.document.buffer.row_count) {
+                E.document.selection.active = 0;
+                editorPushUndo(EDIT_OTHER);
+                int32_t removed = editorRowOutdent(&E.document.buffer.rows[E.document.cursor.cy]);
+                E.document.cursor.cx -= removed;
+                if (E.document.cursor.cx < 0) E.document.cursor.cx = 0;
+                if (removed) E.document.file.dirty = 1;
+            }
+            break;
+
+        case CTRL_KEY('a'):
+            if (E.document.buffer.row_count > 0) {
+                E.document.selection.active = 1;
+                E.document.selection.anchor_y = 0;
+                E.document.selection.anchor_x = 0;
+                E.document.cursor.cy = E.document.buffer.row_count - 1;
+                E.document.cursor.cx = E.document.buffer.rows[E.document.buffer.row_count - 1].size;
+            }
+            break;
+
+        case CTRL_KEY('c'):
+        case CTRL_KEY('x'): {
+            int32_t sy, sx, ey, ex;
+            if (editorSelectionRange(&E.document.selection, &E.document.cursor, &sy, &sx, &ey, &ex)) {
+                size_t len;
+                char *text = editorSerializeRange(sy, sx, ey, ex, &len);
+                clipboardCopy(text, len);
+                if (c == CTRL_KEY('x')) {
+                    editorDeleteRange(sy, sx, ey, ex);
+                    editorSetStatusMessage("%zu bytes cut", len);
+                    E.document.selection.active = 0;
+                } else {
+                    editorSetStatusMessage("%zu bytes copied", len);
+                }
+                free(text);
+            }
+            break;
+        }
+
+        case CTRL_KEY('v'): {
+            size_t len;
+            char *text = clipboardPaste(&len);
+            if (text) {
+                editorReplaceSelectionWithText(had_sel,
+                    had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1, text, len);
+                clipboardFree(text);
+                editorSetStatusMessage("pasted");
+            }
+            break;
+        }
+
+        /* Bracketed paste (terminal-native paste, e.g. Cmd+V into the
+         * terminal window rather than through this editor's own
+         * Ctrl-V/system-clipboard path above): editorReadKey() reports
+         * PASTE_START_KEY the instant it sees the ESC[200~ marker, then
+         * this reads the entire pasted block in one go and sends it through
+         * editorReplaceSelectionWithText() -- the same bulk path Ctrl-V uses,
+         * so a paste that
+         * arrives this way is both fast (one undo-snapshot/no
+         * per-character redraw, vs. an editorProcessKeypress() call per
+         * byte the old byte-by-byte path required) and correct
+         * (bypasses editorInsertCharAutoClose() entirely, so pasted
+         * '(', '\'', '`', etc. don't each trigger auto-close as if
+         * freshly typed -- see TODO.md for the bug this fixes: spurious
+         * closing characters left behind after a paste). */
+        case PASTE_START_KEY: {
+            size_t len;
+            char *text = terminalReadPastedText(&len);
+            editorReplaceSelectionWithText(had_sel,
+                had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1, text, len);
+            free(text);
+            editorSetStatusMessage("pasted");
+            break;
+        }
+
+        case CTRL_KEY('t'):
+            /* Universal selection toggle: works on every terminal, even
+             * ones (e.g. Terminal.app on macOS) that can't report
+             * Shift+Arrow as a distinct sequence from a plain arrow. */
+            E.document.selection.pinned = !E.document.selection.pinned;
+            if (E.document.selection.pinned) {
+                E.document.selection.active = 1;
+                E.document.selection.anchor_x = E.document.cursor.cx;
+                E.document.selection.anchor_y = E.document.cursor.cy;
+                editorSetStatusMessage("Selection mode ON (arrows extend, %s-T to stop)",
+                    editorPrimaryModifier());
+            } else {
+                E.document.selection.active = 0;
+                editorSetStatusMessage("Selection mode off");
+            }
+            break;
+
+        case BACKSPACE:
+        case CTRL_KEY('h'):
+        case DEL_KEY:
+            /* With a selection, both keys delete the whole range rather
+             * than one character, matching Ctrl-V/paste (which already
+             * replaced the selection) and every other editor. had_sel is
+             * the immutable copy captured before dispatch, so the handler
+             * doesn't depend on live selection state while mutating rows. */
+            if (had_sel) {
+                editorDeleteRange(had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1);
+            } else {
+                if (c == DEL_KEY) editorMoveCursor(ARROW_RIGHT);
+                editorDelChar();
+            }
+            E.document.selection.active = 0;
             break;
 
         case '\x1b':
@@ -4719,12 +5025,14 @@ dispatch_key:
             E.document.selection.active = 0;
             break;
 
-        default:
+        default: {
             /* Pairs retain their useful "wrap selection" behavior. Every
              * other typed character replaces selected text, like paste and
              * delete already do. Keep deletion and insertion in one undo
              * action by inserting the first byte directly after the snapshot. */
-            if (had_sel && !editorAutoCloseFor(c)) {
+            const struct autoClosePair *pair = S.auto_close_pairs ?
+                editorAutoClosePairFor(c, S.auto_close_single_quote != 0) : NULL;
+            if (had_sel && !pair) {
                 editorPushUndo(EDIT_OTHER);
                 editorDeleteRangeRaw(had_sel_y0, had_sel_x0, had_sel_y1, had_sel_x1);
                 editorInsertCharRaw(c);
@@ -4734,15 +5042,72 @@ dispatch_key:
             }
             E.document.selection.active = 0;
             break;
+        }
     }
+    editorEndEdit();
+}
+
+/**
+ * @brief Route a non-mouse key through menus, navigation, commands and editing.
+ * @details Does not decode or drain input. Accepted mouse menu commands enter
+ * here too, so keyboard and mouse execute the same actions.
+ */
+static void editorDispatchKey(int32_t c) {
+    E.view.free_scroll = 0;
+    if (S.show_menu && (M.open || c == F10_KEY)) {
+        enum editorCommand command = menuHandleKey(&M, c);
+        editorSyncMenuMouseMotion();
+        if (command == CMD_NONE) return;
+        if (commandIsSetting(command)) {
+            editorToggleMenuSetting(command);
+            return;
+        }
+        c = editorMenuCommandKey(command);
+        if (c == 0) return;
+    }
+    if (editorHandleNavigationKey(c)) return;
+    if (editorHandleCommandKey(c)) return;
+    editorHandleEditKey(c);
+}
+
+/**
+ * @brief Read and route an event, coalescing a bounded burst of mouse reports.
+ * @details Dispatches the first following non-mouse event exactly once, in
+ * order. The burst limit bounds redraw latency; unread events remain queued.
+ */
+static void editorProcessKeypress(void) {
+    int32_t c = editorReadKey();
+    for (int32_t count = 0; c == MOUSE_EVENT_KEY; count++) {
+        int32_t command = editorHandleMouseEvent();
+        if (command != 0) {
+            editorDispatchKey(command);
+            return;
+        }
+        if (count + 1 == MOUSE_BURST_LIMIT || !terminalInputReady()) return;
+        c = editorReadKey();
+    }
+    editorCancelMouseDrag();
+    editorDispatchKey(c);
 }
 
 /* ---- init ------------------------------------------------------------------- */
 
+/**
+ * @brief Release both history stacks owned by the active document.
+ *
+ * @details Used when resetting a document and as an exit handler;
+ * historyClear() leaves the history ready for reuse.
+ */
 static void editorFreeUndoRedo(void) {
     historyClear(&E.document.history);
 }
 
+/**
+ * @brief Initialize the editor state, settings and usable viewport.
+ *
+ * @details Call once after entering terminal mode. Loads ~/.tinyeditrc and
+ * obtains terminal dimensions; failure to query dimensions is fatal.
+ */
 static void initEditor(void) {
     E.document.cursor.cx = 0;
     E.document.cursor.cy = 0;
@@ -4788,6 +5153,12 @@ static void initEditor(void) {
     if (S.show_menu) E.view.screenrows -= 1;
 }
 
+/**
+ * @brief Start the terminal editor and run its redraw and input loop.
+ *
+ * @details An optional argv[1] names the document to open. Registers terminal
+ * cleanup, offers recovery, and continues until the quit action exits.
+ */
 int main(int argc, char **argv) {
     terminalEnableRawMode();
     terminalEnterAlternateScreen();
@@ -4801,7 +5172,7 @@ int main(int argc, char **argv) {
     editorChooseSlogan();
     if (S.mouse_enabled) terminalEnableMouseReporting();
     atexit(editorFreeUndoRedo);
-    if (argc >= 2) editorOpen(argv[1]);
+    if (argc >= 2 && !editorOpen(argv[1])) terminalDie("open file");
 
     /* Terminal.app on macOS sends the same byte sequence for a plain
      * arrow and Shift+Arrow, so text selection via Shift+Arrow silently

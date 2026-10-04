@@ -1,9 +1,9 @@
 /* utf8.c -- see utf8.h.
  *
- * Ported from linenoise.c (antirez/linenoise, BSD license), where this
- * block of pure functions implements UTF-8 decoding, grapheme-cluster
- * boundary detection, and terminal display-width calculation for
- * correct line editing on multi-byte and wide characters.
+ * Grapheme grouping and display-width heuristics were ported from
+ * linenoise.c (antirez/linenoise, BSD license). The bounded, strict decoder
+ * is original to tinyedit; it preserves malformed input as independent
+ * bytes while keeping navigation and display within the supplied bounds.
  *
  * Original copyright:
  *   Copyright (c) 2010-2023, Salvatore Sanfilippo <antirez at gmail dot com>
@@ -12,8 +12,13 @@
 
 #include "utf8.h"
 
-/* UTF-8 byte length from the leading byte. See the four standard
- * patterns: 0xxxxxxx (1), 110xxxxx (2), 1110xxxx (3), 11110xxx (4). */
+/**
+ * @brief Estimate a UTF-8 sequence length from its leading byte.
+ *
+ * @details This does not validate successor bytes; use utf8DecodeChar() for
+ * that.
+ * @return 1-4; invalid leads are treated as one byte.
+ */
 int32_t utf8ByteLen(uint8_t c) {
     if ((c & 0x80) == 0)    return 1;   /* 0xxxxxxx: ASCII */
     if (c >= 0xc2 && c <= 0xdf) return 2;
@@ -22,9 +27,15 @@ int32_t utf8ByteLen(uint8_t c) {
     return 1; /* Fallback for invalid encoding, treat as single byte. */
 }
 
-/* Check the lead and its permitted successors before assembling a scalar.
- * A bad prefix is one recoverable byte, so the next byte gets its own chance
- * to start a valid character. */
+/**
+ * @brief Decode one Unicode scalar without reading beyond the available bytes.
+ *
+ * @details s supplies available bytes.
+ * @param s Input bytes; no NUL terminator is required.
+ * @param available Number of readable bytes starting at s.
+ * @return valid plus the codepoint and consumed count; an invalid prefix
+ * consumes one byte, while empty input consumes zero.
+ */
 struct utf8DecodeResult utf8DecodeChar(const char *s, size_t available) {
     struct utf8DecodeResult result = {0, 0, 0};
     if (available == 0) return result;
@@ -68,27 +79,53 @@ struct utf8DecodeResult utf8DecodeChar(const char *s, size_t available) {
     return result;
 }
 
-/* Variation selector (emoji style modifiers). */
+/**
+ * @brief Recognize the text and emoji presentation selectors used by this module.
+ *
+ * @details cp is a decoded Unicode code point.
+ * @return 1 for U+FE0E or U+FE0F, otherwise 0.
+ */
 static uint8_t isVariationSelector(uint32_t cp) {
     return cp == 0xFE0E || cp == 0xFE0F;  /* Text/emoji style */
 }
 
-/* Skin tone modifier. */
+/**
+ * @brief Recognize an emoji skin-tone modifier.
+ *
+ * @details cp is a decoded Unicode code point.
+ * @return 1 for U+1F3FB through U+1F3FF.
+ */
 static uint8_t isSkinToneModifier(uint32_t cp) {
     return cp >= 0x1F3FB && cp <= 0x1F3FF;
 }
 
-/* Zero Width Joiner. */
+/**
+ * @brief Recognize the joiner used to combine emoji components.
+ *
+ * @details cp is a decoded Unicode code point.
+ * @return 1 for U+200D.
+ */
 static uint8_t isZWJ(uint32_t cp) {
     return cp == 0x200D;
 }
 
-/* Regional Indicator (for flag emoji). */
+/**
+ * @brief Recognize a regional indicator used in flag emoji.
+ *
+ * @details cp is a decoded Unicode code point.
+ * @return 1 for U+1F1E6 through U+1F1FF.
+ */
 static uint8_t isRegionalIndicator(uint32_t cp) {
     return cp >= 0x1F1E6 && cp <= 0x1F1FF;
 }
 
-/* Combining mark or other zero-width character. */
+/**
+ * @brief Recognize combining marks in the ranges supported by the editor.
+ *
+ * @details cp is a decoded Unicode code point.
+ * @return 1 for the listed combining blocks; this is not a complete Unicode
+ * property database.
+ */
 static uint8_t isCombiningMark(uint32_t cp) {
     return (cp >= 0x0300 && cp <= 0x036F) ||   /* Combining Diacriticals */
            (cp >= 0x1AB0 && cp <= 0x1AFF) ||   /* Combining Diacriticals Extended */
@@ -97,14 +134,24 @@ static uint8_t isCombiningMark(uint32_t cp) {
            (cp >= 0xFE20 && cp <= 0xFE2F);     /* Combining Half Marks */
 }
 
-/* Extends the previous character (doesn't start a new grapheme). */
+/**
+ * @brief Decide whether a supported code point extends an adjacent grapheme.
+ *
+ * @return 1 for the selectors, modifiers, joiner and combining marks
+ * recognized by this module.
+ */
 static uint8_t isGraphemeExtend(uint32_t cp) {
     return isVariationSelector(cp) || isSkinToneModifier(cp) ||
            isZWJ(cp) || isCombiningMark(cp);
 }
 
-/* Try the few possible starts of a character ending at pos. If none fits,
- * the last byte is independent, just as in the forward scan. */
+/**
+ * @brief Decode the scalar ending immediately before a byte position.
+ *
+ * @details buf contains at least pos bytes.
+ * @return a valid suffix of up to four bytes when possible, otherwise decodes
+ * the last byte independently; pos zero returns an empty result.
+ */
 static struct utf8DecodeResult utf8DecodePrev(const char *buf, size_t pos) {
     if (pos == 0) {
         return utf8DecodeChar(buf, 0);
@@ -117,6 +164,13 @@ static struct utf8DecodeResult utf8DecodePrev(const char *buf, size_t pos) {
     return utf8DecodeChar(buf + pos - 1, 1);
 }
 
+/**
+ * @brief Measure the grapheme immediately before a cursor position.
+ *
+ * @details pos is a byte boundary within buf.
+ * @return its byte length, or zero at the start; malformed bytes remain
+ * independent editing units.
+ */
 size_t utf8PrevCharLen(const char *buf, size_t pos) {
     if (pos == 0) return 0;
 
@@ -179,6 +233,13 @@ size_t utf8PrevCharLen(const char *buf, size_t pos) {
     return total;
 }
 
+/**
+ * @brief Measure the grapheme starting at a byte position.
+ *
+ * @details buf contains len bytes and pos is a character boundary.
+ * @return a byte step, zero at or beyond the end, or one for malformed input;
+ * never reads past len.
+ */
 size_t utf8NextCharLen(const char *buf, size_t pos, size_t len) {
     if (pos >= len) return 0;
 
@@ -232,6 +293,12 @@ size_t utf8NextCharLen(const char *buf, size_t pos, size_t len) {
     return total;
 }
 
+/**
+ * @brief Estimate the screen columns occupied by a Unicode code point.
+ *
+ * @return 0, 1 or 2 using the supported control, combining and wide-character
+ * ranges; terminal font behavior can differ from this estimate.
+ */
 int32_t utf8CharWidth(uint32_t cp) {
     /* Control characters and combining marks: zero width. */
     if (cp < 32 || (cp >= 0x7F && cp < 0xA0)) return 0;
@@ -281,12 +348,19 @@ int32_t utf8CharWidth(uint32_t cp) {
     return 1; /* Default: single width */
 }
 
-/* If s[] points at an ANSI CSI escape sequence (e.g. a color change like
+/**
+ * @brief Measure a complete ANSI CSI sequence without exceeding the span.
+ *
+ * @details s must start with ESC and contain len available bytes.
+ * @return its byte length, or zero for incomplete or unrecognized syntax.
+ *
+ * @note If s[] points at an ANSI CSI escape sequence (e.g. a color change like
  * ESC [ 1 ; 32 m), return its length in bytes. Otherwise return 0.
  *
- * The caller must have already verified that s[0] == ESC (0x1b). The
- * sequence layout follows ECMA-48: ESC '[', parameter bytes (0x30-0x3f),
- * intermediate bytes (0x20-0x2f), and a final byte (0x40-0x7e). */
+ * The caller must have already verified that s[0] == ESC (0x1b). The sequence
+ * layout follows ECMA-48: ESC '[', parameter bytes (0x30-0x3f), intermediate
+ * bytes (0x20-0x2f), and a final byte (0x40-0x7e).
+ */
 static size_t ansiEscapeLen(const char *s, size_t len) {
     size_t i;
     if (len < 2 || s[1] != '[') return 0;
@@ -297,6 +371,13 @@ static size_t ansiEscapeLen(const char *s, size_t len) {
     return i + 1;
 }
 
+/**
+ * @brief Measure text in display columns while ignoring ANSI CSI escapes.
+ *
+ * @details s contains len bytes.
+ * @return columns rather than bytes; malformed bytes occupy one cell and
+ * supported joined emoji avoid repeated width counts.
+ */
 size_t utf8StrWidth(const char *s, size_t len) {
     size_t width = 0;
     size_t i = 0;
@@ -340,6 +421,12 @@ size_t utf8StrWidth(const char *s, size_t len) {
     return width;
 }
 
+/**
+ * @brief Measure the base width at the start of a grapheme span.
+ *
+ * @details s contains len bytes, normally supplied by utf8NextCharLen().
+ * @return zero for an empty span and one for a malformed first byte.
+ */
 int32_t utf8SingleCharWidth(const char *s, size_t len) {
     if (len == 0) return 0;
     struct utf8DecodeResult decoded = utf8DecodeChar(s, len);

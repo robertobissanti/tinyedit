@@ -140,7 +140,7 @@ struct editorSettings {
      * right after the cursor (or wraps the active selection); typing
      * the close manually while the cursor sits right before an
      * auto-inserted one skips over it instead of duplicating it. See
-     * editorAutoCloseFor() in tinyedit.c for the exact pair table. */
+     * editorAutoClosePairFor() in editor_state.c for the shared pair table. */
     int32_t auto_close_pairs;
     /* Whether auto_close_pairs above also applies to a typed "'"
      * (single quote/apostrophe). Split out and defaulted to false
@@ -242,73 +242,104 @@ struct settingDescriptor {
 extern const struct settingDescriptor settingDescriptors[];
 extern const int32_t settingDescriptorCount;
 
+/**
+ * @brief Look up an option by its configuration key.
+ *
+ * @details key is NUL-terminated and case-sensitive.
+ * @return a borrowed descriptor or NULL when unknown.
+ */
 const struct settingDescriptor *settingsFind(const char *key);
+/**
+ * @brief Read a named boolean option from a settings object.
+ *
+ * @return its truth value, or 0 when the key is missing or not a boolean
+ * setting.
+ */
 uint8_t settingsGetBool(const struct editorSettings *settings, const char *key);
+/**
+ * @brief Toggle a named boolean option in a settings object.
+ *
+ * @details Does not apply terminal changes or save configuration.
+ * @return 1 when toggled, 0 for a missing or non-boolean key.
+ */
 uint8_t settingsToggleBool(struct editorSettings *settings, const char *key);
 
-/* Maps a file extension to a human-readable language/filetype name for
- * the status bar (e.g. "c" -> "C", "py" -> "Python"). Falls back to a
- * built-in static table (~30 common languages); entries in
- * ~/.tinyeditrc as "filetype.<ext> = <Name>" override or extend it.
- * User overrides are loaded once by settingsLoad() and preserved by
- * settingsSave() even though the F2 screen doesn't edit them directly
- * yet -- this state lives inside settings.c, callers don't need to
- * pass it around. */
-
-/* Returns the filetype name for `ext` (without the leading dot, e.g.
- * "c" not ".c"), or NULL if unknown. Checks user overrides first, then
- * falls back to the built-in table. Returned pointer is either a
- * static string or owned by the module's override table -- do not
- * free, valid until the next settingsLoad() call. */
+/**
+ * @brief Look up a readable filetype label, preferring user overrides.
+ *
+ * @details ext is case-sensitive without a leading dot.
+ * @return a borrowed string or NULL when unknown; its lifetime depends on the
+ * override table.
+ */
 const char *filetypeForExtension(const char *ext);
 
-/* Registers `ext` -> `name` as a filetype override, exactly as a
- * "filetype.<ext> = <Name>" line in ~/.tinyeditrc would, replacing any
- * existing entry for that extension. Only updates the in-memory table:
- * call settingsSave() to persist it. Used when a user syntax .conf
- * declares a name for an extension ~/.tinyeditrc doesn't know yet, so
- * the extension gets recorded once instead of being re-resolved from
- * the .conf files on every run. Ignores empty/NULL arguments. */
+/**
+ * @brief Register a nonempty extension and its readable label.
+ *
+ * @details Copies both strings into the override table; invalid empty or NULL
+ * inputs are ignored. Persistence is a separate settingsSave() call.
+ */
 void settingsSetFiletype(const char *ext, const char *name);
 
-/* Fills *out with hardcoded defaults. Always succeeds. */
+/**
+ * @brief Fill every setting field with its built-in default.
+ *
+ * @details out must point to writable settings storage; no file is read or
+ * written and filetype overrides are untouched.
+ */
 void settingsDefaults(struct editorSettings *out);
 
-/* Loads settings from ~/.tinyeditrc into *out. Starts from
- * settingsDefaults() and overrides only the keys present in the file,
- * so a partial or missing file still yields a fully valid settings
- * struct. Unknown keys/malformed lines are silently skipped (a config
- * file is not something a user expects to get a parse error dialog
- * from -- this matches the tolerant style of most INI-ish tools). */
+/**
+ * @brief Load configuration over defaults and rebuild filetype overrides.
+ *
+ * @details out receives valid settings even when the file is missing or
+ * malformed. Missing configuration is created when possible; invalid entries
+ * are ignored and integers are clamped.
+ */
 void settingsLoad(struct editorSettings *out);
 
-/* Writes *s to ~/.tinyeditrc. Returns 1 on success, 0 on I/O failure. */
+/**
+ * @brief Persist settings and known filetype overrides through a temporary file.
+ *
+ * @details s must contain valid descriptor values, including enum indices.
+ * @return 1 after file and directory sync, otherwise 0 with the temporary
+ * file removed. A post-rename sync failure may have replaced the config.
+ */
 uint8_t settingsSave(const struct editorSettings *s);
 
-/* ANSI foreground color escape sequence (e.g. "\x1b[90m") for a given
- * settingColor. Returned pointer is a static string, do not free. */
+/**
+ * @brief Get the foreground escape sequence for a palette entry.
+ *
+ * @details Default or unsupported values reset the terminal foreground;
+ * callers wanting no output must check that case separately.
+ * @return a borrowed literal.
+ */
 const char *ansiColorCode(int32_t c);
 
-/* ANSI background color escape sequence (e.g. "\x1b[100m") for a given
- * settingColor -- same palette/indices as ansiColorCode(), just the
- * background SGR codes instead of foreground. Returns "" (not NULL,
- * so callers can always abAppend() it unconditionally) for
- * COLOR_TERMINAL_DEFAULT: "no background escape" IS the correct
- * behavior there (leave the terminal's own background untouched), not
- * an error case that needs a NULL check at every call site. */
+/**
+ * @brief Get the background escape sequence for a palette entry.
+ *
+ * @details Default or unsupported values return an empty string to leave the
+ * background alone.
+ * @return a borrowed literal; dim variants use the corresponding dark
+ * background.
+ */
 const char *ansiBgColorCode(int32_t c);
 
-/* Whether `c` is one of the 8 "-dim" variants. The dim attribute
- * (\x1b[2m) applies to foreground only -- there is no faint background
- * in base ANSI -- so ansiBgColorCode() renders every -dim hue
- * identically to its -dark counterpart. Background pickers use this to
- * skip those 8 values while cycling, since offering two names for the
- * same visible color is just a trap for the user. Values already saved
- * in ~/.tinyeditrc stay valid either way: they simply render as -dark. */
+/**
+ * @brief Identify a dim foreground variant in the shared palette.
+ *
+ * @return 1 only for the dim entries of the eight hue triplets; the terminal-
+ * default entry is not dim.
+ */
 uint8_t settingColorIsDim(int32_t c);
 
-/* Human-readable name for a settingColor (e.g. "gray"), used both when
- * writing the config file and in the F2 screen. */
+/**
+ * @brief Get the configuration spelling of a palette entry.
+ *
+ * @return a borrowed name, with white-dark as the fallback for an out-of-range
+ * index.
+ */
 const char *settingColorName(int32_t c);
 
 #endif /* __TE_SETTINGS_H */

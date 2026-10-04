@@ -12,7 +12,12 @@ REFACTORING_AUDIT.md
 # never part of the source, kept out of git entirely.
 dev/
 *.dSYM/
-tests/
+tests/*
+!tests/test_core.c
+!tests/test_fileio.c
+!tests/test_search.c
+!tests/benchmark_core.c
+!tests/test_backup_paths.c
 __pycache__/
 .DS_Store
 *.un~

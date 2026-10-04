@@ -14,7 +14,276 @@ avvenuto (i commit del repository condividono tutti la stessa data,
 non utile per una ricostruzione storica accurata), sono un punto di
 partenza da cui il log sarà accurato in avanti.
 
+## CRITICA-URGENTE
+
+
+- [x] **Markdown: highlight completo dei blocchi matematici multilinea**
+  - _Inserito: 2026-10-04 · Completato: 2026-10-04_
+  - `$` e `$$` su righe dedicate, anche indentate, aprono blocchi `HL_MATH`:
+    formula e delimitatori ricevono il colore matematico; chiude soltanto
+    un delimitatore dello stesso tipo. Righe vuote mantengono lo stato.
+  - Test di regressione sui quattro esempi dello screenshot, delimitatori
+    incompatibili e ritorno alla prosa dopo la chiusura.
+
+Bug fixing prioritario rispetto alle nuove feature e ai refactoring di
+sola granularità. Estratto dall'[analisi del 2026-10-04](reports/analisi-granularita-2026-10-04.md):
+i difetti sotto sono stati corretti il 2026-10-04, con regressioni
+automatiche aggiunte. Cause ed evidenze descrivono lo stato precedente al fix.
+
+**Verifica completata**: `make test` passa, inclusa l’intera suite PTY.
+I test mirati `test_core`, `test_render` e `test_fileio` passano anche con ASan/UBSan
+(`-fsanitize=address,undefined`); nessun errore rilevato nei casi esercitati.
+
+- [x] **Overflow del buffer dei prompt: riallocare realmente quando cresce**
+  - _Inserito: 2026-10-04 · Completato: 2026-10-04_
+  - **Causa e impatto**: `editorPromptAppend()` raddoppia `*bufsize`
+    senza chiamare `teRealloc()` prima della copia. L'allocazione iniziale
+    di `editorPromptCB()` è di 128 byte: già 128 byte di testo richiedono
+    129 byte con il terminatore NUL, causando scrittura fuori dal buffer.
+  - **Evidenza**: il difetto, già emerso nella revisione dei commenti,
+    è confermato da ASan con append di 160 byte su allocazione di 128.
+    Questa voce sostituisce quella precedentemente presente in «Da fare».
+  - **Fix richiesto**: aggiornare l'allocazione effettiva prima della copia,
+    mantenendo coerenti capacità, lunghezza e terminazione NUL; controllare
+    l'overflow nei calcoli di crescita e usare gli allocator del progetto.
+  - **Verifica attesa**: regressioni per testo digitato, Ctrl-V e bracketed
+    paste nei prompt oltre 128 byte, anche UTF-8, con controllo del contenuto
+    e del NUL; esecuzione con ASan/UBSan e suite completa.
+  - **Correzione applicata**: crescita reale con `teRealloc()`, controllo
+    di overflow e aggiornamento della capacità prima della copia. Test core
+    su soglia 128 e append UTF-8 ripetute; test PTY sui tre percorsi di input.
+
+- [x] **Top bar: lettura oltre il buffer con nomi di file lunghi**
+  - _Inserito: 2026-10-04 · Completato: 2026-10-04_
+  - **Causa e impatto**: `editorDrawTopBar()` formatta in `status[160]`
+    ma limita il risultato di `snprintf()` solo alle colonne del terminale.
+    Quel risultato indica i byte richiesti, non quelli effettivamente
+    scritti: `abAppend()` può leggere oltre il buffer locale.
+  - **Evidenza**: ASan segnala stack-buffer-overflow con nome di 300 byte
+    e viewport di 250 colonne, durante una lettura di 250 byte.
+  - **Fix richiesto**: limitare l'append ai byte realmente disponibili,
+    gestendo anche l'esito negativo della formattazione; verificare gli
+    altri append basati sul risultato di `snprintf()`/`vsnprintf()`.
+  - **Verifica attesa**: nomi al limite e oltre la capacità del buffer,
+    viewport strette e larghe, top bar attiva e testo UTF-8; nessuna lettura
+    fuori limite con ASan e nessuna sequenza UTF-8 mutilata dal clipping.
+  - **Correzione applicata**: eliminato il buffer fisso della top bar;
+    emissione per grapheme interi entro le colonne disponibili. Protette
+    anche le lunghezze `snprintf()` della status bar. Test su nomi lunghi,
+    viewport da 1 a 250 colonne e label di filetype lunghe.
+
+- [x] **Wrap: blocco e crescita incontrollata della memoria con glyph larghi**
+  - _Inserito: 2026-10-04 · Completato: 2026-10-04_
+  - **Causa e impatto**: in `renderRowSegments()`, se il primo grapheme
+    supera `wrapcols`, la scansione termina senza avanzare `line_start`.
+    Il ciclo esterno continua ad allocare segmenti senza consumare testo,
+    fino a OOM o a un editor apparentemente bloccato.
+  - **Evidenza**: riga `界` (due colonne) e larghezza di wrap 1 non
+    terminano; il harness è stato interrotto dopo due secondi. La larghezza
+    1 è raggiungibile tramite viewport stretta o limite configurato.
+  - **Fix richiesto**: garantire che ogni iterazione consumi almeno un
+    grapheme oppure termini, definendo il comportamento di un glyph più
+    largo della viewport senza spezzarne i byte UTF-8.
+  - **Verifica attesa**: CJK ed emoji larghe con wrap 1, righe miste,
+    caratteri combinanti e byte malformati; terminazione, segmenti validi
+    e memoria limitata al testo elaborato, anche dopo resize.
+  - **Correzione applicata**: il primo grapheme viene consumato anche
+    quando supera il limite e occupa un segmento autonomo. Test con CJK,
+    emoji, combinanti e byte malformati a wrap 1 e 2.
+
+- [x] **PageUp/PageDown: crash su documento vuoto**
+  - _Inserito: 2026-10-04 · Completato: 2026-10-04_
+  - **Causa e impatto**: il ramo di navigazione per pagine in
+    `editorProcessKeypress()` accede a `rows[0]` quando `row_count` è zero.
+    `editorSoftWrapCols()` restituisce almeno 1, quindi il percorso con
+    wrap non protegge il buffer vuoto e dereferenzia un puntatore NULL.
+  - **Evidenza**: PageDown su documento vuoto con viewport 80×20 produce
+    accesso NULL rilevato da UBSan e SEGV rilevato da ASan.
+  - **Fix richiesto**: gestire esplicitamente il documento vuoto prima
+    di accedere alle righe, conservando coordinate valide di cursore,
+    selezione e vista per tutte le varianti di navigazione per pagine.
+  - **Verifica attesa**: PageUp/PageDown e varianti Shift su buffer vuoto
+    all'avvio, dopo Ctrl-W e dopo cancellazione di tutto il contenuto;
+    nessun crash con ASan/UBSan e comportamento coerente della selezione.
+  - **Correzione applicata**: guardia prima degli accessi alle righe;
+    azzerati cursore, selezione attiva/ancore e offset della vista. Test
+    sul dispatcher effettivo e sui tasti via PTY nei tre scenari vuoti.
+
+- [x] **Tab e UTF-8: rendere coerenti render, cursore e selezione**
+  - _Inserito: 2026-10-04 · Completato: 2026-10-04_
+  - **Causa e impatto**: `editorUpdateRow()` espande i tab usando un
+    offset di byte nel render, mentre `bufferRowCxToRx()` usa colonne
+    visive. Anche `editorDrawRowSegment()` ricostruisce il mapping dei tab
+    tramite offset di byte: dopo testo non-ASCII, disegno e coordinate
+    del cursore divergono, compromettendo posizionamento ed evidenziazione.
+  - **Evidenza**: con riga `é\tX` e `tab_stop = 4`, la larghezza del
+    render è 4 colonne ma la coordinata finale del cursore è 5.
+  - **Fix richiesto**: camminare tramite le funzioni UTF-8 del progetto,
+    mantenendo distinti offset sorgente, offset render e colonna visiva;
+    usare la stessa regola di espansione tab nelle conversioni e nel
+    disegno, anche con caratteri invisibili attivi.
+  - **Verifica attesa**: accenti, CJK, emoji e combinanti prima/dopo tab,
+    diversi tab stop, wrap, click, selezione e invisibili; corrispondenza
+    fra render e coordinate, senza alterare i byte salvati.
+  - **Correzione applicata**: espansione e mapping dei tab basati sulle
+    colonne visive, con offset sorgente/render distinti e scansione UTF-8.
+    Test su tab stop 2/4/6/8, invisibili, selezione e click dopo tab;
+    verificata anche la conservazione dei combinanti dopo tab.
+
+- [x] **Caricamento, Save as e persistenza: transazioni contro la perdita dati**
+  - _Inserito: 2026-10-04 · Completato: 2026-10-04_
+  - **Priorità**: il punto 7 dell’audit è riclassificato CRITICO-URGENTE
+    per possibile caricamento parziale, perdita del documento corrente e
+    cambio di destinazione dopo un Save as fallito.
+  - **Strategia applicata**: `fileioLoadDocument()` costruisce un candidato
+    separato con un’unica apertura, controlla errori di lettura e chiusura
+    e libera le righe parziali. `editorOpen()` sostituisce documento,
+    history e vista solo dopo il successo; gli errori mantengono anche
+    selezione e backup precedenti. ENOENT resta un nuovo documento nominato.
+  - **Save as**: `editorSaveToPath()` mantiene separato il nome proposto;
+    soltanto dopo scrittura, sync del file, rename e sync della directory
+    adotta il nome, aggiorna il filetype e rimuove i backup del vecchio e
+    del nuovo percorso. Undo e redo restano disponibili.
+  - **Esito incerto**: se rename riesce ma sync/chiusura della directory
+    fallisce, il target è già sostituito. Il messaggio lo dichiara, mantiene
+    nome precedente, stato dirty e copie di recupero. `save_uncertain`
+    impedisce di saltare la conferma di salvataggio anche se i byte su disco
+    coincidono; un successivo salvataggio riuscito azzera questa condizione.
+  - **Fedeltà del testo**: apertura e recupero condividono la rimozione del
+    solo LF o CRLF effettivo; preservano CR di contenuto e riga finale senza
+    terminatore. Rimane la normalizzazione già prevista per terminatori misti.
+  - **Persistenza condivisa**: il modulo `fileio.c` centralizza replacement
+    e sync della directory anche per backup e impostazioni. I parent delle
+    directory di backup vengono sincronizzati; gli errori mantengono errno
+    e non cancellano il file già sostituito.
+  - **Regressioni**: errori di lettura dopo la prima riga (EIO/ENOMEM/EINTR),
+    chiusura, scrittura parziale/ENOSPC, write zero, sync, rename e sync/close
+    della directory; controllo di contenuto, temporanei, permessi e symlink.
+    Test core di stato/ownership e test PTY di Open/Save as falliti seguiti
+    da undo e Ctrl-S. ASan/UBSan sui test core e I/O.
+  - **Limite della verifica**: fault injection delle chiamate e test PTY;
+    non è stata simulata una perdita reale di alimentazione. Le allocazioni
+    applicative restano fail-fast secondo la policy del progetto.
+
+- [x] **Punto 6: dispatcher, eventi mouse e stato delle gesture**
+  - _Inserito: 2026-10-04 · Completato: 2026-10-04_
+  - **Correzione applicata**: `editorProcessKeypress()` conserva l’ordine
+    dell’input e dispatcha una sola volta il primo evento non mouse letto
+    durante il drenaggio. I burst sono limitati a `MOUSE_BURST_LIMIT = 64`;
+    al limite non viene letto l’evento successivo, che resta in coda.
+  - **Routing uniforme**: `editorHandleMouseEvent()` gestisce un solo
+    report e non legge input. Tutti i report del burst passano dal routing
+    menu/testo, inclusi release e click che seguono un evento wheel.
+  - **Ownership**: drag e ancore di press vivono in `editorDocument.mouse`,
+    con tipi in `tinyedit.h`. Reset del documento e recupero delle righe
+    li azzerano; release anche fuori dal testo, nuovi click e input da
+    tastiera terminano la gesture. La selezione risultante resta indipendente.
+  - **Responsabilità separate**: `editorDispatchKey()` instrada verso
+    `editorHandleNavigationKey()` (movimento/selezione),
+    `editorHandleCommandKey()` (file, history e schermate) e
+    `editorHandleEditKey()` (testo, clipboard e selezione). I comandi modali
+    mantengono la proprietà dei propri prompt; il dispatcher non li decodifica.
+  - **Vista**: un evento da tastiera dopo wheel ripristina il normale
+    inseguimento del cursore anche se arriva nello stesso burst.
+  - **Regressioni già passate**: pipe con input realmente accodato per
+    testo, UTF-8, Shift-arrow, paste, drag/release fuori area, menu e burst
+    oltre il limite; reset e recovery seguiti da motion orfano. PTY con
+    salvataggi che verificano byte e comandi, undo e cambio documento.
+    Test core anche con ASan/UBSan. Suite completa `make test` passata.
+  - Il crash su documento vuoto dello stesso punto era già corretto e
+    rimane coperto dalle regressioni PageUp/PageDown sopra.
+
+- [x] **Punto 10: misure di scalabilità, redraw e documentazione coerente**
+  - _Inserito: 2026-10-04 · Completato: 2026-10-04_
+  - Benchmark riproducibile (`make benchmark`), dati prima/dopo e limiti in
+    `reports/performance-2026-10-04.md`; interventi sui costi misurati.
+  - Draw wrapped sequenziale; conteggi grapheme e pair memorizzati con
+    invalidazione; buffer di output con crescita geometrica.
+  - Eliminati controlli NULL irraggiungibili dopo gli allocator fatali.
+    `realpath` dei backup distingue ENOENT da errori recuperabili/OOM;
+    `getline` mantiene la propagazione transazionale già verificata.
+  - README elenca tutti i moduli attivi; IDEAS descrive buffer dinamico e
+    supporto line ending reale. Snapshot completi e conversioni lineari
+    restano limiti espliciti, con misure e prospettive separate.
+  - Regressioni su frame wrapped/Unicode/scroll, cache, undo e fault POSIX.
+
+- [x] **Punto 9: ricerca separata da sessione e vista**
+  - _Inserito: 2026-10-04 · Completato: 2026-10-04_
+  - Nuovo `search.c`/`search.h`: il motore riceve un buffer e restituisce
+    coordinate sorgente, senza modificare cursore, vista o highlight.
+  - Query e regex compilata appartenenti a `editorSearch`; compilazione
+    riusata per frecce e sostituzioni, anche gli errori di pattern sono
+    memorizzati. Testo multilinea riusato finché il documento non cambia.
+  - Tutto lo stato `last_*` è nella sessione; core applica il risultato,
+    gestisce cancellazione, direzione e passaggio alla sostituzione.
+  - Unico nucleo regex inverso per righe e testo multilinea, con avanzamento
+    UTF-8 per match vuoti. Corretti `^` dopo newline e ripetizione di un match
+    vuoto multilinea quando la posizione iniziale supera EOF senza wrap.
+  - Test del motore e del core su cache, direzioni, coordinate, regex invalide,
+    Unicode, wrap, match vuoti, cancellazione e invalidazione undo/redo.
+
+- [x] **Punto 8: confini espliciti delle modifiche e aggiornamenti differiti**
+  - _Inserito: 2026-10-04 · Completato: 2026-10-04_
+  - Scope annidabili delle azioni: snapshot una sola volta, mutazioni raw,
+    ricostruzione delle sole righe modificate e propagazione syntax finale.
+    Nessun rollback: il protocollo raggruppa modifiche già autorizzate.
+  - Auto-close ASCII/Unicode e tag XML hanno confini undo espliciti;
+    digitazione e Backspace ordinari conservano la coalescenza temporale.
+  - Backspace elimina il range del grapheme in una sola mutazione; auto-indent
+    e indentazione di blocchi inseriscono span. Paste, sostituzioni, Enter,
+    selezioni e aggiornamento globale dei cache condividono il batching.
+  - Test nel core effettivo: conteggio delle tokenizzazioni, stato Markdown
+    multilinea, UTF-8, indentazione, splice e ripristino undo/redo.
+
+- [x] **Punto 5: unica policy ASCII di auto-close integrata nel core**
+  - _Inserito: 2026-10-04 · Completato: 2026-10-04_
+  - **Correzione applicata**: rimossa `autoCloseTable` dal core e rimosso
+    il wrapper duplicato `editorAutoCloseFor()`. Digitazione e decisione
+    fra wrapping/sostituzione della selezione usano direttamente
+    `editorAutoClosePairFor()` di `editor_state.c`.
+  - **Closer**: `editorIsAsymmetricAutoClose()` riconosce il byte di chiusura
+    nella stessa tabella condivisa; il core verifica il byte al cursore
+    prima dello skip. Rimossi ciclo e policy paralleli dal core. Entrambe
+    le API hanno ora chiamanti applicativi effettivi.
+  - **Impostazioni e selezione**: opener disabilitati dalla configurazione
+    sostituiscono il testo selezionato come gli altri caratteri, invece
+    di inserirsi in una selezione rimasta viva. Conservati opt-in apostrofo,
+    skip simmetrico, comportamento backtick e caso LaTeX `$$`.
+  - **Orientamento**: Module map, README, commenti del modulo e riferimenti
+    delle impostazioni descrivono selezione/policy ASCII, senza attribuire
+    inizializzazione e cleanup a `editor_state.c`. Unicode e tag XML restano
+    percorsi specifici del core, senza tabelle ASCII duplicate.
+  - **Regressioni**: unit test delle API condivise e test del dispatcher
+    effettivo per tutte le sette coppie, closer, selezioni mono/multilinea
+    e combinazioni delle due impostazioni. Test PTY di digitazione, wrapping
+    e sostituzione con auto-close attivo/disattivo. Suite completa `make test`
+    passata; test core e `editor_state` anche con ASan/UBSan.
+
+- [x] **Espansione home nei percorsi di apertura e salvataggio**
+  - _Inserito: 2026-10-04 · Completato: 2026-10-04_
+  - `~/tmp/nomeFile.md` era passato letteralmente al filesystem, che cercava
+    una directory `~` relativa alla cwd. `fileioExpandHomePath()` espande
+    soltanto `~` e `~/` usando `HOME`, senza shell o espansioni implicite.
+  - Apertura e Save as conservano l’identità espansa dopo il commit;
+    salvataggi successivi e backup usano lo stesso percorso. HOME assente
+    o vuota produce un errore senza cambiare il documento.
+  - Test unitari su home, UTF-8 e percorsi letterali; PTY con avvio senza
+    file da una cwd diversa, salvataggio, nuovo Ctrl-S e riapertura tramite
+    `~/tmp/nomeFile.md`. Suite completa `make test` passata; test core e
+    I/O anche con ASan/UBSan.
+
 ## Fatto
+
+- [x] **Documentazione uniforme delle funzioni e degli helper**
+  - _Inserito: 2026-10-04 · Completato: 2026-10-04_
+  - Documentate tutte le 398 definizioni in `src/` e le 120 dichiarazioni
+    pubbliche in `inc/`, incluso linenoise storico, con sintassi Doxygen
+    e descrizioni in inglese coerenti con il codice.
+  - Esplicitati scopo, uso, unità delle coordinate, proprietà dei buffer,
+    terminazione NUL, valori restituiti e responsabilità per undo/rendering.
+    Uniformati i commenti esistenti, conservando le motivazioni utili.
+  - Convenzione descritta nel README. Verificati token C invariati,
+    copertura delle definizioni e `make test` completo, inclusi i test PTY.
 
 - [x] **Fix: Freccia Su sulla prima riga porta all'inizio del testo**
   - _Inserito: 2026-09-29 · Completato: 2026-09-29_
@@ -1065,7 +1334,7 @@ partenza da cui il log sarà accurato in avanti.
     `auto_close_pairs`: in prosa l'apostrofo (`don't`, `user's`) è
     molto più frequente di una coppia, quindi chiuderlo
     automaticamente disturba come non fa `(` o `"`.
-  - Implementato in `editorAutoCloseFor()`, che restituisce `NULL` per
+  - Implementato in `editorAutoClosePairFor()`, che restituisce `NULL` per
     `'` quando il setting è off — i chiamanti ricadono sull'inserimento
     semplice come se la coppia non fosse in tabella. Lo skip-over
     simmetrico passa dallo stesso punto, quindi non serve altro.
@@ -1323,8 +1592,9 @@ partenza da cui il log sarà accurato in avanti.
     poi cerca una chiusura della STESSA larghezza — un `$$...$$` deve
     chiudere con `$$`, non con un singolo `$` che compare dentro la
     formula (es. un simbolo di valuta legittimo nella formula stessa).
-    Solo a singola riga, stesso limite già dichiarato per l'enfasi
-    (nessun tracking multi-riga oltre ai fenced code block).
+    Implementazione iniziale limitata a singola riga; dal 2026-10-04
+    sono supportati anche blocchi multilinea con `$` / `$$` su righe
+    dedicate (vedi correzione nella sezione CRITICA-URGENTE).
   - Verificato via pty (`HOME` isolato): `Inline $a+b=c$ and display
     $$x^2+y^2=z^2$$ done.` — entrambe le espressioni colorate in verde
     (stesso colore delle stringhe/code span), delimitazione `$$`

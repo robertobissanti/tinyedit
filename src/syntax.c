@@ -136,9 +136,12 @@ static uint8_t userLangsLoaded = 0;
 
 static void syntaxLoadUserLangs(void);
 
-/* File extensions are conventionally case-insensitive for language
- * detection, even on case-sensitive filesystems (notably .C/.H on Unix).
- * Compare ASCII letters without depending on the user's locale. */
+/**
+ * @brief Compare two extension strings using ASCII case folding.
+ *
+ * @details left and right are NUL-terminated without leading dots.
+ * @return 1 only when the entire extensions match, independent of locale.
+ */
 static uint8_t syntaxExtensionEquals(const char *left, const char *right) {
     while (*left && *right) {
         unsigned char a = (unsigned char)*left;
@@ -152,15 +155,30 @@ static uint8_t syntaxExtensionEquals(const char *left, const char *right) {
     return *left == '\0' && *right == '\0';
 }
 
-/* Language keywords are ASCII spelling by definition.  Do not delegate
- * this decision to the process locale: libc's isalpha() may classify
- * non-ASCII bytes differently on different systems, while the tokenizer
- * must make the same choice on macOS, Linux and other POSIX targets. */
+/**
+ * @brief Recognize letters in language keywords without locale-dependent results.
+ *
+ * @details byte is an unsigned input byte.
+ * @return 1 only for ASCII A-Z or a-z.
+ *
+ * @note Language keywords are ASCII spelling by definition. Do not delegate
+ * this decision to the process locale: libc's isalpha() may classify non-ASCII
+ * bytes differently on different systems, while the tokenizer must make the
+ * same choice on macOS, Linux and other POSIX targets.
+ */
 static uint8_t syntaxIsAsciiLetter(unsigned char byte) {
     return (byte >= (unsigned char)'A' && byte <= (unsigned char)'Z') ||
         (byte >= (unsigned char)'a' && byte <= (unsigned char)'z');
 }
 
+/**
+ * @brief Find a table-driven language for a filename.
+ *
+ * @details Loads user definitions on first use and prefers them to built-in
+ * table entries.
+ * @return a borrowed language or NULL; dedicated tokenizers are selected
+ * elsewhere.
+ */
 static const struct syntaxLang *syntaxLangForFilename(const char *filename) {
     if (!filename) return NULL;
     const char *dot = strrchr(filename, '.');
@@ -189,11 +207,18 @@ static const struct syntaxLang *syntaxLangForFilename(const char *filename) {
     return NULL;
 }
 
-/* Shared by the two public per-extension queries below: finds the user
- * language claiming `ext`, loading the user table on first use exactly
- * like syntaxLangForFilename() does. Only the user table is searched --
- * both callers are about what an installed .conf provides, which is
- * precisely what the built-in table can't answer. */
+/**
+ * @brief Find the installed user language claiming an extension.
+ *
+ * @details ext has no leading dot. Loads user definitions lazily; returns a
+ * module-owned language or NULL.
+ *
+ * @note Shared by the two public per-extension queries below: finds the user
+ * language claiming `ext`, loading the user table on first use exactly like
+ * syntaxLangForFilename() does. Only the user table is searched -- both
+ * callers are about what an installed .conf provides, which is precisely what
+ * the built-in table can't answer.
+ */
 static const struct syntaxLang *syntaxUserLangForExtension(const char *ext) {
     if (!ext || ext[0] == '\0') return NULL;
     if (!userLangsLoaded) syntaxLoadUserLangs();
@@ -206,10 +231,23 @@ static const struct syntaxLang *syntaxUserLangForExtension(const char *ext) {
     return NULL;
 }
 
+/**
+ * @brief Check whether an installed user syntax definition claims an extension.
+ *
+ * @details ext has no leading dot.
+ * @return 1 when a user language is found; compiled-in languages are not
+ * considered.
+ */
 uint8_t syntaxUserLangHasExtension(const char *ext) {
     return syntaxUserLangForExtension(ext) != NULL;
 }
 
+/**
+ * @brief Get the label declared by a user syntax definition.
+ *
+ * @return a borrowed filetype string or NULL when the definition or its label
+ * is absent; do not free it.
+ */
 const char *syntaxUserFiletypeForExtension(const char *ext) {
     const struct syntaxLang *lang = syntaxUserLangForExtension(ext);
     return lang ? lang->filetype : NULL;
@@ -245,6 +283,12 @@ const char *syntaxUserFiletypeForExtension(const char *ext) {
  *                                     language's extensions)
  */
 
+/**
+ * @brief Copy a configuration token without surrounding whitespace.
+ *
+ * @details s is NUL-terminated.
+ * @return an owned NUL-terminated allocation to free.
+ */
 static char *syntaxDupTrimmed(const char *s) {
     while (isspace((unsigned char)*s)) s++;
     size_t len = strlen(s);
@@ -255,11 +299,18 @@ static char *syntaxDupTrimmed(const char *s) {
     return out;
 }
 
-/* Splits a comma-separated value into a NULL-terminated array of
- * malloc'd strings (each trimmed). Returns NULL for an empty/blank
- * value -- callers treat a NULL extensions/keywords list as "this
- * language entry is unusable", since both are required for the
- * generic tokenizer to do anything. */
+/**
+ * @brief Split a comma-separated configuration value into trimmed items.
+ *
+ * @details Writes out_count and returns an owned NULL-terminated array, or
+ * NULL for an empty list. Each string and the array must be freed when
+ * discarded.
+ *
+ * @note Splits a comma-separated value into a NULL-terminated array of
+ * malloc'd strings (each trimmed). Returns NULL for an empty/blank value --
+ * callers treat a NULL extensions/keywords list as "this language entry is
+ * unusable", since both are required for the generic tokenizer to do anything.
+ */
 static char **syntaxSplitList(const char *value, int32_t *out_count) {
     int32_t count = 1;
     for (const char *p = value; *p; p++) if (*p == ',') count++;
@@ -291,12 +342,14 @@ static char **syntaxSplitList(const char *value, int32_t *out_count) {
     return items;
 }
 
-/* Parses one ~/.tinyedit/syntax/<name>.conf file into a heap-allocated
- * struct syntaxLang, or NULL if it has no usable "extensions"/
- * "keywords" keys (see header comment above) -- a malformed or
- * incomplete user file is skipped silently rather than surfacing a
- * parse-error dialog, same tolerant handling ~/.tinyeditrc itself
- * already gets in settingsLoad(). */
+/**
+ * @brief Parse one user syntax file into a language definition.
+ *
+ * @details path identifies a readable configuration.
+ * @return an owned definition for registration, or NULL when unreadable or
+ * unusable; generic definitions require keywords, XML-based definitions do
+ * not.
+ */
 static const struct syntaxLang *syntaxParseLangFile(const char *path) {
     FILE *fp = fopen(path, "r");
     if (!fp) return NULL;
@@ -423,6 +476,13 @@ static const struct syntaxLang *syntaxParseLangFile(const char *path) {
     return lang;
 }
 
+/**
+ * @brief Load usable .conf definitions from the user's syntax directory once.
+ *
+ * @details Sets the loaded flag even if HOME or the directory is unavailable,
+ * preventing repeated scans during editing. Definitions remain module-owned
+ * for the process lifetime.
+ */
 static void syntaxLoadUserLangs(void) {
     userLangsLoaded = 1; /* set first: a failed/empty scan should not retry every keystroke */
 
@@ -461,11 +521,23 @@ static void syntaxLoadUserLangs(void) {
  * struct syntaxLang) needs it too. */
 static int32_t syntaxTryHighlightMath(erow *row, const char *s, int32_t len, int32_t i);
 
+/**
+ * @brief Decide whether a byte can end an ASCII keyword.
+ *
+ * @return 1 for NUL or ASCII non-identifier punctuation; non-ASCII bytes
+ * remain part of an identifier rather than splitting a UTF-8 word.
+ */
 static uint8_t isWordBoundary(char c) {
     unsigned char byte = (unsigned char)c;
     return byte == '\0' || (byte < 0x80 && !isalnum(byte) && byte != '_');
 }
 
+/**
+ * @brief Get a safe byte step for tokenizer text at a character boundary.
+ *
+ * @details s contains len bytes and i is within that span.
+ * @return a grapheme length, using one byte for ASCII or malformed input.
+ */
 static int32_t syntaxCharLenAt(const char *s, int32_t len, int32_t i) {
     if ((unsigned char)s[i] < 0x80) return 1;
     size_t clen = utf8NextCharLen(s, (size_t)i, (size_t)len);
@@ -473,6 +545,14 @@ static int32_t syntaxCharLenAt(const char *s, int32_t len, int32_t i) {
     return (int32_t)clen;
 }
 
+/**
+ * @brief Classify a byte as an identifier opener or continuation.
+ *
+ * @details first selects the opener rule; extra may be NULL or list additional
+ * prefix characters.
+ * @return 1 for eligible bytes, including non-ASCII bytes whose full span is
+ * stepped separately.
+ */
 static uint8_t syntaxIsIdentifierByte(char c, const char *extra, uint8_t first) {
     unsigned char byte = (unsigned char)c;
     if (byte >= 0x80) return 1;
@@ -481,6 +561,14 @@ static uint8_t syntaxIsIdentifierByte(char c, const char *extra, uint8_t first) 
     return syntaxIsAsciiLetter(byte) || (byte >= (unsigned char)'0' && byte <= (unsigned char)'9');
 }
 
+/**
+ * @brief Color a quoted string and find where tokenization should resume.
+ *
+ * @details row->hl must be allocated for s, which contains len bytes; start
+ * points to the quote. backslash_escapes enables escaped characters.
+ * @return the exclusive end byte offset, including an unterminated span to row
+ * end.
+ */
 static int32_t syntaxHighlightQuoted(erow *row, const char *s, int32_t len,
     int32_t start, uint8_t backslash_escapes) {
     char quote = s[start];
@@ -502,6 +590,14 @@ static int32_t syntaxHighlightQuoted(erow *row, const char *s, int32_t len,
     return i;
 }
 
+/**
+ * @brief Match a keyword at the current tokenizer position.
+ *
+ * @details list is NULL-terminated, s has avail bytes plus an accessible
+ * terminator.
+ * @return the matched byte length, or zero; the following byte must be a word
+ * boundary.
+ */
 static int32_t matchKeyword(const char *const *list, const char *s, int32_t avail) {
     for (int32_t i = 0; list[i]; i++) {
         int32_t klen = (int32_t)strlen(list[i]);
@@ -513,6 +609,12 @@ static int32_t matchKeyword(const char *const *list, const char *s, int32_t avai
     return 0;
 }
 
+/**
+ * @brief Color a row using a table-driven language definition.
+ *
+ * @details row->render must be current. Rebuilds its highlight array and
+ * writes outgoing comment and math state from the supplied previous-row flags.
+ */
 static void syntaxHighlightRowGeneric(erow *row, const struct syntaxLang *lang,
     uint8_t prev_open_comment, uint8_t prev_open_math) {
     row->hl = teRealloc(row->hl, (size_t)row->rsize);
@@ -695,17 +797,31 @@ static void syntaxHighlightRowGeneric(erow *row, const struct syntaxLang *lang,
  * fence's contents render as HL_STRING regardless of the language tag
  * after the opening ```, matching the "no nested/embedded syntax" scope
  * boundary from the original C-only version. */
+/**
+ * @brief Recognize extensions handled by the Markdown tokenizer.
+ *
+ * @details ext is NUL-terminated without a dot.
+ * @return 1 for md or markdown, ignoring ASCII case.
+ */
 static uint8_t isMdExtension(const char *ext) {
     return syntaxExtensionEquals(ext, "md") || syntaxExtensionEquals(ext, "markdown");
 }
 
-/* Looks for `open` starting at s[i] and, if found, scans forward for
- * `close` (both fixed-width, unlike the "$"/"$$" case which shares a
- * character between widths and needs its own logic below). Returns the
- * index just past `close`'s end on success, -1 otherwise. Used for
- * LaTeX's "\[...\]" (display) and "\(...\)" (inline) math delimiters,
- * which -- unlike "$"/"$$" -- don't overload one marker character for
- * two different widths, so a plain fixed-delimiter scan is enough. */
+/**
+ * @brief Color a complete fixed-delimiter math span on one row.
+ *
+ * @details row->hl must be ready and i is a valid byte offset in s.
+ * @return the exclusive end byte offset, or -1 when the opener or closer is
+ * missing.
+ *
+ * @note Looks for `open` starting at s[i] and, if found, scans forward for
+ * `close` (both fixed-width, unlike the "$"/"$$" case which shares a character
+ * between widths and needs its own logic below). Returns the index just past
+ * `close`'s end on success, -1 otherwise. Used for LaTeX's "\[...\]" (display)
+ * and "\(...\)" (inline) math delimiters, which -- unlike "$"/"$$" -- don't
+ * overload one marker character for two different widths, so a plain fixed-
+ * delimiter scan is enough.
+ */
 static int32_t syntaxTryHighlightDelimited(erow *row, const char *s, int32_t len, int32_t i,
     const char *open, const char *close) {
     int32_t open_len = (int32_t)strlen(open);
@@ -724,14 +840,22 @@ static int32_t syntaxTryHighlightDelimited(erow *row, const char *s, int32_t len
     return -1;
 }
 
-/* If `s[i]` starts a LaTeX math span -- inline "$...$"/"\(...\)" or
- * display "$$...$$"/"\[...\]" -- colors it HL_MATH in row->hl and
- * returns the index just past its end. Otherwise returns -1 and
- * touches nothing, leaving the caller to try its own rules for s[i].
- * Shared between the Markdown tokenizer and the generic C-like
- * tokenizer's optional math_mode (see struct syntaxLang) -- LaTeX math
- * syntax doesn't depend on which language it's embedded in, so both
- * can call the exact same matching logic instead of duplicating it. */
+/**
+ * @brief Try a complete inline or display math span at the current byte.
+ *
+ * @details row->hl must be ready and s contains len bytes.
+ * @return the exclusive end offset, or -1 without changing highlights;
+ * multiline state belongs to the enclosing tokenizer.
+ *
+ * @note If `s[i]` starts a LaTeX math span -- inline "$...$"/"\(...\)" or
+ * display "$$...$$"/"\[...\]" -- colors it HL_MATH in row->hl and returns the
+ * index just past its end. Otherwise returns -1 and touches nothing, leaving
+ * the caller to try its own rules for s[i]. Shared between the Markdown
+ * tokenizer and the generic C-like tokenizer's optional math_mode (see struct
+ * syntaxLang) -- LaTeX math syntax doesn't depend on which language it's
+ * embedded in, so both can call the exact same matching logic instead of
+ * duplicating it.
+ */
 static int32_t syntaxTryHighlightMath(erow *row, const char *s, int32_t len, int32_t i) {
     if (s[i] == '\\') {
         int32_t end = syntaxTryHighlightDelimited(row, s, len, i, "\\[", "\\]");
@@ -740,13 +864,8 @@ static int32_t syntaxTryHighlightMath(erow *row, const char *s, int32_t len, int
     }
 
     if (s[i] != '$') return -1;
-    /* "$$" must close with "$$", not with a lone "$" that happens to
-     * appear inside the formula (e.g. as a currency symbol some
-     * formulas legitimately contain). Single-line only -- a "$$" that
-     * spans multiple lines renders each line independently rather than
-     * as one highlighted block (same scope limit as Markdown's fenced
-     * code blocks/emphasis: no other multi-line tracking here). Same
-     * single-line limit applies to "\[...\]"/"\(...\)" above. */
+    /* Inline matching stays on this row. Markdown handles standalone
+     * dollar delimiters separately, with a state for each delimiter width. */
     int32_t start = i;
     int32_t width = (i + 1 < len && s[i + 1] == '$') ? 2 : 1;
     int32_t j = i + width;
@@ -767,8 +886,13 @@ static int32_t syntaxTryHighlightMath(erow *row, const char *s, int32_t len, int
     return end;
 }
 
-/* A "---" line, the YAML front matter delimiter. Trailing whitespace
- * is tolerated; anything else on the line means it isn't a delimiter. */
+/**
+ * @brief Recognize the YAML front matter boundary used by Markdown.
+ *
+ * @details s contains len bytes.
+ * @return 1 for exactly three hyphens followed only by spaces or tabs;
+ * deciding whether it opens front matter depends on row position.
+ */
 static uint8_t syntaxIsFrontMatterFence(const char *s, int32_t len) {
     if (len < 3 || s[0] != '-' || s[1] != '-' || s[2] != '-') return 0;
     for (int32_t i = 3; i < len; i++)
@@ -776,14 +900,22 @@ static uint8_t syntaxIsFrontMatterFence(const char *s, int32_t len) {
     return 1;
 }
 
-/* One line of YAML front matter: "key: value" with the key as a
- * keyword and the value as a string, so the metadata block reads as
- * structured data rather than prose. Comments ("# ...") and list items
- * ("- item") get the treatment they'd have in any other language.
+/**
+ * @brief Color a shallow YAML metadata line inside front matter.
  *
- * Deliberately shallow -- no nested mappings, block scalars, anchors or
- * multi-line values. Front matter in practice is a flat list of scalar
- * keys, and a real YAML parser is far outside what this file does. */
+ * @details row->hl must already be allocated for len bytes. Highlights simple
+ * keys, values, comments and list markers; does not parse full YAML or update
+ * block state.
+ *
+ * @note One line of YAML front matter: "key: value" with the key as a keyword
+ * and the value as a string, so the metadata block reads as structured data
+ * rather than prose. Comments ("# ...") and list items ("- item") get the
+ * treatment they'd have in any other language.
+ *
+ * Deliberately shallow -- no nested mappings, block scalars, anchors or multi-
+ * line values. Front matter in practice is a flat list of scalar keys, and a
+ * real YAML parser is far outside what this file does.
+ */
 static void syntaxHighlightFrontMatterLine(erow *row, const char *s, int32_t len) {
     int32_t i = 0;
     while (i < len && (s[i] == ' ' || s[i] == '\t')) i++;
@@ -814,17 +946,25 @@ static void syntaxHighlightFrontMatterLine(erow *row, const char *s, int32_t len
     for (int32_t k = i; k < len; k++) row->hl[k] = HL_STRING;
 }
 
-/* An HTML tag embedded in Markdown, inline (<em>) or block (<div ...>).
- * Highlights the angle brackets and tag name as HL_KEYWORD, attribute
- * names likewise, and quoted attribute values as HL_STRING -- the same
- * classes the XML tokenizer uses, so a tag looks the same whether it
- * sits in an .html file or inside a document.
+/**
+ * @brief Try to color an HTML tag embedded in Markdown prose.
  *
- * Returns the index just past '>', or `i` unchanged when s[i] doesn't
- * begin a plausible tag. Being conservative matters here: prose is full
- * of '<' used as a less-than sign, and highlighting "a < b" as markup
- * would be worse than leaving real tags plain. So a tag must start with
- * a letter or '/' and actually reach a '>' on the same line. */
+ * @details row->hl must be ready and i is a valid byte offset in s.
+ * @return the exclusive end offset on a recognized same-line tag, or -1
+ * without consuming text.
+ *
+ * @note An HTML tag embedded in Markdown, inline (<em>) or block (<div ...>).
+ * Highlights the angle brackets and tag name as HL_KEYWORD, attribute names
+ * likewise, and quoted attribute values as HL_STRING -- the same classes the
+ * XML tokenizer uses, so a tag looks the same whether it sits in an .html file
+ * or inside a document.
+ *
+ * Returns the index just past '>', or `i` unchanged when s[i] doesn't begin a
+ * plausible tag. Being conservative matters here: prose is full of '<' used as
+ * a less-than sign, and highlighting "a < b" as markup would be worse than
+ * leaving real tags plain. So a tag must start with a letter or '/' and
+ * actually reach a '>' on the same line.
+ */
 static int32_t syntaxTryHighlightMarkdownTag(erow *row, const char *s, int32_t len, int32_t i) {
     if (s[i] != '<') return i;
 
@@ -873,22 +1013,30 @@ static int32_t syntaxTryHighlightMarkdownTag(erow *row, const char *s, int32_t l
     return close + 1;
 }
 
-/* A Markdown link "[text](url)" or image "![alt](url)": brackets,
- * parentheses and the leading '!' as HL_PREPROCESSOR markers, the
- * label as HL_KEYWORD, the destination as HL_STRING. Keeping the two
- * apart is what makes a row of badges readable -- the long URL stops
- * competing with the label for attention.
+/**
+ * @brief Try to color a Markdown link or image with distinct label and URL colors.
  *
- * Handles the nested image-inside-link form "[![alt](img)](url)" that
- * badge rows use: the label scan tracks bracket depth, so the inner
- * "![alt](img)" is found as a unit and highlighted by recursing into
- * it rather than terminating the outer label at the first ']'.
+ * @details row->hl must be ready and i is a valid byte offset in s.
+ * @return the exclusive end offset on success, or -1 when no complete link is
+ * recognized.
  *
- * Returns the index just past the closing ')', or `i` unchanged when
- * this isn't a well-formed link -- an unmatched "[link]" or a stray
- * "(text)" in prose is left as plain text, same conservative stance as
- * the HTML tag scanner. Reference-style links ("[text][ref]") and bare
- * autolinks are out of scope for this first pass. */
+ * @note A Markdown link "[text](url)" or image "![alt](url)": brackets,
+ * parentheses and the leading '!' as HL_PREPROCESSOR markers, the label as
+ * HL_KEYWORD, the destination as HL_STRING. Keeping the two apart is what
+ * makes a row of badges readable -- the long URL stops competing with the
+ * label for attention.
+ *
+ * Handles the nested image-inside-link form "[![alt](img)](url)" that badge
+ * rows use: the label scan tracks bracket depth, so the inner "![alt](img)" is
+ * found as a unit and highlighted by recursing into it rather than terminating
+ * the outer label at the first ']'.
+ *
+ * Returns the index just past the closing ')', or `i` unchanged when this
+ * isn't a well-formed link -- an unmatched "[link]" or a stray "(text)" in
+ * prose is left as plain text, same conservative stance as the HTML tag
+ * scanner. Reference-style links ("[text][ref]") and bare autolinks are out of
+ * scope for this first pass.
+ */
 static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t len, int32_t i) {
     int32_t start = i;
     int32_t bracket = i;
@@ -941,6 +1089,26 @@ static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t 
     return url_end + 1;
 }
 
+/* Only standalone dollar delimiters open a block: an unmatched currency
+ * symbol in prose must not turn the following document into mathematics. */
+static uint8_t syntaxMarkdownMathFence(const char *s, int32_t len) {
+    int32_t i = 0;
+    while (i < len && (s[i] == ' ' || s[i] == '\t')) i++;
+    int32_t start = i;
+    while (i < len && s[i] == '$') i++;
+    int32_t width = i - start;
+    while (i < len && (s[i] == ' ' || s[i] == '\t')) i++;
+    if (i != len) return 0;
+    return width == 1 ? 2 : (width == 2 ? 3 : 0);
+}
+
+/**
+ * @brief Color Markdown text while carrying multiline constructs between rows.
+ *
+ * @details row->render must be current; previous flags describe fences, math,
+ * front matter and emphasis. row_index is zero-based so front matter opens
+ * only at the document start.
+ */
 static void syntaxHighlightRowMarkdown(erow *row, uint8_t prev_in_fence, uint8_t prev_in_math,
     uint8_t prev_in_frontmatter, int32_t row_index, uint8_t prev_in_emphasis) {
     row->hl = teRealloc(row->hl, (size_t)row->rsize);
@@ -972,6 +1140,17 @@ static void syntaxHighlightRowMarkdown(erow *row, uint8_t prev_in_fence, uint8_t
         }
         syntaxHighlightFrontMatterLine(row, s, len);
         row->hl_open_frontmatter = 1;
+        return;
+    }
+
+    uint8_t dollar_fence = syntaxMarkdownMathFence(source, source_len);
+    if (prev_in_math >= 2 || (!prev_in_math && dollar_fence && !prev_in_fence)) {
+        memset(row->hl, HL_MATH, (size_t)len);
+        row->hl_open_math = prev_in_math
+            ? (dollar_fence == prev_in_math ? 0 : prev_in_math) : dollar_fence;
+        row->hl_open_comment = 0;
+        row->hl_open_frontmatter = 0;
+        row->hl_open_emphasis = 0;
         return;
     }
 
@@ -1186,32 +1365,25 @@ static void syntaxHighlightRowMarkdown(erow *row, uint8_t prev_in_fence, uint8_t
  * comments). No DOCTYPE/CDATA/entity special-casing -- first pass
  * covers the common case (tags, attributes, comments), same "narrow
  * first version" scope as the rest of this file. */
+/**
+ * @brief Recognize extensions handled by the markup tokenizer.
+ *
+ * @details ext is NUL-terminated without a dot.
+ * @return 1 for html, htm or xml, ignoring ASCII case.
+ */
 static uint8_t isXmlExtension(const char *ext) {
     return syntaxExtensionEquals(ext, "html") || syntaxExtensionEquals(ext, "htm") ||
         syntaxExtensionEquals(ext, "xml");
 }
 
-/* Template-engine extensions embedded in markup: Nunjucks/Jinja/Liquid
- * style "{{ expr }}", "{% tag %}" and "{# comment #}". Only consulted
- * for extensions that are templates rather than plain markup (see
- * isTemplateMarkupExtension()), so a literal "{{" in an ordinary .html
- * file keeps rendering as text.
+/**
+ * @brief Color an embedded template expression or comment at a byte position.
  *
- * Highlighted as a whole block -- delimiters as HL_PREPROCESSOR (the
- * "structural marker" role it already plays for C's "#" lines and
- * Markdown's headings) and the contents as HL_FUNCTION -- rather than
- * tokenized into keywords/strings/numbers. Two reasons: the expression
- * inside is a different language from the surrounding markup, and the
- * point of highlighting a template is seeing at a glance which parts
- * are dynamic, which a solid block conveys better than picking out
- * "for" and "in" within it. A comment block is HL_COMMENT throughout,
- * matching every other comment in the editor.
- *
- * Returns the index just past the closing delimiter, or `i` unchanged
- * when s[i] doesn't start a template block. Unterminated blocks run to
- * end of line: these are single-line constructs here, since carrying a
- * third multi-line state through the XML tokenizer isn't worth it for
- * a construct that is nearly always closed on the same line. */
+ * @details delimiters is NULL or a NULL-terminated list of 'open close' pairs.
+ * row->hl must be ready.
+ * @return the exclusive end offset, or i unchanged when no opener matches;
+ * unterminated blocks reach row end.
+ */
 static int32_t syntaxTryHighlightTemplateBlock(erow *row, const char *s, int32_t len,
     int32_t i, const char *const *delimiters) {
     if (!delimiters) return i;
@@ -1250,6 +1422,13 @@ static int32_t syntaxTryHighlightTemplateBlock(erow *row, const char *s, int32_t
     return i;
 }
 
+/**
+ * @brief Color markup, attributes, comments and optional template spans.
+ *
+ * @details row->render must be current; template_delimiters may be NULL.
+ * Updates row->hl and hl_open_comment; returns whether the row ends inside a
+ * comment.
+ */
 static uint8_t syntaxHighlightRowXml(erow *row, uint8_t prev_open_comment,
     const char *const *template_delimiters) {
     row->hl = teRealloc(row->hl, (size_t)row->rsize);
@@ -1359,10 +1538,22 @@ static uint8_t syntaxHighlightRowXml(erow *row, uint8_t prev_open_comment,
  * joining syntaxLangTable. Highlights slash-star block comments (CSS
  * has no line comments), string values, and property names (word
  * immediately followed by ':') as HL_KEYWORD. */
+/**
+ * @brief Recognize the extension handled by the CSS tokenizer.
+ *
+ * @details ext is NUL-terminated without a dot.
+ * @return 1 for css, ignoring ASCII case.
+ */
 static uint8_t isCssExtension(const char *ext) {
     return syntaxExtensionEquals(ext, "css");
 }
 
+/**
+ * @brief Color CSS tokens and carry block-comment state to the next row.
+ *
+ * @details row->render must be current. Rebuilds row->hl and updates
+ * hl_open_comment; returns the outgoing comment flag.
+ */
 static uint8_t syntaxHighlightRowCss(erow *row, uint8_t prev_open_comment) {
     row->hl = teRealloc(row->hl, (size_t)row->rsize);
     memset(row->hl, HL_NORMAL, (size_t)row->rsize);
@@ -1418,18 +1609,39 @@ static uint8_t syntaxHighlightRowCss(erow *row, uint8_t prev_open_comment) {
 
 /* ---- dispatch -------------------------------------------------------- */
 
+/**
+ * @brief Rebuild a row's syntax colors using its filename and incoming states.
+ *
+ * @details Call in row order with current render text. Updates row-owned
+ * highlights and outgoing comment, math, front matter and emphasis states;
+ * propagate changed states to following rows. Disabled or unsupported
+ * highlighting clears the highlight array.
+ * @param row Row owning current render text and the highlight array to
+ * rebuild.
+ * @param filename Filename used for language detection; may be NULL.
+ * @param syntax_highlight_enabled Whether syntax coloring is enabled.
+ * @param prev_open_comment Previous row's outgoing comment or Markdown fence
+ * state.
+ * @param prev_open_math Previous row's outgoing multiline math state.
+ * @param prev_open_frontmatter Previous row's outgoing YAML front matter
+ * state.
+ * @param row_index Zero-based logical row number.
+ * @param prev_open_emphasis Previous row's encoded emphasis state; this is not
+ * just a boolean.
+ */
 void syntaxHighlightRow(erow *row, const char *filename,
     uint8_t syntax_highlight_enabled, uint8_t prev_open_comment, uint8_t prev_open_math,
     uint8_t prev_open_frontmatter, int32_t row_index, uint8_t prev_open_emphasis) {
     if (!syntax_highlight_enabled || !filename || row->rsize <= 0) {
         free(row->hl);
         row->hl = NULL;
-        row->hl_open_comment = 0;
-        row->hl_open_math = 0;
+        row->hl_open_comment = syntax_highlight_enabled && filename && row->rsize <= 0
+            ? prev_open_comment : 0;
+        row->hl_open_math = syntax_highlight_enabled && filename && row->rsize <= 0
+            ? prev_open_math : 0;
         /* An empty line inside front matter must not end the block:
          * the state carries straight through rather than resetting,
-         * unlike the two flags above which no-op cleanly on a blank
-         * row. */
+         * as do fenced code and multiline math. */
         row->hl_open_frontmatter = prev_open_frontmatter;
         /* A blank line ends an emphasis span (unlike front matter,
          * which survives one) -- see hl_open_emphasis in tinyedit.h. */
@@ -1486,6 +1698,13 @@ void syntaxHighlightRow(erow *row, const char *filename,
     syntaxHighlightRowGeneric(row, lang, prev_open_comment, prev_open_math);
 }
 
+/**
+ * @brief Get the configured foreground sequence for a syntax class.
+ *
+ * @details s supplies live or draft settings.
+ * @return a borrowed ANSI literal, or NULL when no color should be emitted,
+ * including terminal-default normal text.
+ */
 const char *syntaxColorFor(enum syntaxHighlight hl, const struct editorSettings *s) {
     switch (hl) {
         /* HL_NORMAL defaults to COLOR_TERMINAL_DEFAULT, which returns
@@ -1511,6 +1730,13 @@ const char *syntaxColorFor(enum syntaxHighlight hl, const struct editorSettings 
     }
 }
 
+/**
+ * @brief Check whether compiled-in highlighting supports an extension.
+ *
+ * @details ext is NUL-terminated without a dot.
+ * @return 1 for a built-in table language or dedicated tokenizer, ignoring
+ * ASCII case; user definitions are excluded.
+ */
 uint8_t syntaxHasBuiltinExtension(const char *ext) {
     if (!ext || ext[0] == '\0') return 0;
 

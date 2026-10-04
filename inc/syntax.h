@@ -13,10 +13,10 @@
  * (Markdown: headings/emphasis/links, not keywords; XML/HTML: tags/
  * attributes, not statements) get their own dedicated tokenizer
  * function instead of being forced into this table -- see
- * syntaxHighlightRowMarkdown()/syntaxHighlightRowXml() once added.
+ * syntaxHighlightRowMarkdown()/syntaxHighlightRowXml().
  *
  * Dispatch: syntaxHighlightRow() looks up the language table entry (or
- * dedicated tokenizer) for E.filename's extension and calls the right
+ * dedicated tokenizer) for the supplied filename's extension and calls the right
  * one; callers in tinyedit.c don't need to know which case applies.
  *
  * Recomputed per row on edit (editorUpdateRow() calls
@@ -39,7 +39,7 @@
 #include "tinyedit.h"
 
 /* One value per byte of row->render (same length as row->rsize),
- * telling editorDrawRowSegment() which color to use for that column.
+ * telling editorDrawRowSegment() which color to use for that byte span.
  * HL_NORMAL means "no highlight, use the default text color" --
  * deliberately value 0 so a freshly calloc'd hl array (a row with
  * highlighting not yet computed, or a language with nothing to
@@ -124,67 +124,63 @@ struct syntaxLang {
     const char *const *template_delimiters;
 };
 
-/* Recomputes row->hl (allocating/resizing it to row->rsize if needed)
- * for one row, auto-detecting the language from E.filename's extension
- * (see syntaxLangForFilename() in syntax.c) and dispatching to the
- * matching tokenizer. Leaves row->hl NULL (freeing any previous one)
- * when the extension isn't recognized or S.syntax_highlight is off --
- * callers don't need to check first.
+/**
+ * @brief Rebuild a row's syntax colors using its filename and incoming states.
  *
- * `prev_open_comment`/`prev_open_math` are whether the previous row
- * ended inside an unclosed block comment / multi-line LaTeX "\[...\]"
- * math span (row->hl_open_comment/hl_open_math carried over) --
- * affects whether this row starts already inside one. On return,
- * row->hl_open_comment/hl_open_math are updated to whether THIS row
- * itself ends inside one (caller propagates those as
- * prev_open_comment/prev_open_math to the next row's call, and must
- * re-run this row's neighbors whose state changed as a result -- see
- * editorUpdateRow()/editorRehighlightFrom() in tinyedit.c). Two
- * separate in/out states (not just one combined flag) because a
- * language could in principle have both open at once. */
-/* `row_index` is the row's position in the buffer (0-based), needed
- * because YAML front matter is only front matter when its opening
- * "---" is the very first line -- a "---" further down a Markdown
- * document is a horizontal rule. `prev_open_frontmatter` carries
- * row->hl_open_frontmatter from the previous row, exactly like the two
- * arguments above. */
+ * @details Call in row order with current render text. Updates row-owned
+ * highlights and outgoing comment, math, front matter and emphasis states;
+ * propagate changed states to following rows. Disabled or unsupported
+ * highlighting clears the highlight array.
+ * @param row Row owning current render text and the highlight array to
+ * rebuild.
+ * @param filename Filename used for language detection; may be NULL.
+ * @param syntax_highlight_enabled Whether syntax coloring is enabled.
+ * @param prev_open_comment Previous row's outgoing comment or Markdown fence
+ * state.
+ * @param prev_open_math Previous row's outgoing multiline math state.
+ * @param prev_open_frontmatter Previous row's outgoing YAML front matter
+ * state.
+ * @param row_index Zero-based logical row number.
+ * @param prev_open_emphasis Previous row's encoded emphasis state; this is not
+ * just a boolean.
+ */
 void syntaxHighlightRow(erow *row, const char *filename,
     uint8_t syntax_highlight_enabled, uint8_t prev_open_comment, uint8_t prev_open_math,
     uint8_t prev_open_frontmatter, int32_t row_index, uint8_t prev_open_emphasis);
 
-/* ANSI color escape (from the shared palette, see ansiColorCode() in
- * settings.h/.c) for a given highlight class, reading
- * s->color_syntax_keyword/string/comment/number/preprocessor -- one
- * setting per class so each is independently configurable like every
- * other color in the editor, not a fixed scheme. `s` is the caller's
- * live settings struct (tinyedit.c's file-local `S`) passed in rather
- * than an extern global, since editorConfig/editorSettings are kept
- * static to tinyedit.c. */
+/**
+ * @brief Get the configured foreground sequence for a syntax class.
+ *
+ * @details s supplies live or draft settings.
+ * @return a borrowed ANSI literal, or NULL when no color should be emitted,
+ * including terminal-default normal text.
+ */
 const char *syntaxColorFor(enum syntaxHighlight hl, const struct editorSettings *s);
 
-/* Whether any user .conf under ~/.tinyedit/syntax claims `ext` (given
- * without the leading dot, e.g. "njk"), i.e. whether opening such a
- * file would actually get highlighted. Lets callers tell an extension
- * that is known (~/.tinyeditrc names it) but whose highlight config
- * file is missing from one that is simply unknown -- see
- * editorFiletypeLabel() in tinyedit.c, which warns about the former.
- * Built-in compiled-in languages are NOT considered here: this
- * answers specifically "is there a user config file for it". */
+/**
+ * @brief Check whether an installed user syntax definition claims an extension.
+ *
+ * @details ext has no leading dot.
+ * @return 1 when a user language is found; compiled-in languages are not
+ * considered.
+ */
 uint8_t syntaxUserLangHasExtension(const char *ext);
 
-/* Whether `ext` is handled by a compiled-in language or a dedicated
- * tokenizer (C, Python, Markdown, HTML/XML, CSS, ...). Such a language
- * needs no .conf file to highlight, so callers checking whether an
- * extension's highlighting is actually available must accept either
- * this or syntaxUserLangHasExtension(). */
+/**
+ * @brief Check whether compiled-in highlighting supports an extension.
+ *
+ * @details ext is NUL-terminated without a dot.
+ * @return 1 for a built-in table language or dedicated tokenizer, ignoring
+ * ASCII case; user definitions are excluded.
+ */
 uint8_t syntaxHasBuiltinExtension(const char *ext);
 
-/* Language name a user .conf declares for `ext` via its "filetype"
- * key, or NULL if no user config claims that extension or the one
- * that does omits the key. Used to resolve a status-bar name for an
- * extension that ~/.tinyeditrc and the built-in table don't know --
- * see filetypeForExtension() in settings.c. Returned pointer is owned
- * by this module; do not free. */
+/**
+ * @brief Get the label declared by a user syntax definition.
+ *
+ * @return a borrowed filetype string or NULL when the definition or its label
+ * is absent; do not free it.
+ */
 const char *syntaxUserFiletypeForExtension(const char *ext);
 
 #endif /* __TE_SYNTAX_H */

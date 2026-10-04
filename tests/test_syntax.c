@@ -301,6 +301,40 @@ int main(void) {
         failures++;
     }
 
+    initRow(&row, "  $$  ");
+    highlight(&row, "formula.md", 0, 0);
+    if (row.hl_open_math != 3) failures++;
+    freeRow(&row);
+    initRow(&row, "$$");
+    highlight(&row, "formula.md", 1, 0);
+    expectClass(&row, 0, HL_STRING, "dollars inside fenced code stay code");
+    if (row.hl_open_math != 0) failures++;
+    freeRow(&row);
+    initRow(&row, "cost $5");
+    highlight(&row, "formula.md", 0, 0);
+    expectClass(&row, 5, HL_NORMAL, "unmatched currency stays prose");
+    if (row.hl_open_math != 0) failures++;
+    freeRow(&row);
+
+    const char *math_rows[] = {"$$", "\\cos(x)*2-1 \\sin(c)", "", "$", "```", "$$", "prose",
+        "$", "\\cos(x)*2-1 \\sin(c)", "$", "prose",
+        "$\\cos(x)*2-1 \\sin(c)$", "$$\\cos(x)*2-1 \\sin(c)$$"};
+    const uint8_t math_states[] = {3, 3, 3, 3, 3, 0, 0, 2, 2, 0, 0, 0, 0};
+    uint8_t math_state = 0;
+    for (size_t k = 0; k < sizeof(math_rows) / sizeof(math_rows[0]); k++) {
+        initRow(&row, math_rows[k]);
+        highlight(&row, "formula.md", 0, math_state);
+        if (row.hl_open_math != math_states[k]) {
+            fprintf(stderr, "FAIL math state at row %zu\n", k);
+            failures++;
+        }
+        for (int32_t b = 0; b < row.rsize; b++)
+            expectClass(&row, b, k == 6 || k == 10 ? HL_NORMAL : HL_MATH,
+                "multiline and inline math screenshot regression");
+        math_state = row.hl_open_math;
+        freeRow(&row);
+    }
+
     if (failures) return 1;
     puts("syntax tests: ok");
     return 0;

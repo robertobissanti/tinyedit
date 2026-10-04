@@ -1,0 +1,697 @@
+/* Exercise the actual private core so regressions cannot test a parallel
+ * implementation instead of the functions reached by the application. */
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
+#include "fileio.h"
+#include "syntax.h"
+
+static int32_t syntax_calls;
+static void coreHighlightRow(erow *row, const char *filename, uint8_t enabled,
+    uint8_t comment, uint8_t math, uint8_t frontmatter, int32_t index, uint8_t emphasis);
+#define syntaxHighlightRow coreHighlightRow
+
+static enum fileSaveResult coreAtomicSave(const char *filename, const char *bytes, size_t len);
+int tinyeditApplicationMain(int argc, char **argv);
+#define fileioAtomicSave coreAtomicSave
+#define main tinyeditApplicationMain
+#include "../src/tinyedit.c"
+#undef main
+#undef fileioAtomicSave
+#undef syntaxHighlightRow
+
+static void coreHighlightRow(erow *row, const char *filename, uint8_t enabled,
+    uint8_t comment, uint8_t math, uint8_t frontmatter, int32_t index, uint8_t emphasis) {
+    syntax_calls++;
+    syntaxHighlightRow(row, filename, enabled, comment, math, frontmatter, index, emphasis);
+}
+
+static uint8_t force_uncertain_save;
+
+static enum fileSaveResult coreAtomicSave(const char *filename, const char *bytes, size_t len) {
+    enum fileSaveResult result = fileioAtomicSave(filename, bytes, len);
+    if (result == FILE_SAVE_DURABLE && force_uncertain_save) {
+        errno = EIO;
+        return FILE_SAVE_UNCERTAIN;
+    }
+    return result;
+}
+
+static void check(uint8_t condition, const char *message) {
+    if (!condition) {
+        fprintf(stderr, "FAIL %s\n", message);
+        exit(1);
+    }
+}
+
+static void testPromptGrowth(void) {
+    size_t capacity = 128, length = 0;
+    char *text = teMalloc(capacity);
+    text[0] = '\0';
+    for (size_t i = 0; i < 128; i++)
+        editorPromptAppend(&text, &capacity, &length, "a", 1);
+    check(length == 128 && capacity >= 129 && text[length] == '\0', "typed prompt boundary");
+    const char *paste = "é界😀";
+    for (size_t i = 0; i < 1000; i++)
+        editorPromptAppend(&text, &capacity, &length, paste, strlen(paste));
+    check(length == 128 + 1000 * strlen(paste) && capacity > length,
+        "long pasted prompt capacity");
+    for (size_t i = 0; i < 1000; i++)
+        check(memcmp(text + 128 + i * strlen(paste), paste, strlen(paste)) == 0,
+            "prompt retains UTF-8 bytes");
+    check(text[length] == '\0', "long prompt termination");
+    free(text);
+}
+
+static void testTopBar(void) {
+    char filename[1024];
+    memset(filename, 'a', sizeof(filename) - 1);
+    filename[sizeof(filename) - 1] = '\0';
+    S.show_top_bar = 1;
+    E.document.file.filename = filename;
+    E.view.screencols = 250;
+    struct abuf ab = ABUF_INIT;
+    editorDrawTopBar(&ab);
+    check(utf8StrWidth(ab.b, (size_t)ab.len) == 250, "long top bar bounded width");
+    abFree(&ab);
+
+    E.document.file.filename = "界e\xcc\x81😀";
+    for (int32_t cols = 1; cols <= 8; cols++) {
+        E.view.screencols = cols;
+        ab = (struct abuf)ABUF_INIT;
+        editorDrawTopBar(&ab);
+        check(utf8StrWidth(ab.b, (size_t)ab.len) == (size_t)cols,
+            "Unicode top bar width");
+        size_t pos = 0;
+        while (pos < (size_t)ab.len) {
+            struct utf8DecodeResult decoded = utf8DecodeChar(ab.b + pos, (size_t)ab.len - pos);
+            check(decoded.valid, "top bar does not split UTF-8");
+            pos += decoded.consumed;
+        }
+        abFree(&ab);
+    }
+    E.document.file.filename = NULL;
+    S.show_top_bar = 0;
+    E.view.screencols = 80;
+
+    char filetype[240];
+    memset(filetype, 't', sizeof(filetype) - 1);
+    filetype[sizeof(filetype) - 1] = '\0';
+    settingsSetFiletype("coretest", filetype);
+    E.document.file.filename = "file.coretest";
+    E.view.screencols = 300;
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawStatusBar(&ab);
+    abFree(&ab);
+    E.document.file.filename = NULL;
+}
+
+static void testEmptyPages(void) {
+    const int32_t keys[] = {PAGE_UP, PAGE_DOWN, SHIFT_PAGE_UP, SHIFT_PAGE_DOWN};
+    E.view.screenrows = 20;
+    E.view.screencols = 80;
+    S.show_menu = 0;
+    for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+        E.view.rowoff = 12;
+        E.view.coloff = 3;
+        E.document.selection.active = 1;
+        pending_key = keys[i];
+        editorProcessKeypress();
+        check(E.document.cursor.cx == 0 && E.document.cursor.cy == 0 &&
+            E.document.cursor.rx == 0 && !E.document.selection.active &&
+            E.view.rowoff == 0 && E.view.coloff == 0, "empty page navigation");
+    }
+}
+
+static void testUnicodeTabs(void) {
+    const char *prefixes[] = {"é", "界", "😀", "e\xcc\x81", "\xff"};
+    const int32_t widths[] = {1, 2, 2, 1, 1};
+    S.syntax_highlight = 0;
+    S.show_line_numbers = 0;
+    S.show_menu = 0;
+    S.show_top_bar = 0;
+    E.view.screencols = 80;
+    for (size_t sample = 0; sample < sizeof(prefixes) / sizeof(prefixes[0]); sample++) {
+        for (int32_t tab_stop = 2; tab_stop <= 8; tab_stop += 2) {
+            for (int32_t visible = 0; visible <= 1; visible++) {
+                S.tab_stop = tab_stop;
+                S.show_invisibles = visible;
+                const char *prefix = prefixes[sample];
+                size_t prefix_len = strlen(prefix);
+                char source[32];
+                memcpy(source, prefix, prefix_len);
+                memcpy(source + prefix_len, "\tX", 3);
+                editorInsertRow(0, source, prefix_len + 2);
+                erow *row = &E.document.buffer.rows[0];
+                int32_t fill = tab_stop - widths[sample] % tab_stop;
+                check(row->rsize == (int32_t)prefix_len + fill + 1,
+                    "tab padding uses screen columns");
+                check(bufferRowCxToRx(row, row->size, tab_stop) == widths[sample] + fill + 1,
+                    "tab cursor coordinate");
+                check(utf8StrWidth(row->render, (size_t)row->rsize) ==
+                    (size_t)(widths[sample] + fill + 1), "render and cursor agree");
+                check(memcmp(row->chars, source, prefix_len + 2) == 0,
+                    "layout preserves source bytes");
+
+                struct abuf ab = ABUF_INIT;
+                editorDrawRowSegment(&ab, 0, 0, row->rsize, 1,
+                    0, (int32_t)prefix_len, 0, (int32_t)prefix_len + 1,
+                    0, 0, 0, 0, 0);
+                char expected[64];
+                const char *color = ansiColorCode(S.color_selection);
+                size_t used = strlen(color);
+                memcpy(expected, color, used);
+                memcpy(expected + used, "\x1b[7m", 4); used += 4;
+                expected[used++] = visible ? '>' : ' ';
+                for (int32_t i = 1; i < fill; i++) expected[used++] = ' ';
+                memcpy(expected + used, "\x1b[mX", 4); used += 4;
+                uint8_t found = 0;
+                for (size_t i = 0; i + used <= (size_t)ab.len; i++)
+                    if (memcmp(ab.b + i, expected, used) == 0) found = 1;
+                check(found, "Unicode tab selection covers all padding");
+                abFree(&ab);
+
+                int32_t cy, cx;
+                editorMouseToCursor(widths[sample] + fill + 1, 1, &cy, &cx);
+                check(cy == 0 && cx == (int32_t)prefix_len + 1, "click after Unicode tab");
+                bufferClear(&E.document.buffer);
+            }
+        }
+    }
+    S.tab_stop = 4;
+    S.show_invisibles = 0;
+    const char source[] = "é\t\xcc\x81X";
+    editorInsertRow(0, source, sizeof(source) - 1);
+    erow *row = &E.document.buffer.rows[0];
+    const char expected[] = "é   \xcc\x81X";
+    check(row->rsize == (int32_t)(sizeof(expected) - 1) &&
+        memcmp(row->render, expected, sizeof(expected)) == 0,
+        "combining mark after tab is preserved");
+    check(bufferRowCxToRx(row, row->size, S.tab_stop) ==
+        (int32_t)utf8StrWidth(row->render, (size_t)row->rsize),
+        "combining mark after tab uses consistent coordinates");
+    bufferClear(&E.document.buffer);
+}
+
+static void testDocumentTransactions(void) {
+    char directory[] = "/tmp/tinyedit-transactions-XXXXXX";
+    check(mkdtemp(directory) != NULL, "create transaction fixtures");
+    check(setenv("HOME", directory, 1) == 0, "isolated backup home");
+    char old_path[1024], new_path[1024], uncertain_path[1024];
+    snprintf(old_path, sizeof(old_path), "%s/original.txt", directory);
+    snprintf(new_path, sizeof(new_path), "%s/new.txt", directory);
+    snprintf(uncertain_path, sizeof(uncertain_path), "%s/uncertain.txt", directory);
+    FILE *stream = fopen(old_path, "wb");
+    check(stream && fwrite("original\r", 1, 9, stream) == 9 && fclose(stream) == 0,
+        "create original document");
+    check(editorOpen(old_path), "open original");
+    editorPushUndo(EDIT_INSERT);
+    editorInsertChar('Z');
+    E.document.selection.active = 1;
+    E.document.selection.anchor_x = 0;
+    E.view.rowoff = 3;
+    E.search.search_match_y = 0;
+    check(backupWrite(old_path, "recovery", 8), "original recovery copy");
+    struct editorDocument before = E.document;
+    struct editorView before_view = E.view;
+    struct editorSearch before_search = E.search;
+    check(!editorOpen(directory) && errno == EISDIR, "open failure returned to caller");
+    check(memcmp(&before, &E.document, sizeof(before)) == 0 &&
+        memcmp(&before_view, &E.view, sizeof(before_view)) == 0 &&
+        memcmp(&before_search, &E.search, sizeof(before_search)) == 0 &&
+        backupExists(old_path), "failed open preserves complete active state and backup");
+    check(editorSaveToPath(directory) == FILE_SAVE_FAILED, "Save as failure");
+    check(memcmp(&before, &E.document, sizeof(before)) == 0 && backupExists(old_path),
+        "failed Save as preserves identity, text, history and backup");
+    check(backupWrite(new_path, "stale", 5), "new path recovery fixture");
+    check(editorSaveToPath(new_path) == FILE_SAVE_DURABLE &&
+        strcmp(E.document.file.filename, new_path) == 0 && !E.document.file.dirty &&
+        !backupExists(old_path) && !backupExists(new_path), "durable Save as commits name and recovery cleanup");
+    check(E.document.history.undo_count == before.history.undo_count,
+        "Save as preserves undo history");
+    check(backupWrite(new_path, "recovery", 8), "backup before uncertain replacement");
+    check(backupWrite(uncertain_path, "recovery", 8), "destination backup before uncertainty");
+    force_uncertain_save = 1;
+    check(editorSaveToPath(uncertain_path) == FILE_SAVE_UNCERTAIN &&
+        strcmp(E.document.file.filename, new_path) == 0 && E.document.file.dirty &&
+        E.document.file.save_uncertain && backupExists(new_path) && backupExists(uncertain_path),
+        "uncertain Save as keeps original identity and both recovery copies");
+    check(editorDiffersFromDisk(), "uncertain durability still requires save confirmation");
+    force_uncertain_save = 0;
+    check(editorSaveToPath(uncertain_path) == FILE_SAVE_DURABLE &&
+        !E.document.file.save_uncertain && !backupExists(new_path) && !backupExists(uncertain_path),
+        "retry commits and clears uncertainty");
+    editorResetDocument();
+    check(editorOpen(uncertain_path), "reload durable output");
+    check(E.document.buffer.rows[0].size == 10 &&
+        memcmp(E.document.buffer.rows[0].chars, "Zoriginal\r", 10) == 0,
+        "content CR preserved through real save and reopen");
+    editorLoadLines("abc\r", 4);
+    check(E.document.buffer.rows[0].size == 4 &&
+        E.document.buffer.rows[0].chars[3] == '\r' && !E.document.file.final_newline,
+        "recovery preserves unterminated content CR");
+    editorLoadLines("abc\r\r\n", 6);
+    check(E.document.buffer.rows[0].size == 4 &&
+        E.document.buffer.rows[0].chars[3] == '\r' &&
+        E.document.file.detected_line_ending == LINE_ENDING_CRLF,
+        "recovery removes only the real CRLF terminator");
+    editorResetDocument();
+    unlink(old_path); unlink(new_path); unlink(uncertain_path);
+    char path[1024];
+    snprintf(path, sizeof(path), "%s/.tinyedit/backup", directory); rmdir(path);
+    snprintf(path, sizeof(path), "%s/.tinyedit", directory); rmdir(path);
+    rmdir(directory);
+}
+
+static void runInputBurst(const char *bytes, size_t len, int32_t turns) {
+    int saved_stdin = dup(STDIN_FILENO);
+    int descriptors[2];
+    check(saved_stdin >= 0 && pipe(descriptors) == 0, "create input pipe");
+    check(write(descriptors[1], bytes, len) == (ssize_t)len, "queue complete input burst");
+    check(dup2(descriptors[0], STDIN_FILENO) >= 0, "attach queued input");
+    close(descriptors[0]);
+    for (int32_t turn = 0; turn < turns; turn++) {
+        check(terminalInputReady() || pending_key >= 0, "expected event remains queued");
+        editorProcessKeypress();
+    }
+    check(!terminalInputReady() && pending_key == -1, "burst consumed once without pending duplicates");
+    check(dup2(saved_stdin, STDIN_FILENO) >= 0, "restore input");
+    close(saved_stdin);
+    close(descriptors[1]);
+}
+
+static void testMouseDispatch(void) {
+    settingsDefaults(&S);
+    S.show_menu = S.show_top_bar = S.show_line_numbers = 0;
+    S.syntax_highlight = S.auto_close_pairs = S.mouse_enabled = 0;
+    E.view.screenrows = 20;
+    E.view.screencols = 80;
+    editorResetDocument();
+    editorInsertRow(0, "abcdef", 6);
+    E.document.file.final_newline = 0;
+    const char click_and_text[] = "\x1b[<0;2;1M\x1b[<0;2;1mXY";
+    runInputBurst(click_and_text, sizeof(click_and_text) - 1, 2);
+    check(E.document.buffer.rows[0].size == 8 &&
+        memcmp(E.document.buffer.rows[0].chars, "aXYbcdef", 8) == 0,
+        "text following mouse reports is neither lost nor duplicated");
+    S.auto_close_pairs = 1;
+    const char wheel_and_unicode[] = "\x1b[<65;1;1M\x1b[<65;1;1Mé";
+    runInputBurst(wheel_and_unicode, sizeof(wheel_and_unicode) - 1, 1);
+    check(E.document.buffer.rows[0].size == 10 &&
+        memcmp(E.document.buffer.rows[0].chars, "aXYébcdef", 10) == 0 && !E.view.free_scroll,
+        "Unicode after a wheel burst is decoded once and restores cursor-following");
+    S.auto_close_pairs = 0;
+    const char wheel_and_selection[] = "\x1b[<64;1;1M\x1b[1;2C";
+    runInputBurst(wheel_and_selection, sizeof(wheel_and_selection) - 1, 1);
+    check(E.document.selection.active && E.document.selection.anchor_x == 5 &&
+        E.document.cursor.cx == 6, "navigation with selection following mouse");
+    const char wheel_and_paste[] = "\x1b[<65;1;1M\x1b[200~界\x1b[201~";
+    runInputBurst(wheel_and_paste, sizeof(wheel_and_paste) - 1, 1);
+    check(E.document.buffer.rows[0].size == 12 &&
+        memcmp(E.document.buffer.rows[0].chars, "aXYé界cdef", 12) == 0,
+        "bracketed paste following mouse uses its own payload reader");
+    const char drag[] = "\x1b[<0;2;1M\x1b[<32;4;1M";
+    runInputBurst(drag, sizeof(drag) - 1, 1);
+    check(E.document.mouse.dragging && E.document.selection.active &&
+        E.document.mouse.press_anchor_x == 1 && E.document.cursor.cx == 3,
+        "coalesced drag selects from the click point");
+    const char release[] = "\x1b[<0;80;22m";
+    runInputBurst(release, sizeof(release) - 1, 1);
+    check(!E.document.mouse.dragging && E.document.selection.active,
+        "release outside text ends drag without discarding selection");
+    const char press[] = "\x1b[<0;4;1M";
+    runInputBurst(press, sizeof(press) - 1, 1);
+    check(E.document.mouse.dragging && E.document.mouse.press_anchor_x == 3,
+        "new drag starts at its own anchor");
+    editorResetDocument();
+    check(!E.document.mouse.dragging && !E.document.mouse.press_anchor_x &&
+        !E.document.mouse.press_anchor_y, "document reset releases gesture and anchors");
+    editorInsertRow(0, "new", 3);
+    const char stale_motion[] = "\x1b[<32;3;1M";
+    runInputBurst(stale_motion, sizeof(stale_motion) - 1, 1);
+    check(!E.document.selection.active && E.document.cursor.cx == 0,
+        "old drag motion cannot select in a replacement document");
+    runInputBurst(press, sizeof(press) - 1, 1);
+    editorLoadLines("restored", 8);
+    check(!E.document.mouse.dragging, "recovery replacement cancels old gesture");
+    runInputBurst(press, sizeof(press) - 1, 1);
+    const char key_and_motion[] = "K\x1b[<32;7;1M";
+    runInputBurst(key_and_motion, sizeof(key_and_motion) - 1, 2);
+    check(!E.document.selection.active && !E.document.mouse.dragging &&
+        E.document.cursor.cx == 4, "keyboard input ends an in-progress drag");
+    editorResetDocument();
+    for (int32_t i = 0; i < 300; i++) editorInsertRow(i, "row", 3);
+    char burst[2048];
+    size_t used = 0;
+    const char wheel[] = "\x1b[<65;1;1M";
+    for (int32_t i = 0; i <= MOUSE_BURST_LIMIT; i++) {
+        memcpy(burst + used, wheel, sizeof(wheel) - 1);
+        used += sizeof(wheel) - 1;
+    }
+    memcpy(burst + used, "X", 1); used++;
+    runInputBurst(burst, used, 2);
+    check(E.document.buffer.rows[0].size == 4 && E.document.buffer.rows[0].chars[0] == 'X',
+        "burst limit leaves subsequent reports and text queued in order");
+    editorResetDocument();
+    editorInsertRow(0, "menu", 4);
+    S.show_menu = 1;
+    menuInit(&M);
+    const char wheel_and_menu[] = "\x1b[<65;1;2M\x1b[<0;2;1M\x1b[<0;2;1m";
+    runInputBurst(wheel_and_menu, sizeof(wheel_and_menu) - 1, 1);
+    check(M.open && !E.document.mouse.dragging,
+        "later mouse reports in a burst still route through menu handling");
+    /* A literal escape is queued as a decoded key, avoiding a pipe EOF while
+     * the escape decoder probes for an optional continuation. */
+    pending_key = '\x1b';
+    editorProcessKeypress();
+    check(!M.open, "keyboard following a mouse-opened menu reaches menu routing");
+    S.show_menu = 0;
+    editorResetDocument();
+}
+
+static void testSharedAutoClose(void) {
+    settingsDefaults(&S);
+    S.show_menu = S.show_top_bar = S.show_line_numbers = S.syntax_highlight = 0;
+    S.auto_close_pairs = S.auto_close_single_quote = 1;
+    const char openers[] = "({[\"'$`";
+    const char closers[] = ")}]\"'$`";
+    for (int32_t i = 0; i < (int32_t)sizeof(openers) - 1; i++) {
+        editorResetDocument();
+        pending_key = openers[i];
+        editorProcessKeypress();
+        erow *row = &E.document.buffer.rows[0];
+        check(row->size == 2 && row->chars[0] == openers[i] &&
+            row->chars[1] == closers[i] && E.document.cursor.cx == 1,
+            "typing uses shared opener policy for every ASCII pair");
+        int32_t undo_count = E.document.history.undo_count;
+        pending_key = closers[i];
+        editorProcessKeypress();
+        row = &E.document.buffer.rows[0];
+        if (openers[i] == '`') {
+            check(row->size == 4 && E.document.cursor.cx == 2,
+                "backtick keeps its deliberate fresh-pair behavior");
+        } else {
+            check(row->size == 2 && E.document.cursor.cx == 2 &&
+                E.document.history.undo_count == undo_count,
+                "typing a matching closer skips without editing or adding undo");
+        }
+        editorResetDocument();
+        editorInsertRow(0, "abc", 3);
+        E.document.selection.active = 1;
+        E.document.selection.anchor_x = 0;
+        E.document.cursor.cx = 3;
+        editorDispatchKey(openers[i]);
+        row = &E.document.buffer.rows[0];
+        check(row->size == 5 && row->chars[0] == openers[i] &&
+            memcmp(row->chars + 1, "abc", 3) == 0 && row->chars[4] == closers[i] &&
+            !E.document.selection.active, "shared opener policy wraps selected text");
+    }
+    editorResetDocument();
+    editorInsertRow(0, "ab", 2);
+    editorInsertRow(1, "cd", 2);
+    E.document.selection.active = 1;
+    E.document.selection.anchor_x = 1;
+    E.document.cursor.cy = 1;
+    E.document.cursor.cx = 1;
+    editorDispatchKey('(');
+    check(strcmp(E.document.buffer.rows[0].chars, "a(b") == 0 &&
+        strcmp(E.document.buffer.rows[1].chars, "c)d") == 0,
+        "shared pair wraps a multiline selection without shifting endpoints");
+    for (int32_t enabled = 0; enabled <= 1; enabled++) {
+        for (int32_t apostrophe = 0; apostrophe <= 1; apostrophe++) {
+            S.auto_close_pairs = enabled;
+            S.auto_close_single_quote = apostrophe;
+            for (int32_t i = 0; i < (int32_t)sizeof(openers) - 1; i++) {
+                uint8_t allowed = enabled && (openers[i] != '\'' || apostrophe);
+                editorResetDocument();
+                editorDispatchKey(openers[i]);
+                erow *row = &E.document.buffer.rows[0];
+                check(row->size == (allowed ? 2 : 1), "typing honors both auto-close settings");
+                editorResetDocument();
+                editorInsertRow(0, "abc", 3);
+                E.document.selection.active = 1;
+                E.document.selection.anchor_x = 0;
+                E.document.cursor.cx = 3;
+                editorDispatchKey(openers[i]);
+                row = &E.document.buffer.rows[0];
+                check(row->size == (allowed ? 5 : 1) && row->chars[0] == openers[i],
+                    "disabled pair replaces selection rather than bypassing replacement");
+                if (!allowed) check(E.document.history.undo_count == 1,
+                    "selection replacement records one undo action");
+            }
+        }
+    }
+    S.auto_close_pairs = 1;
+    editorResetDocument();
+    editorDispatchKey('$'); editorDispatchKey('$'); editorDispatchKey('$');
+    check(strcmp(E.document.buffer.rows[0].chars, "$$$$") == 0 && E.document.cursor.cx == 2,
+        "display-math policy preserved after sharing the pair table");
+    editorResetDocument();
+    editorInsertRow(0, ")", 1);
+    editorDispatchKey(']');
+    check(strcmp(E.document.buffer.rows[0].chars, "])") == 0,
+        "asymmetric closer skips only the same byte at the cursor");
+    editorResetDocument();
+}
+
+static void testEditBatches(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    S.auto_close_pairs = 1;
+    editorDispatchKey('a');
+    int32_t before = E.document.history.undo_count;
+    syntax_calls = 0;
+    editorDispatchKey('(');
+    check(syntax_calls == 1, "auto-close rebuilds syntax once");
+    check(E.document.history.undo_count == before + 1, "pair owns explicit undo snapshot");
+    editorUndo();
+    check(strcmp(E.document.buffer.rows[0].chars, "a") == 0, "pair undo preserves preceding typing");
+    editorRedo();
+    check(strcmp(E.document.buffer.rows[0].chars, "a()") == 0 && E.document.cursor.cx == 2,
+        "pair redo restores text and cursor");
+
+    editorResetDocument();
+    editorInsertRow(0, "👩🏽‍💻", strlen("👩🏽‍💻"));
+    E.document.cursor.cx = E.document.buffer.rows[0].size;
+    syntax_calls = 0;
+    editorDelChar();
+    check(E.document.buffer.rows[0].size == 0 && syntax_calls == 1,
+        "grapheme deletion updates once");
+    editorUndo();
+    check(strcmp(E.document.buffer.rows[0].chars, "👩🏽‍💻") == 0, "grapheme undo retains UTF-8");
+
+    editorResetDocument();
+    E.document.file.filename = teStrdup("batch.md");
+    editorInsertRow(0, "prose", 5);
+    editorInsertRow(1, "x*2", 3);
+    editorInsertRow(2, "$$", 2);
+    editorInsertRow(3, "after", 5);
+    syntax_calls = 0;
+    editorBeginEdit();
+    bufferRowDeleteRange(&E.document.buffer.rows[0], 0, 5);
+    editorRowInsertString(&E.document.buffer.rows[0], 0, "$$", 2);
+    editorRowInsertString(&E.document.buffer.rows[1], 0, "y+", 2);
+    check(syntax_calls == 0, "batch defers syntax until source mutations finish");
+    editorEndEdit();
+    check(syntax_calls == 4 && E.document.buffer.rows[1].hl[0] == HL_MATH &&
+        E.document.buffer.rows[3].hl[0] == HL_NORMAL, "batch propagates final multiline state once");
+    editorResetDocument();
+    S.auto_indent = 1;
+    editorInsertRow(0, "    abc", 7);
+    E.document.cursor.cx = 7;
+    syntax_calls = 0;
+    editorInsertNewlineAutoIndent();
+    check(syntax_calls == 2 && strcmp(E.document.buffer.rows[1].chars, "    ") == 0,
+        "newline and indentation rebuild each changed row once");
+    editorUndo();
+    check(E.document.buffer.row_count == 1 && E.document.cursor.cx == 7,
+        "newline and indentation share undo");
+    editorResetDocument();
+    editorReplaceSelectionWithText(0, 0, 0, 0, 0, "a\nb\nc", 5);
+    E.document.selection.active = 1;
+    E.document.selection.anchor_y = 0;
+    E.document.selection.anchor_x = 0;
+    E.document.cursor.cy = 2;
+    E.document.cursor.cx = 1;
+    S.insert_spaces_for_tab = 1;
+    syntax_calls = 0;
+    editorIndentSelection(0);
+    check(syntax_calls == 3 && E.document.buffer.rows[0].chars[0] == ' ',
+        "block indentation highlights each changed row once");
+    editorUndo();
+    check(strcmp(E.document.buffer.rows[0].chars, "a") == 0 &&
+        strcmp(E.document.buffer.rows[2].chars, "c") == 0, "block indentation is one undo action");
+    syntax_calls = 0;
+    editorUpdateAllRows();
+    check(syntax_calls == 3, "global cache refresh tokenizes each row once");
+    syntax_calls = 0;
+    editorReplaceSelectionWithText(1, 0, 0, 2, 1, "x\ny", 3);
+    check(syntax_calls == 2 && E.document.buffer.row_count == 2 &&
+        strcmp(E.document.buffer.rows[0].render, "x") == 0 &&
+        strcmp(E.document.buffer.rows[1].render, "y") == 0,
+        "multiline replacement updates final rows once after splicing");
+    editorUndo();
+    check(E.document.buffer.row_count == 3 && strcmp(E.document.buffer.rows[1].chars, "b") == 0,
+        "multiline replacement undoes as one action");
+    check(edit_batch.depth == 0, "all editing scopes close");
+    editorResetDocument();
+}
+
+static void testSearchSession(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    editorInsertRow(0, "111 é 22", strlen("111 é 22"));
+    editorInsertRow(1, "333", 3);
+    E.search.saved_cy = 0;
+    E.search.saved_cx = 0;
+    E.search.saved_rowoff = 7;
+    E.search.saved_coloff = 3;
+    E.search.direction = 1;
+    E.search.regex_mode = 1;
+    editorClearSearchNavigation();
+    char pattern[] = "[0-9]+";
+    struct searchMatch result;
+    searchQueryPrepare(&E.search.query, pattern, 1);
+    E.document.cursor.cy = 1;
+    E.document.cursor.cx = 2;
+    E.view.rowoff = 7;
+    E.view.coloff = 3;
+    check(searchFind(&E.search.query, &E.document.buffer, 0, 0, 1, 0, &result) &&
+        E.document.cursor.cy == 1 && E.document.cursor.cx == 2 && E.view.rowoff == 7,
+        "pure search cannot move active cursor or view");
+    editorFindCallback(pattern, 'x');
+    check(E.document.cursor.cy == 0 && E.document.cursor.cx == 0 && E.search.search_match_len == 3,
+        "session applies complete regex match");
+    editorFindCallback(pattern, ARROW_DOWN);
+    check(E.document.cursor.cx == 7 && E.search.search_match_len == 2, "forward skips entire regex match");
+    editorFindCallback(pattern, ARROW_DOWN);
+    check(E.document.cursor.cy == 1 && E.document.cursor.cx == 0, "forward advances to next row");
+    editorFindCallback(pattern, ARROW_UP);
+    check(E.document.cursor.cy == 0 && E.document.cursor.cx == 7, "reverse excludes column-zero match");
+    editorFindCallback(pattern, '\x1b');
+    check(E.document.cursor.cy == 0 && E.document.cursor.cx == 0 && E.view.rowoff == 7 &&
+        E.view.coloff == 3 && E.search.last_cy == -1 && E.search.search_match_y == -1,
+        "cancel restores cursor/view and clears navigation state");
+
+    E.search.regex_mode = 1;
+    char multiline[] = "22\\n333";
+    editorFindCallback(multiline, 'x');
+    check(E.search.search_match_y == 0 && E.search.search_match_x == 7 &&
+        E.search.search_match_end_y == 1 && E.search.query.text != NULL, "session applies multiline result");
+    editorPushUndo(EDIT_OTHER);
+    E.document.cursor.cx = 9;
+    editorInsertCharRaw('!');
+    check(E.search.query.text == NULL && E.search.query.compiled,
+        "core source mutation invalidates text cache without freeing regex");
+    check(!editorFindFrom(multiline, 0, 0, 1, 0), "changed document cannot reuse stale match text");
+    editorUndo();
+    check(editorFindFrom(multiline, 0, 0, 1, 0), "undo invalidates search text and restores matches");
+    editorRedo();
+    check(!editorFindFrom(multiline, 0, 0, 1, 0), "redo invalidates search text again");
+    editorResetDocument();
+    check(E.search.query.pattern == NULL && E.search.last_cy == -1,
+        "new document releases compiled query and previous navigation");
+    char empty[] = "";
+    editorFindCallback(empty, ARROW_UP);
+    check(E.search.search_match_y == -1, "empty document navigation is safe");
+    editorResetDocument();
+}
+
+static void drawWrappedReference(struct abuf *ab) {
+    int32_t cols = editorSoftWrapCols();
+    int32_t total = editorTotalVideoRows(cols);
+    for (int32_t y = 0; y < E.view.screenrows; y++) {
+        int32_t vy = E.view.rowoff + y;
+        int32_t row_index = E.document.buffer.row_count, segment = 0;
+        if (vy < total) editorFileRowAtVideoRow(vy, cols, &row_index, &segment);
+        editorDrawGutter(ab, editorGutterWidth(), row_index, segment > 0);
+        if (vy >= total) abAppend(ab, "~", 1);
+        else {
+            erow *row = &E.document.buffer.rows[row_index];
+            int32_t segments = editorRowSegments(row, cols);
+            editorDrawRowSegment(ab, row_index, row->seg_start[segment],
+                editorSegVisibleEnd(row, segments, row->seg_start, segment),
+                0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+        }
+        abAppend(ab, "\x1b[K\r\n", 5);
+    }
+}
+
+static void testRedrawCaches(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    S.show_line_numbers = 1;
+    E.view.screencols = 30;
+    E.view.screenrows = 7;
+    const char *lines[] = {"aé界👩🏽‍💻 abcdef", "", "abc\tdef", "end"};
+    for (int32_t i = 0; i < 4; i++) editorInsertRow(i, lines[i], strlen(lines[i]));
+    const int32_t widths[] = {1, 4, 11};
+    for (size_t k = 0; k < sizeof(widths) / sizeof(widths[0]); k++) {
+        S.soft_wrap = widths[k];
+        int32_t total = editorTotalVideoRows(editorSoftWrapCols());
+        for (int32_t offset = 0; offset <= total + 1; offset++) {
+            E.view.rowoff = offset;
+            struct abuf actual = ABUF_INIT, expected = ABUF_INIT;
+            editorDrawRows(&actual);
+            drawWrappedReference(&expected);
+            check(actual.len == expected.len && memcmp(actual.b, expected.b, (size_t)actual.len) == 0,
+                "sequential wrapped drawing matches reference at every scroll offset");
+            abFree(&actual); abFree(&expected);
+        }
+    }
+    int32_t expected_count = 3;
+    for (int32_t i = 0; i < 4; i++) {
+        size_t position = 0;
+        while (position < strlen(lines[i])) {
+            position += utf8NextCharLen(lines[i], position, strlen(lines[i]));
+            expected_count++;
+        }
+    }
+    check(editorCountChars() == expected_count && E.document.display_cache.chars_valid,
+        "cached count includes graphemes and logical boundaries");
+    editorPushUndo(EDIT_OTHER);
+    editorRowInsertString(&E.document.buffer.rows[0], 0, "é", strlen("é"));
+    check(!E.document.display_cache.chars_valid && editorCountChars() == expected_count + 1,
+        "source edit invalidates character count");
+    editorUndo();
+    check(editorCountChars() == expected_count, "undo rebuilds character count");
+    editorResetDocument();
+    check(editorCountChars() == 0, "empty document count cache");
+    editorInsertRow(0, "(abc)", 5);
+    int32_t ay, ax, my, mx;
+    check(editorMatchingPairAtCursor(&ay, &ax, &my, &mx) && mx == 4,
+        "matching-pair cache stores source coordinates");
+    editorRowInsertString(&E.document.buffer.rows[0], 1, "é", strlen("é"));
+    check(editorMatchingPairAtCursor(&ay, &ax, &my, &mx) && mx == 6,
+        "pair cache invalidates after text mutation");
+    E.document.cursor.cx = 4;
+    check(!editorMatchingPairAtCursor(&ay, &ax, &my, &mx), "moving cursor invalidates pair result");
+    editorResetDocument();
+
+    struct abuf frame = ABUF_INIT;
+    abAppend(&frame, "a", 1);
+    char *storage = frame.b;
+    for (int32_t i = 0; i < 100; i++) abAppend(&frame, "é", 2);
+    check(frame.b == storage && frame.len == 201 && frame.capacity >= 201,
+        "small frame appends reuse allocation");
+    abFree(&frame);
+}
+
+int main(void) {
+    settingsDefaults(&S);
+    E.search.search_match_y = -1;
+    E.search.search_match_end_y = -1;
+    testPromptGrowth();
+    testTopBar();
+    testEmptyPages();
+    testUnicodeTabs();
+    testDocumentTransactions();
+    testMouseDispatch();
+    testSharedAutoClose();
+    testEditBatches();
+    testSearchSession();
+    testRedrawCaches();
+    puts("core tests: ok");
+    return 0;
+}

@@ -42,6 +42,21 @@ int main(void) {
     if (file_row != 1 || segment != 0) fail("video row inverse");
 
     bufferClear(&buffer);
+    bufferInsertRow(&buffer, 0, "界😀A", strlen("界😀A"));
+    setRender(&buffer.rows[0], "界😀A");
+    if (renderRowSegments(&buffer.rows[0], 1) != 3) fail("wide glyph wrap count");
+    if (buffer.rows[0].seg_start[1] != 3 || buffer.rows[0].seg_start[2] != 7 ||
+        buffer.rows[0].seg_start_rx[1] != 2 || buffer.rows[0].seg_start_rx[2] != 4)
+        fail("wide glyph segment boundaries");
+    if (renderRowSegments(&buffer.rows[0], 2) != 3) fail("wide glyph resize");
+    bufferClear(&buffer);
+
+    bufferInsertRow(&buffer, 0, "e\xcc\x81界\xff", strlen("e\xcc\x81界\xff"));
+    setRender(&buffer.rows[0], "e\xcc\x81界\xff");
+    if (renderRowSegments(&buffer.rows[0], 1) != 3) fail("combining and malformed wrap");
+    if (buffer.rows[0].seg_start[1] != 3 || buffer.rows[0].seg_start[2] != 6)
+        fail("grapheme not split by narrow wrap");
+    bufferClear(&buffer);
     puts("render tests: ok");
     return 0;
 }

@@ -698,10 +698,24 @@ and asks whether to restore the changes before proceeding.
 
 - `src/`, `inc/`: C source files and corresponding public/internal headers.
   `Makefile` supplies `-Iinc` to every compilation.
-- `src/tinyedit.c`, `inc/tinyedit.h`: Core editor implementation, including raw
-  terminal mode, row buffer, rendering, input handling, and the settings panel.
+- `src/tinyedit.c`, `inc/tinyedit.h`: Application flow, editing commands,
+  session/view orchestration, frame drawing and the settings panel.
   Shared types and macros live in the header, while implementation logic stays
   in the `.c` file.
+- `src/alloc.c`, `inc/alloc.h`: Checked application allocations. Failure exits
+  through the registered terminal cleanup handlers.
+- `src/buffer.c`, `inc/buffer.h`: Dynamic logical rows and source-text mutations.
+- `src/history.c`, `inc/history.h`: Complete source snapshots for undo/redo,
+  including cursor restoration and edit coalescing.
+- `src/render.c`, `inc/render.h`: UTF-8 layout, wrapping caches and conversions
+  between source positions and visual rows/columns.
+- `src/terminal.c`, `inc/terminal.h`: Raw mode, terminal feature setup/cleanup,
+  key decoding and terminal I/O.
+- `src/search.c`, `inc/search.h`: Literal and POSIX regex matching, with
+  reusable compiled queries and cached text for multiline search. Returns
+  source-byte coordinates; the editor owns session navigation and applies
+  results to its cursor and highlight. Text caches are invalidated after edits,
+  undo/redo and document replacement.
 - `src/clipboard.c`, `inc/clipboard.h`: System clipboard integration (macOS
   `pbcopy`/`pbpaste`, Linux `wl-clipboard` or `xclip`), falling back
   to an internal buffer when no system backend is available. Wired to
@@ -723,6 +737,16 @@ and asks whether to restore the changes before proceeding.
   route its language through the markup tokenizer (`base_tokenizer =
   xml`) and declare embedded `template_delimiters`, which is how the
   HTML-template languages are supported without compiled-in code.
+- `src/editor_state.c`, `inc/editor_state.h`: Selection range normalization
+  and the shared ASCII auto-close pair policy used by typing and closer skipping.
+- `src/fileio.c`, `inc/fileio.h`: Staged document loading, exact LF/CRLF
+  terminator handling, atomic file replacement and directory synchronization.
+  Open and Save as expand a leading `~` or `~/` using `HOME`, keeping the
+  expanded document identity for future saves and recovery. Other filename
+  characters stay literal. A failed load keeps the current document; Save as commits its name only
+  after successful file and directory synchronization. If replacement succeeds
+  but directory synchronization fails, the editor retains its old name, dirty
+  state and recovery copies and reports that durability is unconfirmed.
 - `src/backup.c`, `inc/backup.h`: Periodic crash-recovery backups, saved to
   `~/.tinyedit/backup/` (never next to the original file). Wired to
   the editor via the `backup_interval` setting.
@@ -735,6 +759,39 @@ and asks whether to restore the changes before proceeding.
   (antirez), kept for historical reference from the first
   line-editor prototype. Not compiled into the current binary (except
   for the UTF-8 logic, ported separately into `utf8.c`).
+
+### Function documentation
+
+Functions use Doxygen-style comments in English, including private helpers and
+historical linenoise code. `@brief` explains the purpose in one sentence;
+`@details` describes how to call the function, its side effects and ownership;
+`@param` clarifies arguments whose units or roles need explanation; `@return`
+describes results and failure values; `@note` preserves useful design rationale.
+Only include tags that add information, rather than restating the signature.
+
+Performance measurements and their limits are in
+[`reports/performance-2026-10-04.md`](reports/performance-2026-10-04.md).
+`make benchmark` measures CPU work without terminal I/O. Wrapped drawing locates
+its first visible segment once, then walks the viewport; character counts and
+matching pairs reuse document caches, invalidated after source changes and
+history restoration. Pair results also depend on the cursor position. Output
+buffers grow geometrically. Undo still copies full source snapshots: its memory
+cost scales with file size and configured history depth, not just changed text.
+
+Application allocations use `teMalloc`/`teRealloc`/`teStrdup` and terminate with
+terminal cleanup on failure. POSIX APIs that allocate internally (`getline`,
+`realpath`) have a separate recoverable error contract: load/save/backup report
+failure and preserve the active document. Only `ENOENT` permits the path fallback
+for a target that has not been created yet.
+
+Public contracts are available in `inc/` and beside their definitions in `src/`;
+private helpers are documented at their definitions. State explicitly whether
+positions are source-byte offsets, render-byte offsets, display columns or
+visual rows, and whether range ends are exclusive. For returned allocations,
+explain who releases them and whether they are NUL-terminated. Editing helpers
+also say who records undo and refreshes derived row data. Keep comments aligned
+with behavior when changing a function; Doxygen is optional and is not a build
+dependency.
 
 ## Project status
 

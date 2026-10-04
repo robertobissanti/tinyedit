@@ -15,7 +15,13 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Expected length for a valid leading byte; invalid leads count as one. */
+/**
+ * @brief Estimate a UTF-8 sequence length from its leading byte.
+ *
+ * @details This does not validate successor bytes; use utf8DecodeChar() for
+ * that.
+ * @return 1-4; invalid leads are treated as one byte.
+ */
 int32_t utf8ByteLen(uint8_t c);
 
 /* One decoding step. Callers must check valid before using codepoint;
@@ -26,37 +32,58 @@ struct utf8DecodeResult {
     uint8_t valid;
 };
 
-/* Decode at most available bytes. Valid input returns its scalar value and
- * length. Empty input consumes zero bytes; malformed or truncated input
- * returns valid=0 and consumes one byte. The input bytes are never changed. */
+/**
+ * @brief Decode one Unicode scalar without reading beyond the available bytes.
+ *
+ * @details s supplies available bytes.
+ * @param s Input bytes; no NUL terminator is required.
+ * @param available Number of readable bytes starting at s.
+ * @return valid plus the codepoint and consumed count; an invalid prefix
+ * consumes one byte, while empty input consumes zero.
+ */
 struct utf8DecodeResult utf8DecodeChar(const char *s, size_t available);
 
-/* Byte length of the grapheme cluster ending at byte offset `pos` in
- * `buf` (i.e. the cluster the cursor would delete/skip moving left).
- * A grapheme cluster is a base character plus any following variation
- * selectors, skin-tone modifiers, ZWJ-joined characters, combining
- * marks, or a paired regional indicator (flag emoji). */
+/**
+ * @brief Measure the grapheme immediately before a cursor position.
+ *
+ * @details pos is a byte boundary within buf.
+ * @return its byte length, or zero at the start; malformed bytes remain
+ * independent editing units.
+ */
 size_t utf8PrevCharLen(const char *buf, size_t pos);
 
-/* Byte length of the grapheme cluster starting at byte offset `pos` in
- * `buf` (bounded by `len`), i.e. the cluster the cursor would skip
- * moving right. */
+/**
+ * @brief Measure the grapheme starting at a byte position.
+ *
+ * @details buf contains len bytes and pos is a character boundary.
+ * @return a byte step, zero at or beyond the end, or one for malformed input;
+ * never reads past len.
+ */
 size_t utf8NextCharLen(const char *buf, size_t pos, size_t len);
 
-/* Terminal display width (in columns) of a single Unicode codepoint:
- * 0 for control/zero-width/combining characters, 2 for wide characters
- * (CJK, fullwidth forms, most emoji), 1 otherwise. Not a full wcwidth()
- * implementation, but a practical heuristic. */
+/**
+ * @brief Estimate the screen columns occupied by a Unicode code point.
+ *
+ * @return 0, 1 or 2 using the supported control, combining and wide-character
+ * ranges; terminal font behavior can differ from this estimate.
+ */
 int32_t utf8CharWidth(uint32_t cp);
 
-/* Terminal display width of a UTF-8 string of `len` bytes, honoring
- * grapheme clusters (a character right after a ZWJ contributes 0
- * width, since it's joined to the previous glyph) and skipping ANSI
- * CSI escape sequences (treated as zero width). */
+/**
+ * @brief Measure text in display columns while ignoring ANSI CSI escapes.
+ *
+ * @details s contains len bytes.
+ * @return columns rather than bytes; malformed bytes occupy one cell and
+ * supported joined emoji avoid repeated width counts.
+ */
 size_t utf8StrWidth(const char *s, size_t len);
 
-/* Display width of a single UTF-8 character at `s` (of byte length
- * `len`, e.g. from utf8NextCharLen). */
+/**
+ * @brief Measure the base width at the start of a grapheme span.
+ *
+ * @details s contains len bytes, normally supplied by utf8NextCharLen().
+ * @return zero for an empty span and one for a malformed first byte.
+ */
 int32_t utf8SingleCharWidth(const char *s, size_t len);
 
 #endif /* __TE_UTF8_H */

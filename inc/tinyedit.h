@@ -18,18 +18,20 @@
 #ifndef __TINYEDIT_H
 #define __TINYEDIT_H
 
+#include "settings.h"
+#include "search.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <time.h>
 
-#include "settings.h"
-
 /* ---- config -------------------------------------------------------- */
 
-#define TE_VERSION "0.3.5"
-#define ABUF_INIT {NULL, 0}
+#define TE_VERSION "0.3.6"
+#define ABUF_INIT {NULL, 0, 0}
 #define INVISIBLE_SPACE_GLYPH '.'
 #define INVISIBLE_TAB_GLYPH '>'
+#define MOUSE_BURST_LIMIT 64
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 
@@ -106,6 +108,7 @@ enum undoEditType { EDIT_NONE, EDIT_INSERT, EDIT_DELETE, EDIT_OTHER };
 typedef struct erow {
     int32_t size;
     int32_t rsize;  /* size of the rendered line (tabs expanded) */
+    int32_t grapheme_count;
     char *chars;
     char *render;
     /* One enum syntaxHighlight byte per render[] column, recomputed by
@@ -115,18 +118,14 @@ typedef struct erow {
      * default text color in that case, it does not require hl to be
      * populated. */
     uint8_t *hl;
+    uint8_t render_dirty;
     /* Whether this row ends inside an unclosed block comment, carried
      * into the next row's syntaxHighlightRow() call as its
      * prev_open_comment argument -- see syntax.h. */
     uint8_t hl_open_comment;
-    /* Whether this row ends inside an unclosed multi-line LaTeX
-     * "\[...\]" display-math span (see syntaxTryHighlightMathMultiline()
-     * in syntax.c) -- a separate bit from hl_open_comment rather than
-     * reusing it, since a language could in principle have both a block
-     * comment AND math_mode active at once (LaTeX itself doesn't, but
-     * nothing enforces that the two states can't coexist for some
-     * future language), and conflating them would silently misrender
-     * whichever one lost the race. */
+    /* Multiline math state: 0 = prose, 1 = \[...\] display math,
+     * 2 = standalone $ block, 3 = standalone $$ block (Markdown).
+     * Separate from comment/fence state so their delimiters cannot collide. */
     uint8_t hl_open_math;
     /* Whether this row ends inside a YAML front matter block -- the
      * "---" delimited metadata header some Markdown dialects (Jekyll,
@@ -188,11 +187,19 @@ struct autoCloseMultiByte {
     int32_t close_len;
 };
 
+/* Nested command scopes defer caches until their source mutations finish. */
+struct editorEditBatch {
+    int32_t depth;
+    int32_t first_row;
+    uint8_t undo_recorded;
+};
+
 /* Generic growable byte buffer used to batch a full screen redraw into
  * one write(), instead of issuing many small writes per frame. */
 struct abuf {
     char *b;
     int32_t len;
+    size_t capacity;
 };
 
 struct editorBuffer {
@@ -225,14 +232,29 @@ struct editorFileState {
     uint8_t line_endings_mixed;
     uint8_t final_newline; /* Keep an unterminated last row unterminated on save. */
     uint8_t dirty;
+    uint8_t save_uncertain; /* Replacement happened but directory sync failed. */
     char *filename;
     time_t last_backup_time;
 };
 
+struct editorMouseState {
+    uint8_t dragging;
+    int32_t press_anchor_x, press_anchor_y; /* Source-byte offset and logical row. */
+};
+
+struct editorDisplayCache {
+    uint8_t chars_valid, pair_valid, has_pair;
+    int32_t chars;
+    int32_t cursor_y, cursor_x;
+    int32_t anchor_y, anchor_x, match_y, match_x;
+};
+
 struct editorDocument {
+    struct editorDisplayCache display_cache;
     struct editorBuffer buffer;
     struct editorCursor cursor;
     struct editorSelection selection;
+    struct editorMouseState mouse;
     struct editorHistory history;
     struct editorFileState file;
 };
@@ -277,6 +299,8 @@ struct editorUi {
 };
 
 struct editorSearch {
+    struct searchQuery query;
+    int32_t last_cy, last_cx, last_end_y, last_end_x, last_len;
     int32_t search_match_y, search_match_x, search_match_len; /* match_y == -1: no match */
     int32_t search_match_end_y, search_match_end_x;
     uint8_t switch_to_replace;

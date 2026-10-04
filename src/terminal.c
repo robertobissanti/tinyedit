@@ -56,16 +56,34 @@ static uint8_t terminalReloadGhosttyConfiguration(void);
 static const char paste_end_marker[] = "\x1b[201~";
 
 
+/**
+ * @brief Report a fatal system error and exit through terminal cleanup.
+ *
+ * @details s is the operation label passed to perror(). Does not return; exit
+ * handlers restore modes already enabled.
+ */
 void terminalDie(const char *s) {
     perror(s);
     exit(1);
 }
 
+/**
+ * @brief Restore the termios state saved when raw mode was enabled.
+ *
+ * @details Use only after terminalEnableRawMode(); registered as its exit
+ * handler. A restoration failure is fatal.
+ */
 void terminalDisableRawMode(void) {
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1)
         terminalDie("tcsetattr");
 }
 
+/**
+ * @brief Leave the alternate screen and restore cursor appearance.
+ *
+ * @details Does nothing if the alternate screen is inactive. Also resets
+ * attributes so the shell inherits a normal display.
+ */
 void terminalRestoreVisualState(void) {
     if (!alternate_screen_active) return;
     static const char restore[] = "\x1b[0m\x1b[?25h\x1b[0 q\x1b[?1049l";
@@ -73,6 +91,12 @@ void terminalRestoreVisualState(void) {
     alternate_screen_active = 0;
 }
 
+/**
+ * @brief Switch to a separate editor screen and register its cleanup.
+ *
+ * @details Safe to call again while active. The main screen and shell
+ * scrollback return on normal exit.
+ */
 void terminalEnterAlternateScreen(void) {
     if (alternate_screen_active) return;
     atexit(terminalRestoreVisualState);
@@ -80,6 +104,12 @@ void terminalEnterAlternateScreen(void) {
     alternate_screen_active = 1;
 }
 
+/**
+ * @brief Configure byte-oriented input without echo or line buffering.
+ *
+ * @details Call before reading editor events. Saves the original termios state
+ * and registers cleanup; setup failure exits.
+ */
 void terminalEnableRawMode(void) {
     if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) terminalDie("tcgetattr");
     atexit(terminalDisableRawMode);
@@ -95,42 +125,68 @@ void terminalEnableRawMode(void) {
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) terminalDie("tcsetattr");
 }
 
-/* Bracketed paste mode (\x1b[?2004h/l, a widely-supported terminal
- * extension, not a POSIX/termios setting -- toggled via an escape
- * sequence written to the terminal, unlike raw mode above which is a
- * termios attribute): once enabled, the terminal wraps any pasted text
- * in ESC[200~ ... ESC[201~ markers instead of just feeding it to stdin
- * as if it had been typed. editorReadKey() watches for the start
- * marker (see PASTE_START_KEY) and editorProcessKeypress() then reads
- * the whole block in one shot via terminalReadPastedText() -- turning an
- * O(paste length) sequence of individual keystroke-processing calls
- * (slow: one undo-snapshot/full redraw per character) each of which
- * ALSO ran through auto-close-pair logic as if the user had typed
- * every character (wrong: spurious closing brackets/quotes left behind
- * for every '(', '\'', '`', etc. in the pasted text) into a single
- * bulk insert. Disabled on exit like raw mode -- leaving it on would
- * change how paste behaves in whatever the user's shell/next program
- * is after tinyedit quits. */
+/**
+ * @brief Stop terminal paste markers from leaking into the shell.
+ *
+ * @details Writes the disable sequence; used as the exit handler after
+ * enabling bracketed paste.
+ *
+ * @note Bracketed paste mode (\x1b[?2004h/l, a widely-supported terminal
+ * extension, not a POSIX/termios setting -- toggled via an escape sequence
+ * written to the terminal, unlike raw mode above which is a termios
+ * attribute): once enabled, the terminal wraps any pasted text in ESC[200~ ...
+ * ESC[201~ markers instead of just feeding it to stdin as if it had been
+ * typed. editorReadKey() watches for the start marker (see PASTE_START_KEY)
+ * and editorProcessKeypress() then reads the whole block in one shot via
+ * terminalReadPastedText() -- turning an O(paste length) sequence of
+ * individual keystroke-processing calls (slow: one undo-snapshot/full redraw
+ * per character) each of which ALSO ran through auto-close-pair logic as if
+ * the user had typed every character (wrong: spurious closing brackets/quotes
+ * left behind for every '(', '\'', '`', etc. in the pasted text) into a single
+ * bulk insert. Disabled on exit like raw mode -- leaving it on would change
+ * how paste behaves in whatever the user's shell/next program is after
+ * tinyedit quits.
+ */
 void terminalDisableBracketedPaste(void) {
     write(STDOUT_FILENO, "\x1b[?2004l", 8);
 }
 
+/**
+ * @brief Ask the terminal to delimit pasted blocks.
+ *
+ * @details Registers cleanup. A PASTE_START_KEY event must be followed by
+ * terminalReadPastedText(), rather than dispatching pasted bytes as
+ * keystrokes.
+ */
 void terminalEnableBracketedPaste(void) {
     atexit(terminalDisableBracketedPaste);
     write(STDOUT_FILENO, "\x1b[?2004h", 8);
 }
 
 #ifdef __APPLE__
-/* Kitty's keyboard protocol keeps its mode on a terminal-managed stack.
- * Push only the escape-disambiguation flag while tinyedit is active; pop it
- * on exit so Command/Super events immediately return to the shell's normal
- * behavior. Unsupported terminals ignore these private CSI-u sequences. */
+/**
+ * @brief Pop the keyboard-protocol mode enabled by this editor.
+ *
+ * @details macOS-only; does nothing when inactive and restores the previous
+ * terminal keyboard state.
+ *
+ * @note Kitty's keyboard protocol keeps its mode on a terminal-managed stack.
+ * Push only the escape-disambiguation flag while tinyedit is active; pop it on
+ * exit so Command/Super events immediately return to the shell's normal
+ * behavior. Unsupported terminals ignore these private CSI-u sequences.
+ */
 void terminalDisableKittyKeyboard(void) {
     if (!kitty_keyboard_enabled) return;
     write(STDOUT_FILENO, "\x1b[<u", 4);
     kitty_keyboard_enabled = 0;
 }
 
+/**
+ * @brief Push escape-disambiguation mode for Command-key events.
+ *
+ * @details macOS-only and opt-in. Registers cleanup once and avoids pushing a
+ * second mode while already active.
+ */
 void terminalEnableKittyKeyboard(void) {
     if (kitty_keyboard_enabled) return;
     if (!kitty_keyboard_cleanup_registered) {
@@ -141,9 +197,18 @@ void terminalEnableKittyKeyboard(void) {
     kitty_keyboard_enabled = 1;
 }
 
-/* Cmd-W/F/Z/A/Q are intercepted by Ghostty before Kitty keyboard protocol can
- * encode them. The sentinels make this block uniquely Tinyedit-owned: it can
- * be replaced without duplication and deleted without touching other config. */
+/**
+ * @brief Install or remove the editor-owned Command-key block in Ghostty configuration.
+ *
+ * @details macOS-only; enabled selects installation. Preserves other
+ * configuration text and requests a reload.
+ * @return a success flag; configuration or reload errors return 0.
+ *
+ * @note Cmd-W/F/Z/A/Q are intercepted by Ghostty before Kitty keyboard
+ * protocol can encode them. The sentinels make this block uniquely Tinyedit-
+ * owned: it can be replaced without duplication and deleted without touching
+ * other config.
+ */
 uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
     const char *home = getenv("HOME");
     const char *xdg = getenv("XDG_CONFIG_HOME");
@@ -232,9 +297,17 @@ uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
     return 0;
 }
 
-/* Ghostty only applies its file changes after reload_config. AppleScript is
- * its documented macOS automation interface; silence its diagnostic output
- * because Tinyedit owns the terminal screen while this runs. */
+/**
+ * @brief Request a Ghostty configuration reload through its command shortcut.
+ *
+ * @details macOS-only.
+ * @return 1 when the subprocess succeeds, otherwise 0; used after modifying
+ * the owned bindings.
+ *
+ * @note Ghostty only applies its file changes after reload_config. AppleScript
+ * is its documented macOS automation interface; silence its diagnostic output
+ * because Tinyedit owns the terminal screen while this runs.
+ */
 static uint8_t terminalReloadGhosttyConfiguration(void) {
     pid_t pid = fork();
     if (pid == -1) return 0;
@@ -255,21 +328,33 @@ static uint8_t terminalReloadGhosttyConfiguration(void) {
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
+/**
+ * @brief Remove editor-owned Ghostty bindings during exit cleanup.
+ *
+ * @details macOS-only; delegates to the shared configuration writer so the
+ * marked block does not outlive the session.
+ */
 static void terminalRemoveGhosttyCommandBindings(void) {
     terminalConfigureGhosttyCommandBindings(0);
 }
 #endif
 
-/* Non-blocking check for whether another byte is already sitting in
- * the input stream, ready to read without waiting. Used to coalesce
- * bursts of mouse events (see MOUSE_EVENT_KEY in
- * editorProcessKeypress()): a single physical trackpad/wheel scroll
- * gesture generates many individual SGR mouse reports in rapid
- * succession, and without this, the main loop would do one full
- * screen redraw PER report -- by the time redraw N finishes, reports
- * N+1..N+20 are already queued, so the display visibly lags behind
- * the gesture. Checking this after handling one event lets the loop
- * drain and apply the whole burst before redrawing once. */
+/**
+ * @brief Check for queued terminal input without blocking.
+ *
+ * @details Used to drain mouse-event bursts before redrawing.
+ * @return 1 when select() reports readable stdin, otherwise 0.
+ *
+ * @note Non-blocking check for whether another byte is already sitting in the
+ * input stream, ready to read without waiting. Used to coalesce bursts of
+ * mouse events (see MOUSE_EVENT_KEY in editorProcessKeypress()): a single
+ * physical trackpad/wheel scroll gesture generates many individual SGR mouse
+ * reports in rapid succession, and without this, the main loop would do one
+ * full screen redraw PER report -- by the time redraw N finishes, reports
+ * N+1..N+20 are already queued, so the display visibly lags behind the
+ * gesture. Checking this after handling one event lets the loop drain and
+ * apply the whole burst before redrawing once.
+ */
 uint8_t terminalInputReady(void) {
     fd_set fds;
     FD_ZERO(&fds);
@@ -278,41 +363,71 @@ uint8_t terminalInputReady(void) {
     return select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0;
 }
 
-/* SGR mouse reporting (\x1b[?1002h enables click+drag button-motion
- * events, \x1b[?1006h switches their encoding to the SGR variant --
- * unbounded coordinates and unambiguous press/release, vs. the legacy
- * X10 encoding this project doesn't use). XTSHIFTESCAPE (\x1b[>1s)
- * asks terminals such as Ghostty to report Shift-modified mouse events
- * instead of reserving Shift for their native selection. Toggled at runtime by the
- * S.mouse_enabled setting (F2), NOT unconditionally at startup like
- * bracketed paste above -- enabling it hands every click/drag to
- * tinyedit instead of the terminal's own text selection (e.g.
- * Cmd+C/Cmd+V on Ghostty), so it must be an explicit opt-in. Still registered
- * with atexit() once turned on, same reasoning as bracketed paste:
- * must not leak into whatever runs in this terminal after tinyedit
- * quits, regardless of how the setting was left. While a menu is open,
- * ?1003 enables motion without a button so hovering can select items;
- * closing the menu restores ?1002 behavior. */
+/**
+ * @brief Restore native terminal mouse behavior.
+ *
+ * @details Disables hover, drag and SGR reporting plus the requested Shift
+ * override; used on runtime disable and exit.
+ *
+ * @note SGR mouse reporting (\x1b[?1002h enables click+drag button-motion
+ * events, \x1b[?1006h switches their encoding to the SGR variant -- unbounded
+ * coordinates and unambiguous press/release, vs. the legacy X10 encoding this
+ * project doesn't use). XTSHIFTESCAPE (\x1b[>1s) asks terminals such as
+ * Ghostty to report Shift-modified mouse events instead of reserving Shift for
+ * their native selection. Toggled at runtime by the S.mouse_enabled setting
+ * (F2), NOT unconditionally at startup like bracketed paste above -- enabling
+ * it hands every click/drag to tinyedit instead of the terminal's own text
+ * selection (e.g. Cmd+C/Cmd+V on Ghostty), so it must be an explicit opt-in.
+ * Still registered with atexit() once turned on, same reasoning as bracketed
+ * paste: must not leak into whatever runs in this terminal after tinyedit
+ * quits, regardless of how the setting was left. While a menu is open, ?1003
+ * enables motion without a button so hovering can select items; closing the
+ * menu restores ?1002 behavior.
+ */
 void terminalDisableMouseReporting(void) {
     write(STDOUT_FILENO, "\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[>0s", 29);
 }
 
+/**
+ * @brief Enable SGR click and drag reports for the editor.
+ *
+ * @details Call only when mouse support is enabled in settings. Registers
+ * cleanup and requests Shift-modified reports from supporting terminals.
+ */
 void terminalEnableMouseReporting(void) {
     atexit(terminalDisableMouseReporting);
     write(STDOUT_FILENO, "\x1b[>1s\x1b[?1002h\x1b[?1006h", 21);
 }
 
+/**
+ * @brief Switch between menu hover and document drag reporting.
+ *
+ * @details enabled selects all-motion reporting; disabling restores button-
+ * motion reporting. Call while editor mouse support is active.
+ */
 void terminalSetMenuMouseMotion(uint8_t enabled) {
     /* 1003 replaces 1002 in some terminals; restore 1002 when the menu closes. */
     const char *sequence = enabled ? "\x1b[?1002l\x1b[?1003h" : "\x1b[?1003l\x1b[?1002h";
     write(STDOUT_FILENO, sequence, 16);
 }
 
+/**
+ * @brief Mark a terminal resize for processing outside the signal handler.
+ *
+ * @details sig is the POSIX signal number and is ignored. Only writes the
+ * signal-safe flag; layout and drawing happen in the main loop.
+ */
 static void handleWinch(int sig) {
     (void)sig;
     winsize_changed = 1;
 }
 
+/**
+ * @brief Install the resize signal handler without restarting blocked reads.
+ *
+ * @details Call at startup so SIGWINCH wakes input and lets the next frame
+ * recompute terminal dimensions.
+ */
 void terminalEnableResizeHandling(void) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -324,23 +439,29 @@ void terminalEnableResizeHandling(void) {
     sigaction(SIGWINCH, &sa, NULL);
 }
 
-/* Consumes and discards bytes from stdin up to and including the next
+/**
+ * @brief Discard the remainder of an unsupported CSI input sequence.
+ *
+ * @details Read at most max bytes, stopping at a final byte or failed read, so
+ * escape tails do not become document text.
+ *
+ * @note Consumes and discards bytes from stdin up to and including the next
  * CSI terminator (a final byte in 0x40-0x7E, i.e. '@'-'~' -- ANSI
- * X3.64/ECMA-48's definition, covers every letter and '~') or up to
- * `max` bytes, whichever comes first. Used when editorReadKey() has
- * recognized the start of an escape sequence (ESC [ ...) but the
- * specific parameter layout doesn't match any pattern it knows how to
- * interpret -- e.g. a terminal sending Shift+Enter or similar modified
- * keys as "ESC [ 27 ; 2 ; 13 ~" (the modifyOtherKeys CSI-u-family
- * format some terminals use), which has one more ';'-separated field
- * than the nav-key patterns above expect. Without draining the rest of
- * an unrecognized sequence here, its trailing bytes (e.g. "13~") get
- * left in the input stream and are read one at a time by the *next*
- * calls to editorReadKey(), landing in the buffer as literal text --
- * this is the bug reported for Shift+Enter, generalized to any
- * unrecognized CSI sequence rather than special-cased per key. `max`
- * bounds the drain so a malformed/adversarial stream can't block here
- * forever waiting for a terminator that never arrives. */
+ * X3.64/ECMA-48's definition, covers every letter and '~') or up to `max`
+ * bytes, whichever comes first. Used when editorReadKey() has recognized the
+ * start of an escape sequence (ESC [ ...) but the specific parameter layout
+ * doesn't match any pattern it knows how to interpret -- e.g. a terminal
+ * sending Shift+Enter or similar modified keys as "ESC [ 27 ; 2 ; 13 ~" (the
+ * modifyOtherKeys CSI-u-family format some terminals use), which has one more
+ * ';'-separated field than the nav-key patterns above expect. Without draining
+ * the rest of an unrecognized sequence here, its trailing bytes (e.g. "13~")
+ * get left in the input stream and are read one at a time by the *next* calls
+ * to editorReadKey(), landing in the buffer as literal text -- this is the bug
+ * reported for Shift+Enter, generalized to any unrecognized CSI sequence
+ * rather than special-cased per key. `max` bounds the drain so a
+ * malformed/adversarial stream can't block here forever waiting for a
+ * terminator that never arrives.
+ */
 static void editorDrainUnknownCsiSequence(int32_t max) {
     for (int32_t i = 0; i < max; i++) {
         uint8_t b;
@@ -350,6 +471,12 @@ static void editorDrainUnknownCsiSequence(int32_t max) {
 }
 
 #ifdef __APPLE__
+/**
+ * @brief Map a Command/Super code point to the existing Ctrl action.
+ *
+ * @details macOS-only.
+ * @return the equivalent editor key, or Escape for an unsupported shortcut.
+ */
 static int32_t terminalCsiUSuperShortcut(int32_t codepoint) {
     switch (codepoint) {
         case 115: return CTRL_KEY('s'); /* Cmd-S */
@@ -371,6 +498,14 @@ static int32_t terminalCsiUSuperShortcut(int32_t codepoint) {
 }
 #endif
 
+/**
+ * @brief Decode one terminal input event into the editor's key vocabulary.
+ *
+ * @details On macOS mac_command_keys enables Command/Super translation. Resize
+ * and pending_key are handled here too.
+ * @return a raw byte or editorKey value; mouse reports populate the module's
+ * shared mouse fields.
+ */
 int32_t terminalReadKey(
 #ifdef __APPLE__
     uint8_t mac_command_keys
@@ -694,17 +829,24 @@ int32_t terminalReadKey(
     return c;
 }
 
-/* Reads raw bytes from stdin up through (but not including) the next
+/**
+ * @brief Collect a bracketed paste until its closing marker.
+ *
+ * @details Call only after PASTE_START_KEY. Writes outlen and returns owned
+ * bytes to free, without a NUL terminator; a failed read returns the bytes
+ * collected so far.
+ *
+ * @note Reads raw bytes from stdin up through (but not including) the next
  * bracketed-paste end marker (ESC[201~, see editorReadKey()'s
- * PASTE_START_KEY), returning them as a malloc'd buffer with *outlen
- * set to its length. Called once editorReadKey() has already reported
- * PASTE_START_KEY -- from that point on, every byte until the end
- * marker is pasted content, not individual keystrokes, so this reads
- * raw off STDIN_FILENO directly rather than going back through
- * editorReadKey()'s key-decoding logic (which would try to interpret
- * e.g. a literal Escape byte inside the pasted text as the start of
- * some other sequence). Growable buffer since paste length is
- * unbounded. Caller owns the returned buffer (free() it). */
+ * PASTE_START_KEY), returning them as a malloc'd buffer with *outlen set to
+ * its length. Called once editorReadKey() has already reported PASTE_START_KEY
+ * -- from that point on, every byte until the end marker is pasted content,
+ * not individual keystrokes, so this reads raw off STDIN_FILENO directly
+ * rather than going back through editorReadKey()'s key-decoding logic (which
+ * would try to interpret e.g. a literal Escape byte inside the pasted text as
+ * the start of some other sequence). Growable buffer since paste length is
+ * unbounded. Caller owns the returned buffer (free() it).
+ */
 char *terminalReadPastedText(size_t *outlen) {
     size_t cap = 4096;
     char *buf = teMalloc(cap);
@@ -759,6 +901,13 @@ char *terminalReadPastedText(size_t *outlen) {
     return buf;
 }
 
+/**
+ * @brief Query the terminal's one-based cursor row and column.
+ *
+ * @details rows and cols are writable outputs.
+ * @return 0 after a valid position report, -1 on write or parsing failure;
+ * consumes the report from stdin.
+ */
 static int32_t getCursorPosition(int32_t *rows, int32_t *cols) {
     char buf[32];
     uint32_t i = 0;
@@ -774,6 +923,12 @@ static int32_t getCursorPosition(int32_t *rows, int32_t *cols) {
     return 0;
 }
 
+/**
+ * @brief Get terminal dimensions, querying cursor position if ioctl is unavailable.
+ *
+ * @details Writes rows and cols and returns 0 on success, -1 on failure. The
+ * fallback moves the cursor toward the bottom-right corner.
+ */
 int32_t terminalGetWindowSize(int32_t *rows, int32_t *cols) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {

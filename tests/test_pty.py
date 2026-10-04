@@ -1192,9 +1192,260 @@ def test_malformed_utf8_at_file_boundaries(home):
             finish(process, master)
 
 
+
+def test_long_prompt_inputs(home):
+    """Typed, clipboard and bracketed input retain paths beyond 128 bytes."""
+    case_home = home / "long-prompts"
+    case_home.mkdir()
+    (case_home / ".tinyeditrc").write_text("auto_close_pairs = false\n")
+    directory = case_home / ("a" * 80) / ("b" * 80)
+    directory.mkdir(parents=True)
+    tools = case_home / "tools"
+    tools.mkdir()
+    for command in ("pbcopy", "pbpaste"):
+        script = tools / command
+        script.write_text(
+            "#!/usr/bin/env python3\nimport os, sys\n"
+            "if sys.argv[0].endswith('pbpaste'):\n"
+            "    sys.stdout.buffer.write(os.environ['TEST_PASTE_PATH'].encode('utf-8'))\n"
+        )
+        script.chmod(0o755)
+    for method in ("typed", "clipboard", "bracketed"):
+        target = directory / f"é-{method}.txt"
+        target.write_bytes(b"original\n")
+        path = str(target).encode("utf-8")
+        assert len(path) > 128
+        process, master = spawn_editor([], case_home, {
+            "PATH": str(tools) + os.pathsep + os.environ.get("PATH", ""),
+            "TEST_PASTE_PATH": str(target),
+        })
+        try:
+            read_available(master)
+            os.write(master, b"\x0f")
+            assert b"Open file:" in read_until(master, b"Open file:")
+            if method == "typed":
+                os.write(master, path)
+            elif method == "clipboard":
+                os.write(master, b"\x16")
+            else:
+                os.write(master, b"\x1b[200~" + path + b"\x1b[201~")
+            read_available(master, 0.3)
+            os.write(master, b"\r")
+            assert b"original" in read_until(master, b"original"), (
+                f"{method}: long Open prompt did not retain its complete path"
+            )
+            os.write(master, b"Z\x13")
+            assert b"bytes written to disk" in read_until(master, b"bytes written to disk")
+            assert target.read_bytes() == b"Zoriginal\n"
+        finally:
+            finish(process, master)
+
+
+def test_empty_page_navigation(home):
+    """Page movement survives startup, close and deletion of all text."""
+    case_home = home / "empty-pages"
+    case_home.mkdir()
+    process, master = spawn_editor([], case_home)
+    keys = b"\x1b[5~\x1b[6~\x1b[5;2~\x1b[6;2~"
+    try:
+        read_available(master)
+        for setup in (b"", b"\x17", b"abc\x01\x7f"):
+            os.write(master, setup + keys + b"X")
+            output = read_available(master)
+            assert process.poll() is None, "page navigation crashed on empty text"
+            assert b"X" in output, "editing no longer works after empty page movement"
+            os.write(master, b"\x01\x7f\x17n")
+            read_available(master, 0.2)
+    finally:
+        finish(process, master)
+
+def test_file_transaction_failures(home):
+    """Failed Open/Save as preserve current text, undo and save destination."""
+    case_home = home / "file-transactions"
+    case_home.mkdir()
+    (case_home / ".tinyeditrc").write_text("auto_close_pairs = false\n")
+    original = case_home / "original.txt"
+    original.write_bytes(b"original\r")
+    process, master = spawn_editor([str(original)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"Z\x1bOS")  # existing SS3 F4 binding
+        assert b"Save as:" in read_until(master, b"Save as:")
+        os.write(master, os.fsencode(case_home) + b"\r")
+        assert b"Can't save!" in read_until(master, b"Can't save!")
+        assert original.read_bytes() == b"original\r"
+        os.write(master, b"\x13")
+        assert b"bytes written to disk" in read_until(master, b"bytes written to disk")
+        assert original.read_bytes() == b"Zoriginal\r", "failed Save as changed destination or CR bytes"
+        # Separate Y from the earlier insertion under the existing undo timer.
+        read_available(master, 2.1)
+        os.write(master, b"Y\x0f")
+        assert b"Save changes before opening another file?" in read_until(
+            master, b"Save changes before opening another file?")
+        os.write(master, b"n")
+        assert b"Open file:" in read_until(master, b"Open file:")
+        os.write(master, os.fsencode(case_home) + b"\r")
+        assert b"Can't open file:" in read_until(master, b"Can't open file:")
+        os.write(master, b"\x1a")  # undo the Y edit in the retained document
+        assert b"Undo" in read_until(master, b"Undo")
+        os.write(master, b"\x13")
+        assert b"bytes written to disk" in read_until(master, b"bytes written to disk")
+        assert original.read_bytes() == b"Zoriginal\r", "failed Open destroyed current text or undo"
+    finally:
+        finish(process, master)
+
+
+def test_mouse_burst_preserves_inputs(home):
+    """Queued text, navigation, paste and commands survive mouse coalescing."""
+    case_home = home / "mouse-burst"
+    case_home.mkdir()
+    (case_home / ".tinyeditrc").write_text(
+        "mouse_enabled = true\nshow_menu = false\nshow_top_bar = false\n"
+        "show_line_numbers = false\nauto_close_pairs = false\nbackup_interval = 0\n"
+    )
+    target = case_home / "burst.txt"
+    target.write_bytes(b"abcdef\n")
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        wheel = b"\x1b[<65;1;1M\x1b[<64;1;1M"
+        cases = (
+            (b"\x1b[<0;2;1M\x1b[<0;2;1mXY", b"aXYbcdef\n"),
+            (wheel + b"\x1b[DZ", b"aXZYbcdef\n"),
+            (wheel + b"\x1b[200~" + "é界".encode() + b"\x1b[201~",
+             "aXZé界Ybcdef\n".encode()),
+            (wheel + b"\x1a", b"aXZYbcdef\n"),
+        )
+        for sequence, expected in cases:
+            os.write(master, sequence + b"\x13")
+            assert b"bytes written to disk" in read_until(master, b"bytes written to disk"), (
+                "command following a mouse burst was lost"
+            )
+            # An earlier save message can still appear during intermediate
+            # mouse redraws. Wait for the actual disk effect of this command.
+            deadline = time.monotonic() + 2.0
+            while target.read_bytes() != expected and time.monotonic() < deadline:
+                read_available(master, 0.1)
+            assert target.read_bytes() == expected, (
+                f"mouse burst content: expected {expected!r}, got {target.read_bytes()!r}"
+            )
+            read_available(master, 0.1)
+        # The first keyboard event is itself a command, with no text in between.
+        previous_inode = target.stat().st_ino
+        os.write(master, wheel + b"\x13")
+        deadline = time.monotonic() + 2.0
+        while target.stat().st_ino == previous_inode and time.monotonic() < deadline:
+            read_available(master, 0.1)
+        assert target.stat().st_ino != previous_inode, "save command after mouse was not executed"
+    finally:
+        finish(process, master)
+
+
+def test_drag_does_not_cross_documents(home):
+    """An unfinished press cannot arm a selection in a newly opened document."""
+    case_home = home / "mouse-document-reset"
+    case_home.mkdir()
+    (case_home / ".tinyeditrc").write_text(
+        "mouse_enabled = true\nshow_menu = false\nshow_top_bar = false\n"
+        "show_line_numbers = false\nauto_close_pairs = false\nbackup_interval = 0\n"
+    )
+    original, replacement = case_home / "old.txt", case_home / "new.txt"
+    original.write_bytes(b"abcdef\n")
+    replacement.write_bytes(b"xyz\n")
+    process, master = spawn_editor([str(original)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1b[<0;4;1M")  # press without release
+        read_available(master, 0.2)
+        os.write(master, b"\x17")
+        assert b"File closed." in read_until(master, b"File closed.")
+        os.write(master, b"\x0f")
+        assert b"Open file:" in read_until(master, b"Open file:")
+        os.write(master, os.fsencode(replacement) + b"\r")
+        assert b"xyz" in read_until(master, b"xyz"), "replacement document was not loaded"
+        os.write(master, b"\x1b[<32;3;1MQ\x13")
+        assert b"bytes written to disk" in read_until(master, b"bytes written to disk")
+        assert replacement.read_bytes() == b"Qxyz\n", "old drag selected text in the new document"
+        assert original.read_bytes() == b"abcdef\n"
+    finally:
+        finish(process, master)
+
+
+def test_shared_ascii_autoclose(home):
+    """Typing, closer skipping and selection wrapping use the shared policy."""
+    for enabled in (False, True):
+        case_home = home / f"shared-autoclose-{enabled}"
+        case_home.mkdir()
+        (case_home / ".tinyeditrc").write_text(
+            f"auto_close_pairs = {'true' if enabled else 'false'}\n"
+            "auto_close_single_quote = true\nbackup_interval = 0\n"
+        )
+        target = case_home / "pairs.txt"
+        target.write_bytes(b"abc\n")
+        process, master = spawn_editor([str(target)], case_home)
+        try:
+            read_available(master)
+            os.write(master, b"\x01(\x13")
+            assert b"bytes written to disk" in read_until(master, b"bytes written to disk")
+            expected = b"(abc)\n" if enabled else b"(\n"
+            deadline = time.monotonic() + 2.0
+            while target.read_bytes() != expected and time.monotonic() < deadline:
+                read_available(master, 0.1)
+            assert target.read_bytes() == expected, "pair policy ignored selection or configuration"
+            read_available(master, 0.1)
+            os.write(master, b"\x01\x7f")
+            read_available(master, 0.1)
+            sequence = b"(){}[]\"\"''"
+            os.write(master, sequence + b"\x13")
+            expected = sequence + b"\n"
+            deadline = time.monotonic() + 2.0
+            while target.read_bytes() != expected and time.monotonic() < deadline:
+                read_available(master, 0.1)
+            assert target.read_bytes() == expected, "typing/closer skipping diverged from shared pairs"
+        finally:
+            finish(process, master)
+
+
+def test_save_and_open_home_path(home):
+    """A prompt path ~/tmp/... uses HOME regardless of the working directory."""
+    case_home = home / "home-path"
+    (case_home / "tmp").mkdir(parents=True)
+    (case_home / ".tinyeditrc").write_text("auto_close_pairs = false\nbackup_interval = 0\n")
+    target = case_home / "tmp" / "nomeFile.md"
+    process, master = spawn_editor([], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"testo\x13")
+        assert b"Save as:" in read_until(master, b"Save as:")
+        os.write(master, b"~/tmp/nomeFile.md\r")
+        assert b"bytes written to disk" in read_until(master, b"bytes written to disk")
+        assert target.read_bytes() == b"testo\n"
+        read_available(master, 0.1)
+        os.write(master, b"!\x13")
+        deadline = time.monotonic() + 2.0
+        while target.read_bytes() != b"testo!\n" and time.monotonic() < deadline:
+            read_available(master, 0.1)
+        assert target.read_bytes() == b"testo!\n", "subsequent save did not use expanded identity"
+        os.write(master, b"\x17")
+        assert b"File closed." in read_until(master, b"File closed.")
+        os.write(master, b"\x0f")
+        assert b"Open file:" in read_until(master, b"Open file:")
+        os.write(master, b"~/tmp/nomeFile.md\r")
+        assert b"testo!" in read_until(master, b"testo!"), "Open did not expand home shorthand"
+    finally:
+        finish(process, master)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="tinyedit-tests-") as tmp:
         home = pathlib.Path(tmp)
+        test_save_and_open_home_path(home)
+        test_shared_ascii_autoclose(home)
+        test_mouse_burst_preserves_inputs(home)
+        test_drag_does_not_cross_documents(home)
+        test_file_transaction_failures(home)
+        test_long_prompt_inputs(home)
+        test_empty_page_navigation(home)
         test_f3(b"\x1bOR", "SS3", home)
         test_f3(b"\x1b[13~", "CSI", home)
         test_kitty_f1_f2(home)

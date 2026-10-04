@@ -25,43 +25,50 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Fills `out` (a buffer of at least `outsize` bytes) with the absolute
- * backup path for `filename`, e.g. "/home/user/.tinyedit/backup/<hash>.swp".
- * `filename` need not exist yet (a brand new unsaved file still gets a
- * stable backup path derived from what its name would be). Returns 1 on
- * success, 0 if $HOME is unset/empty or the path would not fit `outsize`. */
+/**
+ * @brief Build the recovery filename associated with an edited file.
+ *
+ * @details out has outsize bytes.
+ * @return 1 with a NUL-terminated path, or 0 if HOME, path resolution or
+ * capacity prevents it; the document need not exist yet.
+ */
 uint8_t backupPathFor(const char *filename, char *out, size_t outsize);
 
-/* Returns 1 if a backup file already exists for `filename` (i.e. a
- * previous session crashed or was killed before it could clean up),
- * 0 otherwise. Used at startup before deciding whether to offer
- * recovery. */
+/**
+ * @brief Check whether a recovery file is present for a document.
+ *
+ * @details filename identifies the original file.
+ * @return 1 when its backup path exists, otherwise 0; it does not validate
+ * backup contents.
+ */
 uint8_t backupExists(const char *filename);
 
-/* Reads the backup for `filename` into a malloc'd NUL-terminated
- * buffer (the file content that was being edited, NOT including the
- * leading path line -- that's stripped here). *outlen receives its
- * length excluding the NUL terminator. Returns NULL on any failure
- * (missing/unreadable/malformed backup) or if `filename` has no
- * backup at all -- callers should treat NULL as "nothing to
- * recover", not necessarily an error worth reporting. Caller must
- * free() the result. */
+/**
+ * @brief Read recoverable document bytes without the backup's path header.
+ *
+ * @details outlen may be NULL; otherwise receives the byte count excluding NUL
+ * on success.
+ * @return owned NUL-terminated text to free, or NULL on missing, malformed or
+ * unreadable backup.
+ */
 char *backupRead(const char *filename, size_t *outlen);
 
-/* Writes `content` (length `len`, may contain embedded newlines --
- * this is the raw joined buffer, same format editorRowsToString()
- * produces) as the crash-recovery backup for `filename`, preceded by
- * a line with `filename`'s absolute path for identification. Creates
- * ~/.tinyedit/backup/ if it doesn't exist yet. Returns 1 on success,
- * 0 on I/O failure (silently ignorable by the caller -- a failed
- * backup write is not worth interrupting editing over, unlike a
- * failed explicit Ctrl-S save). */
+/**
+ * @brief Write document bytes to their recovery file.
+ *
+ * @details content contains len bytes. Creates the backup directory when
+ * needed and prefixes the absolute document path.
+ * @return 1 after file and directory sync, 0 on path or I/O failure.
+ * A post-rename sync failure may have replaced the backup; it is retained.
+ */
 uint8_t backupWrite(const char *filename, const char *content, size_t len);
 
-/* Deletes the backup for `filename`, if any. Called after a clean
- * save or on quitting with nothing unsaved, so a leftover .swp is
- * never mistaken for a crash on the next startup. Failure to remove
- * (e.g. already gone) is not an error. */
+/**
+ * @brief Remove a document's recovery file after save or clean departure.
+ *
+ * @details filename identifies the original document. Missing files and
+ * removal failures are deliberately ignored.
+ */
 void backupRemove(const char *filename);
 
 #endif /* __TE_BACKUP_H */

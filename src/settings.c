@@ -4,6 +4,7 @@
 
 #include "settings.h"
 #include "alloc.h"
+#include "fileio.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -167,17 +168,32 @@ const struct settingDescriptor settingDescriptors[] = {
 };
 const int32_t settingDescriptorCount = (int32_t)(sizeof(settingDescriptors) / sizeof(settingDescriptors[0]));
 
-/* Returns a pointer to the int32_t-sized storage for descriptor `d`
- * inside `s`. Every field in editorSettings (bool/int/enum) is
- * int32_t (see settings.h), so this single cast covers all of them. */
+/**
+ * @brief Access a writable setting through its table descriptor.
+ *
+ * @details s must be an editorSettings object and d one of its descriptors.
+ * @return a borrowed int32_t slot; every settings field must have that size.
+ */
 static int32_t *settingSlot(struct editorSettings *s, const struct settingDescriptor *d) {
     return (int32_t *)((char *)s + d->offset);
 }
 
+/**
+ * @brief Access a setting through its table descriptor without modifying it.
+ *
+ * @details s and d must correspond to the same settings layout.
+ * @return a borrowed pointer into s.
+ */
 static const int32_t *settingSlotConst(const struct editorSettings *s, const struct settingDescriptor *d) {
     return (const int32_t *)((const char *)s + d->offset);
 }
 
+/**
+ * @brief Look up an option by its configuration key.
+ *
+ * @details key is NUL-terminated and case-sensitive.
+ * @return a borrowed descriptor or NULL when unknown.
+ */
 const struct settingDescriptor *settingsFind(const char *key) {
     for (int32_t i = 0; i < settingDescriptorCount; i++) {
         if (strcmp(settingDescriptors[i].key, key) == 0)
@@ -186,12 +202,24 @@ const struct settingDescriptor *settingsFind(const char *key) {
     return NULL;
 }
 
+/**
+ * @brief Read a named boolean option from a settings object.
+ *
+ * @return its truth value, or 0 when the key is missing or not a boolean
+ * setting.
+ */
 uint8_t settingsGetBool(const struct editorSettings *settings, const char *key) {
     const struct settingDescriptor *descriptor = settingsFind(key);
     return descriptor && descriptor->type == SETTING_BOOL &&
         *settingSlotConst(settings, descriptor) != 0;
 }
 
+/**
+ * @brief Toggle a named boolean option in a settings object.
+ *
+ * @details Does not apply terminal changes or save configuration.
+ * @return 1 when toggled, 0 for a missing or non-boolean key.
+ */
 uint8_t settingsToggleBool(struct editorSettings *settings, const char *key) {
     const struct settingDescriptor *descriptor = settingsFind(key);
     if (!descriptor || descriptor->type != SETTING_BOOL) return 0;
@@ -199,6 +227,12 @@ uint8_t settingsToggleBool(struct editorSettings *settings, const char *key) {
     return 1;
 }
 
+/**
+ * @brief Fill every setting field with its built-in default.
+ *
+ * @details out must point to writable settings storage; no file is read or
+ * written and filetype overrides are untouched.
+ */
 void settingsDefaults(struct editorSettings *out) {
     out->show_line_numbers = 1;
     out->tab_stop = 4;
@@ -239,6 +273,13 @@ void settingsDefaults(struct editorSettings *out) {
     out->line_ending = LINE_ENDING_AUTO;
 }
 
+/**
+ * @brief Build the configuration path under the user's HOME.
+ *
+ * @details buf has buflen bytes.
+ * @return buf with NUL-terminated text, or NULL if HOME is unavailable or the
+ * path does not fit.
+ */
 static const char *configPath(char *buf, size_t buflen) {
     const char *home = getenv("HOME");
     if (!home || !*home) return NULL;
@@ -247,32 +288,42 @@ static const char *configPath(char *buf, size_t buflen) {
     return buf;
 }
 
-/* Finds the enum index of `name` in a NULL-terminated name list, or -1. */
+/**
+ * @brief Find the stored index for an enum's readable value.
+ *
+ * @details names is a NULL-terminated string table and name is NUL-terminated.
+ * @return the matching index, or -1 when absent.
+ */
 static int32_t enumIndexOf(const char *const *names, const char *name) {
     for (int32_t i = 0; names[i]; i++)
         if (strcmp(names[i], name) == 0) return i;
     return -1;
 }
 
-/* Maps a pre-split color name ("gray", "cyan", ...) written by an
- * older tinyedit version to its closest equivalent in the current
- * 3-variants-per-hue palette, or -1 if `name` isn't one of the 8
- * legacy names. Without this, an older ~/.tinyeditrc would silently
- * lose its color customization on load (enumIndexOf() finding no
- * exact match in the new "hue-light"/"hue-dark"/"hue-dim" names,
- * leaving the field at settingsDefaults()'s value instead) -- exactly
- * the migration gap the change in enum settingColor's field comment
- * warns about. Each legacy name maps to its "light" variant: that's
- * what the old single-variant palette actually rendered as (see
+/**
+ * @brief Translate older color spellings to the current palette.
+ *
+ * @details name is a NUL-terminated legacy value.
+ * @return the palette index, or -1 if it is unknown.
+ *
+ * @note Maps a pre-split color name ("gray", "cyan", ...) written by an older
+ * tinyedit version to its closest equivalent in the current 3-variants-per-hue
+ * palette, or -1 if `name` isn't one of the 8 legacy names. Without this, an
+ * older ~/.tinyeditrc would silently lose its color customization on load
+ * (enumIndexOf() finding no exact match in the new "hue-light"/"hue-
+ * dark"/"hue-dim" names, leaving the field at settingsDefaults()'s value
+ * instead) -- exactly the migration gap the change in enum settingColor's
+ * field comment warns about. Each legacy name maps to its "light" variant:
+ * that's what the old single-variant palette actually rendered as (see
  * ansiColorCode() -- e.g. old COLOR_GRAY was already \x1b[90m, the
- * bright/light code, not \x1b[30m). Works unchanged across both the
- * original 2-variant (light/dark) and current 3-variant
- * (light/dark/dim) palette since "light" is always index 0 of each
- * hue's block -- only the block STRIDE changed (2 -> 3), captured
- * here as HUE_COLOR_COUNT (the 24 real hues, i.e. SETTING_COLOR_COUNT
- * minus COLOR_TERMINAL_DEFAULT -- see settings.h) divided by the
- * legacy name count rather than hardcoded, so a future variant
- * addition doesn't need this function touched again. */
+ * bright/light code, not \x1b[30m). Works unchanged across both the original
+ * 2-variant (light/dark) and current 3-variant (light/dark/dim) palette since
+ * "light" is always index 0 of each hue's block -- only the block STRIDE
+ * changed (2 -> 3), captured here as HUE_COLOR_COUNT (the 24 real hues, i.e.
+ * SETTING_COLOR_COUNT minus COLOR_TERMINAL_DEFAULT -- see settings.h) divided
+ * by the legacy name count rather than hardcoded, so a future variant addition
+ * doesn't need this function touched again.
+ */
 static int32_t settingColorFromLegacyName(const char *name) {
     int32_t variants_per_hue = SETTING_HUE_COLOR_COUNT / 8;
     for (int32_t i = 0; legacyNames[i]; i++)
@@ -280,6 +331,12 @@ static int32_t settingColorFromLegacyName(const char *name) {
     return -1;
 }
 
+/**
+ * @brief Remove leading and trailing whitespace from a configuration token.
+ *
+ * @details s is a writable NUL-terminated string. Trims in place without
+ * allocating a replacement.
+ */
 static void trim(char *s) {
     char *start = s;
     while (isspace((unsigned char)*start)) start++;
@@ -289,6 +346,12 @@ static void trim(char *s) {
     while (len > 0 && isspace((unsigned char)s[len - 1])) s[--len] = '\0';
 }
 
+/**
+ * @brief Add or replace the readable label for a filename extension.
+ *
+ * @details ext and name are NUL-terminated and copied into module-owned
+ * storage. Repeated extensions replace their existing label.
+ */
 static void addFiletypeOverride(const char *ext, const char *name) {
     /* Same extension re-declared later in the file wins (matches how
      * the descriptor-based settings above already let the last
@@ -308,11 +371,23 @@ static void addFiletypeOverride(const char *ext, const char *name) {
     filetypeOverrideCount++;
 }
 
+/**
+ * @brief Register a nonempty extension and its readable label.
+ *
+ * @details Copies both strings into the override table; invalid empty or NULL
+ * inputs are ignored. Persistence is a separate settingsSave() call.
+ */
 void settingsSetFiletype(const char *ext, const char *name) {
     if (!ext || !*ext || !name || !*name) return;
     addFiletypeOverride(ext, name);
 }
 
+/**
+ * @brief Release every module-owned extension and label override.
+ *
+ * @details Resets the override table and count; used before loading a fresh
+ * configuration.
+ */
 static void freeFiletypeOverrides(void) {
     for (int32_t i = 0; i < filetypeOverrideCount; i++) {
         free((void *)filetypeOverrides[i].ext);
@@ -323,6 +398,13 @@ static void freeFiletypeOverrides(void) {
     filetypeOverrideCount = 0;
 }
 
+/**
+ * @brief Load configuration over defaults and rebuild filetype overrides.
+ *
+ * @details out receives valid settings even when the file is missing or
+ * malformed. Missing configuration is created when possible; invalid entries
+ * are ignored and integers are clamped.
+ */
 void settingsLoad(struct editorSettings *out) {
     settingsDefaults(out);
     freeFiletypeOverrides();
@@ -396,6 +478,13 @@ void settingsLoad(struct editorSettings *out) {
     fclose(fp);
 }
 
+/**
+ * @brief Persist settings and known filetype overrides through a temporary file.
+ *
+ * @details s must contain valid descriptor values, including enum indices.
+ * @return 1 after file and directory sync, otherwise 0 with the temporary
+ * file removed. A post-rename sync failure may have replaced the config.
+ */
 uint8_t settingsSave(const struct editorSettings *s) {
     char path[1024];
     if (!configPath(path, sizeof(path))) return 0;
@@ -439,12 +528,28 @@ uint8_t settingsSave(const struct editorSettings *s) {
     }
 
     uint8_t ok = !ferror(fp) && fflush(fp) == 0 && fsync(fd) == 0;
-    if (fclose(fp) != 0) ok = 0;
-    if (ok && rename(tmppath, path) != 0) ok = 0;
-    if (!ok) unlink(tmppath);
+    int close_errno = errno;
+    if (fclose(fp) != 0 && ok) {
+        ok = 0;
+        close_errno = errno;
+    }
+    errno = close_errno;
+    if (ok && fileioReplace(tmppath, path) != FILE_SAVE_DURABLE) ok = 0;
+    if (!ok) {
+        int saved_errno = errno;
+        unlink(tmppath);
+        errno = saved_errno;
+    }
     return ok;
 }
 
+/**
+ * @brief Look up a readable filetype label, preferring user overrides.
+ *
+ * @details ext is case-sensitive without a leading dot.
+ * @return a borrowed string or NULL when unknown; its lifetime depends on the
+ * override table.
+ */
 const char *filetypeForExtension(const char *ext) {
     if (!ext || ext[0] == '\0') return NULL;
 
@@ -459,10 +564,18 @@ const char *filetypeForExtension(const char *ext) {
     return NULL;
 }
 
-/* Light variants are the standard ANSI "bright" foreground codes
- * (\x1b[9Xm, 90-97), dark variants the normal-intensity ones
- * (\x1b[3Xm, 30-37) -- both are base ANSI, universally supported by
- * any terminal the 8-color palette already worked on. */
+/**
+ * @brief Get the foreground escape sequence for a palette entry.
+ *
+ * @details Default or unsupported values reset the terminal foreground;
+ * callers wanting no output must check that case separately.
+ * @return a borrowed literal.
+ *
+ * @note Light variants are the standard ANSI "bright" foreground codes
+ * (\x1b[9Xm, 90-97), dark variants the normal-intensity ones (\x1b[3Xm, 30-37)
+ * -- both are base ANSI, universally supported by any terminal the 8-color
+ * palette already worked on.
+ */
 const char *ansiColorCode(int32_t c) {
     switch (c) {
         case COLOR_GRAY_LIGHT:    return "\x1b[90m";
@@ -499,25 +612,32 @@ const char *ansiColorCode(int32_t c) {
     }
 }
 
-/* Background SGR codes are the foreground codes' family +10 (30-37 ->
- * 40-47, 90-97 -> 100-107) -- standard ANSI, same universally-supported
- * base palette as ansiColorCode(). "dim" (\x1b[2;3Xm) has no background
- * equivalent in the base ANSI spec (the intensity attribute only
- * affects foreground on any terminal this project targets), so dim
- * variants reuse their base hue's normal (dark) background -- still a
- * distinct, correct color, just without a separate "dim background"
- * concept that doesn't exist to reuse.
+/**
+ * @brief Get the background escape sequence for a palette entry.
  *
- * gray-dark/gray-dim -> \x1b[40m is BLACK, not an actual gray -- same
- * as ansiColorCode()'s COLOR_GRAY_DARK/_DIM, which are already plain
- * black foreground (see settings.h's comment on enum settingColor:
- * "gray" here names a position in the 8-hue ANSI palette, not a real
- * gray). On a terminal whose own background is already black/dark
- * (common), color_background = gray-dark/gray-dim will look like "no
- * effect" for that reason -- intentional, kept consistent with the
- * existing foreground scheme rather than special-cased into a real
- * gray just for this one setting. Pick blue-dark/white-dark/etc. for a
- * visibly distinct editor background instead. */
+ * @details Default or unsupported values return an empty string to leave the
+ * background alone.
+ * @return a borrowed literal; dim variants use the corresponding dark
+ * background.
+ *
+ * @note Background SGR codes are the foreground codes' family +10 (30-37 ->
+ * 40-47, 90-97 -> 100-107) -- standard ANSI, same universally-supported base
+ * palette as ansiColorCode(). "dim" (\x1b[2;3Xm) has no background equivalent
+ * in the base ANSI spec (the intensity attribute only affects foreground on
+ * any terminal this project targets), so dim variants reuse their base hue's
+ * normal (dark) background -- still a distinct, correct color, just without a
+ * separate "dim background" concept that doesn't exist to reuse.
+ *
+ * gray-dark/gray-dim -> \x1b[40m is BLACK, not an actual gray -- same as
+ * ansiColorCode()'s COLOR_GRAY_DARK/_DIM, which are already plain black
+ * foreground (see settings.h's comment on enum settingColor: "gray" here names
+ * a position in the 8-hue ANSI palette, not a real gray). On a terminal whose
+ * own background is already black/dark (common), color_background = gray-
+ * dark/gray-dim will look like "no effect" for that reason -- intentional,
+ * kept consistent with the existing foreground scheme rather than special-
+ * cased into a real gray just for this one setting. Pick blue-dark/white-
+ * dark/etc. for a visibly distinct editor background instead.
+ */
 const char *ansiBgColorCode(int32_t c) {
     switch (c) {
         case COLOR_GRAY_LIGHT:                        return "\x1b[100m";
@@ -547,14 +667,27 @@ const char *ansiBgColorCode(int32_t c) {
     }
 }
 
-/* The palette is 8 hues x 3 variants in light/dark/dim order (see enum
+/**
+ * @brief Identify a dim foreground variant in the shared palette.
+ *
+ * @return 1 only for the dim entries of the eight hue triplets; the terminal-
+ * default entry is not dim.
+ *
+ * @note The palette is 8 hues x 3 variants in light/dark/dim order (see enum
  * settingColor), so the dim ones are exactly the indices below 24 whose
- * position within their hue triplet is 2. COLOR_TERMINAL_DEFAULT (24)
- * and anything out of range are not dim. */
+ * position within their hue triplet is 2. COLOR_TERMINAL_DEFAULT (24) and
+ * anything out of range are not dim.
+ */
 uint8_t settingColorIsDim(int32_t c) {
     return c >= 0 && c < 24 && c % 3 == 2;
 }
 
+/**
+ * @brief Get the configuration spelling of a palette entry.
+ *
+ * @return a borrowed name, with white-dark as the fallback for an out-of-range
+ * index.
+ */
 const char *settingColorName(int32_t c) {
     if (c >= 0 && c < SETTING_COLOR_COUNT) return colorNames[c];
     return "white-dark";

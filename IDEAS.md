@@ -40,8 +40,10 @@ momento buono non convincono più.
 - **Reindentazione dell'intero file** — comando esplicito che ricostruisce
   l'indentazione delle righe in base alla struttura del linguaggio, distinto
   dall'auto-indentazione già applicata quando si crea una nuova riga.
-- **Rilevamento e preservazione line-ending** (CRLF vs LF) — utile se il
-  progetto verrà mai usato per editare file misti Windows/Unix.
+- **Preservazione dei terminatori di ogni singola riga nei file misti** —
+  LF/CRLF, rilevamento dei file misti e newline finale sono già gestiti.
+  Il salvataggio usa però un solo stile per documento; conservare esattamente
+  una mescolanza originale richiederebbe metadati per riga.
 
 ## Robustezza
 
@@ -56,12 +58,16 @@ momento buono non convincono più.
   `c.utf-8`, sulla base della Table 3-7 dello Unicode Standard e della
   sezione 4 di RFC 3629.
 
-- **Grandi file**: il buffer attuale è un array statico (`MAX_LINES`
-  storico del prototipo riga-per-riga, non più applicabile alla versione
-  a schermo intero — verificare che non ci siano limiti residui simili
-  non necessari) — da profilare su file di migliaia di righe prima di
-  aggiungere altre feature che assumono O(n) su tutto il buffer ad ogni
-  keypress (es. syntax highlighting ricalcolato ogni redraw).
+- **Grandi file**: il buffer è un array dinamico di righe, senza il vecchio
+  `MAX_LINES`. Il tokenizer viene aggiornato sulle modifiche, non a ogni
+  redraw; wrap e conteggi hanno cache e il rendering percorre la viewport
+  in sequenza. Misure riproducibili: `make benchmark` e
+  `reports/performance-2026-10-04.md`. Restano lineari alcune conversioni
+  riga/video e il primo matching di una parentesi distante. Gli snapshot undo
+  copiano tutto il testo e possono usare molta memoria con file grandi:
+  valutare undo a delta o un budget in byte solo con requisiti e misure dedicati.
+  Anche i vettori delle righe/history meritano misure specifiche su caricamenti
+  e modifiche strutturali; non confondere questo costo con i redraw ripetuti.
 
 ## Interfaccia
 

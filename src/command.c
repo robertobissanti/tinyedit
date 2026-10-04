@@ -26,6 +26,12 @@ static const struct commandDescriptor command_descriptors[] = {
     { CMD_TOGGLE_AUTO_INDENT, "Auto-indent new lines", NULL, "auto_indent" }
 };
 
+/**
+ * @brief Look up the label, shortcut and optional setting for a command.
+ *
+ * @return a borrowed immutable descriptor, or NULL for an unknown command; no
+ * action is executed.
+ */
 const struct commandDescriptor *commandGetDescriptor(enum editorCommand command) {
     for (size_t i = 0; i < sizeof(command_descriptors) / sizeof(command_descriptors[0]); i++) {
         if (command_descriptors[i].id == command)
@@ -34,11 +40,23 @@ const struct commandDescriptor *commandGetDescriptor(enum editorCommand command)
     return NULL;
 }
 
+/**
+ * @brief Check whether a command toggles a boolean setting.
+ *
+ * @return 1 for a descriptor with a setting key, otherwise 0, including
+ * unknown commands.
+ */
 uint8_t commandIsSetting(enum editorCommand command) {
     const struct commandDescriptor *descriptor = commandGetDescriptor(command);
     return descriptor && descriptor->setting_key;
 }
 
+/**
+ * @brief Read the checkmark state of a setting command.
+ *
+ * @details settings supplies current or draft values.
+ * @return the boolean state, or 0 for commands without a setting.
+ */
 uint8_t commandIsChecked(enum editorCommand command,
     const struct editorSettings *settings) {
     const struct commandDescriptor *descriptor = commandGetDescriptor(command);
@@ -46,6 +64,13 @@ uint8_t commandIsChecked(enum editorCommand command,
         ? settingsGetBool(settings, descriptor->setting_key) : 0;
 }
 
+/**
+ * @brief Toggle the boolean linked to a menu command.
+ *
+ * @details Mutates only the supplied settings copy.
+ * @return the settings helper's success flag; the caller applies and persists
+ * the change separately.
+ */
 uint8_t commandToggleSetting(enum editorCommand command,
     struct editorSettings *settings) {
     const struct commandDescriptor *descriptor = commandGetDescriptor(command);

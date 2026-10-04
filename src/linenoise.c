@@ -146,13 +146,17 @@ static char **history = NULL;
 
 /* =========================== UTF-8 support ================================ */
 
-/* Return the number of bytes that compose the UTF-8 character starting at
- * 'c'. This function assumes a valid UTF-8 encoding and handles the four
- * standard byte patterns:
- *   0xxxxxxx -> 1 byte (ASCII)
- *   110xxxxx -> 2 bytes
- *   1110xxxx -> 3 bytes
- *   11110xxx -> 4 bytes */
+/**
+ * @brief Estimate a UTF-8 length in the historical line editor.
+ *
+ * @return 1-4 from the leading byte; this legacy helper is not the bounded
+ * decoder used by the current editor.
+ *
+ * @note Return the number of bytes that compose the UTF-8 character starting
+ * at 'c'. This function assumes a valid UTF-8 encoding and handles the four
+ * standard byte patterns: 0xxxxxxx -> 1 byte (ASCII) 110xxxxx -> 2 bytes
+ * 1110xxxx -> 3 bytes 11110xxx -> 4 bytes
+ */
 static int utf8ByteLen(char c) {
     unsigned char uc = (unsigned char)c;
     if ((uc & 0x80) == 0)    return 1;   /* 0xxxxxxx: ASCII */
@@ -162,8 +166,13 @@ static int utf8ByteLen(char c) {
     return 1; /* Fallback for invalid encoding, treat as single byte. */
 }
 
-/* Decode a UTF-8 sequence starting at 's' into a Unicode codepoint.
- * Returns the codepoint value. Assumes valid UTF-8 encoding. */
+/**
+ * @brief Decode a code point using the historical unbounded UTF-8 helper.
+ *
+ * @details s must expose all bytes required by its lead. Writes their count to
+ * len and returns a code point; use utf8.c's bounded API in current
+ * application code.
+ */
 static uint32_t utf8DecodeChar(const char *s, size_t *len) {
     unsigned char *p = (unsigned char *)s;
     uint32_t cp;
@@ -194,27 +203,48 @@ static uint32_t utf8DecodeChar(const char *s, size_t *len) {
     return *p; /* Fallback for invalid sequences. */
 }
 
-/* Check if codepoint is a variation selector (emoji style modifiers). */
+/**
+ * @brief Recognize the presentation selectors supported by the legacy grapheme logic.
+ *
+ * @return 1 for U+FE0E or U+FE0F; cp is a decoded Unicode code point.
+ */
 static int isVariationSelector(uint32_t cp) {
     return cp == 0xFE0E || cp == 0xFE0F;  /* Text/emoji style */
 }
 
-/* Check if codepoint is a skin tone modifier. */
+/**
+ * @brief Recognize the skin-tone modifiers supported by the legacy grapheme logic.
+ *
+ * @return 1 for U+1F3FB through U+1F3FF.
+ */
 static int isSkinToneModifier(uint32_t cp) {
     return cp >= 0x1F3FB && cp <= 0x1F3FF;
 }
 
-/* Check if codepoint is Zero Width Joiner. */
+/**
+ * @brief Recognize the Unicode joiner used in legacy emoji grouping.
+ *
+ * @return 1 for U+200D.
+ */
 static int isZWJ(uint32_t cp) {
     return cp == 0x200D;
 }
 
-/* Check if codepoint is a Regional Indicator (for flag emoji). */
+/**
+ * @brief Recognize a regional indicator for legacy flag grouping.
+ *
+ * @return 1 for U+1F1E6 through U+1F1FF.
+ */
 static int isRegionalIndicator(uint32_t cp) {
     return cp >= 0x1F1E6 && cp <= 0x1F1FF;
 }
 
-/* Check if codepoint is a combining mark or other zero-width character. */
+/**
+ * @brief Recognize the combining-mark ranges listed by the historical implementation.
+ *
+ * @return a boolean classification of cp; the ranges are a heuristic, not a
+ * complete Unicode property database.
+ */
 static int isCombiningMark(uint32_t cp) {
     return (cp >= 0x0300 && cp <= 0x036F) ||   /* Combining Diacriticals */
            (cp >= 0x1AB0 && cp <= 0x1AFF) ||   /* Combining Diacriticals Extended */
@@ -223,14 +253,23 @@ static int isCombiningMark(uint32_t cp) {
            (cp >= 0xFE20 && cp <= 0xFE2F);     /* Combining Half Marks */
 }
 
-/* Check if codepoint extends the previous character (doesn't start a new grapheme). */
+/**
+ * @brief Recognize a code point that joins the legacy grapheme being scanned.
+ *
+ * @return 1 for the supported selectors, modifiers, joiner or combining marks.
+ */
 static int isGraphemeExtend(uint32_t cp) {
     return isVariationSelector(cp) || isSkinToneModifier(cp) ||
            isZWJ(cp) || isCombiningMark(cp);
 }
 
-/* Decode the UTF-8 codepoint ending at position 'pos' (exclusive) and
- * return its value. Also sets *cplen to the byte length of the codepoint. */
+/**
+ * @brief Decode the code point immediately before a legacy cursor byte offset.
+ *
+ * @details buf must contain valid accessible text through pos. Writes cplen
+ * and returns the preceding code point; this historical decoder is not bounded
+ * like utf8.c.
+ */
 static uint32_t utf8DecodePrev(const char *buf, size_t pos, size_t *cplen) {
     if (pos == 0) {
         *cplen = 0;
@@ -246,12 +285,18 @@ static uint32_t utf8DecodePrev(const char *buf, size_t pos, size_t *cplen) {
     return utf8DecodeChar(buf + i, &dummy);
 }
 
-/* Given a buffer and a position, return the byte length of the grapheme
- * cluster before that position. A grapheme cluster includes:
- * - The base character
- * - Any following variation selectors, skin tone modifiers
- * - ZWJ sequences (emoji joined by Zero Width Joiner)
- * - Regional indicator pairs (flag emoji) */
+/**
+ * @brief Measure the previous grapheme in the historical line editor.
+ *
+ * @details pos is a byte boundary in accessible UTF-8 text.
+ * @return its byte length, or zero at the start.
+ *
+ * @note Given a buffer and a position, return the byte length of the grapheme
+ * cluster before that position. A grapheme cluster includes: - The base
+ * character - Any following variation selectors, skin tone modifiers - ZWJ
+ * sequences (emoji joined by Zero Width Joiner) - Regional indicator pairs
+ * (flag emoji)
+ */
 static size_t utf8PrevCharLen(const char *buf, size_t pos) {
     if (pos == 0) return 0;
 
@@ -306,8 +351,13 @@ static size_t utf8PrevCharLen(const char *buf, size_t pos) {
     return total;
 }
 
-/* Given a buffer, position and total length, return the byte length of the
- * grapheme cluster at the current position. */
+/**
+ * @brief Measure the next grapheme in the historical line editor.
+ *
+ * @details pos is a byte boundary and len is the text length.
+ * @return the byte step, or zero at the end; this code uses the legacy
+ * decoder.
+ */
 static size_t utf8NextCharLen(const char *buf, size_t pos, size_t len) {
     if (pos >= len) return 0;
 
@@ -355,16 +405,21 @@ static size_t utf8NextCharLen(const char *buf, size_t pos, size_t len) {
     return total;
 }
 
-/* Return the display width of a Unicode codepoint. This is a heuristic
- * that works for most common cases:
- * - Control chars and zero-width: 0 columns
- * - Grapheme-extending chars (VS, skin tone, ZWJ): 0 columns
- * - ASCII printable: 1 column
- * - Wide chars (CJK, emoji, fullwidth): 2 columns
- * - Everything else: 1 column
+/**
+ * @brief Estimate a code point's width for historical terminal layout.
  *
- * This is not a full wcwidth() implementation, but a minimal heuristic
- * that handles emoji and CJK characters reasonably well. */
+ * @return 0, 1 or 2 from the built-in ranges; this estimate does not consult
+ * the terminal font.
+ *
+ * @note Return the display width of a Unicode codepoint. This is a heuristic
+ * that works for most common cases: - Control chars and zero-width: 0 columns
+ * - Grapheme-extending chars (VS, skin tone, ZWJ): 0 columns - ASCII
+ * printable: 1 column - Wide chars (CJK, emoji, fullwidth): 2 columns -
+ * Everything else: 1 column
+ *
+ * This is not a full wcwidth() implementation, but a minimal heuristic that
+ * handles emoji and CJK characters reasonably well.
+ */
 static int utf8CharWidth(uint32_t cp) {
     /* Control characters and combining marks: zero width. */
     if (cp < 32 || (cp >= 0x7F && cp < 0xA0)) return 0;
@@ -414,12 +469,19 @@ static int utf8CharWidth(uint32_t cp) {
     return 1; /* Default: single width */
 }
 
-/* If s[] points at an ANSI CSI escape sequence (e.g. a color change like
+/**
+ * @brief Measure a complete CSI sequence in a bounded text span.
+ *
+ * @details s starts with ESC and contains len bytes.
+ * @return the byte length, or zero when no complete CSI sequence is present.
+ *
+ * @note If s[] points at an ANSI CSI escape sequence (e.g. a color change like
  * ESC [ 1 ; 32 m), return its length in bytes. Otherwise return 0.
  *
- * The caller must have already verified that s[0] == ESC (0x1b). The
- * sequence layout follows ECMA-48: ESC '[' , parameter bytes (0x30-0x3f),
- * intermediate bytes (0x20-0x2f), and a final byte (0x40-0x7e). */
+ * The caller must have already verified that s[0] == ESC (0x1b). The sequence
+ * layout follows ECMA-48: ESC '[' , parameter bytes (0x30-0x3f), intermediate
+ * bytes (0x20-0x2f), and a final byte (0x40-0x7e).
+ */
 static size_t ansiEscapeLen(const char *s, size_t len) {
     size_t i;
     if (len < 2 || s[1] != '[') return 0;
@@ -430,12 +492,18 @@ static size_t ansiEscapeLen(const char *s, size_t len) {
     return i + 1;
 }
 
-/* Calculate the display width of a UTF-8 string of 'len' bytes.
- * This is used for cursor positioning in the terminal.
- * Handles grapheme clusters: characters joined by ZWJ contribute 0 width
- * after the first character in the sequence.
- * ANSI CSI escape sequences (e.g. color codes in the prompt) are treated
- * as zero-width. */
+/**
+ * @brief Measure historical prompt text in terminal columns.
+ *
+ * @details s contains len bytes. Ignores recognized CSI color escapes and
+ * accounts for the supported joining characters.
+ *
+ * @note Calculate the display width of a UTF-8 string of 'len' bytes. This is
+ * used for cursor positioning in the terminal. Handles grapheme clusters:
+ * characters joined by ZWJ contribute 0 width after the first character in the
+ * sequence. ANSI CSI escape sequences (e.g. color codes in the prompt) are
+ * treated as zero-width.
+ */
 static size_t utf8StrWidth(const char *s, size_t len) {
     size_t width = 0;
     size_t i = 0;
@@ -475,7 +543,12 @@ static size_t utf8StrWidth(const char *s, size_t len) {
     return width;
 }
 
-/* Return the display width of a single UTF-8 character at position 's'. */
+/**
+ * @brief Measure the base width of a historical grapheme span.
+ *
+ * @details s contains a complete first code point when len is nonzero.
+ * @return zero for an empty span, otherwise its base code-point width.
+ */
 static int utf8SingleCharWidth(const char *s, size_t len) {
     if (len == 0) return 0;
     size_t clen;
@@ -533,26 +606,46 @@ FILE *lndebug_fp = NULL;
 
 /* ======================= Low level terminal handling ====================== */
 
-/* Enable "mask mode". When it is enabled, instead of the input that
- * the user is typing, the terminal will just display a corresponding
- * number of asterisks, like "****". This is useful for passwords and other
- * secrets that should not be displayed. */
+/**
+ * @brief Hide edited input behind mask characters.
+ *
+ * @details Changes the global mode used on subsequent redraws; underlying text
+ * remains available to the caller.
+ *
+ * @note Enable "mask mode". When it is enabled, instead of the input that the
+ * user is typing, the terminal will just display a corresponding number of
+ * asterisks, like "****". This is useful for passwords and other secrets that
+ * should not be displayed.
+ */
 void linenoiseMaskModeEnable(void) {
     maskmode = 1;
 }
 
-/* Disable mask mode. */
+/**
+ * @brief Return to displaying edited input normally.
+ *
+ * @details Changes the global mask mode; the next refresh shows the real text.
+ */
 void linenoiseMaskModeDisable(void) {
     maskmode = 0;
 }
 
-/* Set if to use or not the multi line mode. */
+/**
+ * @brief Select single-line or multiline rendering for future refreshes.
+ *
+ * @details ml is a boolean flag. Multiline mode permits the edited line to
+ * occupy several terminal rows.
+ */
 void linenoiseSetMultiLine(int ml) {
     mlmode = ml;
 }
 
-/* Return true if the terminal name is in the list of terminals we know are
- * not able to understand basic escape sequences. */
+/**
+ * @brief Check the terminal name against the legacy capability blacklist.
+ *
+ * @return 1 for a known unsupported TERM value, otherwise 0; this is a simple
+ * name check, not a capability probe.
+ */
 static int isUnsupportedTerm(void) {
     char *term = getenv("TERM");
     int j;
@@ -563,7 +656,13 @@ static int isUnsupportedTerm(void) {
     return 0;
 }
 
-/* Raw mode: 1960 magic shit. */
+/**
+ * @brief Enable the historical editor's raw input and paste mode.
+ *
+ * @details fd is the input descriptor.
+ * @return 0 on success or -1 on failure, saving terminal state and registering
+ * exit cleanup when needed.
+ */
 static int enableRawMode(int fd) {
     struct termios raw;
 
@@ -608,6 +707,12 @@ fatal:
     return -1;
 }
 
+/**
+ * @brief Restore terminal input and paste state after historical editing.
+ *
+ * @details fd is the input descriptor used when enabling raw mode. Does
+ * nothing unless raw mode is active and restoration succeeds.
+ */
 static void disableRawMode(int fd) {
     /* Test mode: nothing to restore. */
     if (getenv("LINENOISE_ASSUME_TTY")) {
@@ -622,9 +727,12 @@ static void disableRawMode(int fd) {
     }
 }
 
-/* Use the ESC [6n escape sequence to query the horizontal cursor position
- * and return it. On error -1 is returned, on success the position of the
- * cursor. */
+/**
+ * @brief Ask the historical terminal for its current column.
+ *
+ * @details ifd reads the reply and ofd writes the query.
+ * @return the one-based column, or -1 when querying or parsing fails.
+ */
 static int getCursorPosition(int ifd, int ofd) {
     char buf[32];
     int cols, rows;
@@ -647,8 +755,12 @@ static int getCursorPosition(int ifd, int ofd) {
     return cols;
 }
 
-/* Try to get the number of columns in the current terminal, or assume 80
- * if it fails. */
+/**
+ * @brief Find the historical editor's terminal width.
+ *
+ * @details ifd and ofd are terminal descriptors. Uses ioctl or a cursor-query
+ * fallback and returns a default width if both fail.
+ */
 static int getColumns(int ifd, int ofd) {
     struct winsize ws;
 
@@ -686,15 +798,24 @@ failed:
     return 80;
 }
 
-/* Clear the screen. Used to handle ctrl+l */
+/**
+ * @brief Clear the screen and move the terminal cursor to its origin.
+ *
+ * @details Writes ANSI output to stdout; does not modify the edited input or
+ * history.
+ */
 void linenoiseClearScreen(void) {
     if (write(STDOUT_FILENO,"\x1b[H\x1b[2J",7) <= 0) {
         /* nothing to do, just to avoid warning. */
     }
 }
 
-/* Beep, used for completion when there is nothing to complete or when all
- * the choices were already shown. */
+/**
+ * @brief Emit the terminal bell as feedback for an unavailable action.
+ *
+ * @details Writes and flushes stderr; used for completion and editing
+ * feedback.
+ */
 static void linenoiseBeep(void) {
     fprintf(stderr, "\x7");
     fflush(stderr);
@@ -702,7 +823,12 @@ static void linenoiseBeep(void) {
 
 /* ============================== Completion ================================ */
 
-/* Free a list of completion option populated by linenoiseAddCompletion(). */
+/**
+ * @brief Release the strings and array owned by a completion result.
+ *
+ * @details lc contains allocated candidate strings. The structure itself
+ * remains owned by its caller.
+ */
 static void freeCompletions(linenoiseCompletions *lc) {
     size_t i;
     for (i = 0; i < lc->len; i++)
@@ -711,12 +837,20 @@ static void freeCompletions(linenoiseCompletions *lc) {
         free(lc->cvec);
 }
 
-/* Called by completeLine() and linenoiseShow() to render the current
- * edited line with the proposed completion. If the current completion table
- * is already available, it is passed as second argument, otherwise the
- * function will use the callback to obtain it.
+/**
+ * @brief Preview the selected completion without committing its text.
  *
- * Flags are the same as refreshLine*(), that is REFRESH_* macros. */
+ * @details ls is a live editing session, lc contains candidates and flags
+ * select refresh behavior. Temporarily substitutes the preview and restores
+ * editing fields afterward.
+ *
+ * @note Called by completeLine() and linenoiseShow() to render the current
+ * edited line with the proposed completion. If the current completion table is
+ * already available, it is passed as second argument, otherwise the function
+ * will use the callback to obtain it.
+ *
+ * Flags are the same as refreshLine*(), that is REFRESH_* macros.
+ */
 static void refreshLineWithCompletion(struct linenoiseState *ls, linenoiseCompletions *lc, int flags) {
     /* Obtain the table of completions if the caller didn't provide one. */
     linenoiseCompletions ctable = { 0, NULL };
@@ -744,20 +878,27 @@ static void refreshLineWithCompletion(struct linenoiseState *ls, linenoiseComple
     if (lc != &ctable) freeCompletions(&ctable);
 }
 
-/* This is an helper function for linenoiseEdit*() and is called when the
+/**
+ * @brief Advance completion selection or commit the preview.
+ *
+ * @details ls is a live session and keypressed is the input event.
+ * @return the event for normal processing, or zero when completion consumed
+ * it.
+ *
+ * @note This is an helper function for linenoiseEdit*() and is called when the
  * user types the <tab> key in order to complete the string currently in the
  * input.
  *
  * The state of the editing is encapsulated into the pointed linenoiseState
  * structure as described in the structure definition.
  *
- * If the function returns non-zero, the caller should handle the
- * returned value as a byte read from the standard input, and process
- * it as usually: this basically means that the function may return a byte
- * read from the termianl but not processed. Otherwise, if zero is returned,
- * the input was consumed by the completeLine() function to navigate the
- * possible completions, and the caller should read for the next characters
- * from stdin. */
+ * If the function returns non-zero, the caller should handle the returned
+ * value as a byte read from the standard input, and process it as usually:
+ * this basically means that the function may return a byte read from the
+ * termianl but not processed. Otherwise, if zero is returned, the input was
+ * consumed by the completeLine() function to navigate the possible
+ * completions, and the caller should read for the next characters from stdin.
+ */
 static int completeLine(struct linenoiseState *ls, int keypressed) {
     linenoiseCompletions lc = { 0, NULL };
     int nwritten;
@@ -810,27 +951,47 @@ static int completeLine(struct linenoiseState *ls, int keypressed) {
     return c; /* Return last read character */
 }
 
-/* Register a callback function to be called for tab-completion. */
+/**
+ * @brief Register the callback that supplies Tab-completion candidates.
+ *
+ * @details fn may be NULL to disable completion; the callback adds copied
+ * candidates through linenoiseAddCompletion().
+ */
 void linenoiseSetCompletionCallback(linenoiseCompletionCallback *fn) {
     completionCallback = fn;
 }
 
-/* Register a hits function to be called to show hits to the user at the
- * right of the prompt. */
+/**
+ * @brief Register the callback that supplies a display hint for current input.
+ *
+ * @details fn may be NULL to disable hints. Hint ownership follows the
+ * separately registered free-hints callback.
+ */
 void linenoiseSetHintsCallback(linenoiseHintsCallback *fn) {
     hintsCallback = fn;
 }
 
-/* Register a function to free the hints returned by the hints callback
- * registered with linenoiseSetHintsCallback(). */
+/**
+ * @brief Register the cleanup function for hints returned by the hint callback.
+ *
+ * @details fn may be NULL when hints need no release; otherwise it receives
+ * the hint after rendering.
+ */
 void linenoiseSetFreeHintsCallback(linenoiseFreeHintsCallback *fn) {
     freeHintsCallback = fn;
 }
 
-/* This function is used by the callback function registered by the user
- * in order to add completion options given the input string when the
- * user typed <tab>. See the example.c source code for a very easy to
- * understand example. */
+/**
+ * @brief Append a copied candidate to a completion result.
+ *
+ * @details lc is the callback's completion accumulator and str is NUL-terminated. The historical allocator may leave the list unchanged on
+ * failure.
+ *
+ * @note This function is used by the callback function registered by the user
+ * in order to add completion options given the input string when the user
+ * typed <tab>. See the example.c source code for a very easy to understand
+ * example.
+ */
 void linenoiseAddCompletion(linenoiseCompletions *lc, const char *str) {
     size_t len = strlen(str);
     char *copy, **cvec;
@@ -858,11 +1019,22 @@ struct abuf {
     int len;
 };
 
+/**
+ * @brief Initialize an empty historical output buffer.
+ *
+ * @details Call before abAppend(); storage is released by abFree().
+ */
 static void abInit(struct abuf *ab) {
     ab->b = NULL;
     ab->len = 0;
 }
 
+/**
+ * @brief Append bytes to the historical output buffer.
+ *
+ * @details s contains len bytes. Uses recoverable realloc and leaves the
+ * buffer unchanged on allocation failure; output is not NUL-terminated.
+ */
 static void abAppend(struct abuf *ab, const char *s, int len) {
     char *new = realloc(ab->b,ab->len+len);
 
@@ -872,6 +1044,12 @@ static void abAppend(struct abuf *ab, const char *s, int len) {
     ab->len += len;
 }
 
+/**
+ * @brief Release the historical output buffer's allocation.
+ *
+ * @details Does not reset ab fields; reinitialize before reuse and do not free
+ * twice.
+ */
 static void abFree(struct abuf *ab) {
     free(ab->b);
 }
@@ -891,7 +1069,12 @@ struct linenoiseFolds {
     struct linenoiseFold fold[LINENOISE_MAX_FOLDS];
 };
 
-/* Return the number of logical lines in the range. */
+/**
+ * @brief Count line boundaries in pasted or historical text.
+ *
+ * @details buf contains len bytes.
+ * @return one plus the number of LF bytes, including one for an empty span.
+ */
 static size_t foldCountLines(const char *buf, size_t len) {
     size_t lines = 1, j;
     for (j = 0; j < len; j++) {
@@ -900,13 +1083,23 @@ static size_t foldCountLines(const char *buf, size_t len) {
     return lines;
 }
 
-/* Return true if the text should be folded: if it contains newlines or is at
- * least PASTE_FOLD_THRESHOLD bytes long. */
+/**
+ * @brief Decide whether a text span should be abbreviated for display.
+ *
+ * @details buf contains len bytes.
+ * @return 1 when it contains LF or reaches the byte threshold; source text is
+ * retained.
+ */
 static int shouldFoldText(const char *buf, size_t len) {
     return memchr(buf, '\n', len) != NULL || len >= PASTE_FOLD_THRESHOLD;
 }
 
-/* Fill f->display with the text shown instead of the folded range. */
+/**
+ * @brief Build the short display label for a folded range.
+ *
+ * @details f already describes a source-byte range in buf. Updates its inline
+ * label without modifying the original text.
+ */
 static void foldSetRenderedText(struct linenoiseFold *f, const char *buf) {
     size_t hidden = f->end - f->start;
     size_t lines = foldCountLines(buf + f->start, hidden);
@@ -920,10 +1113,17 @@ static void foldSetRenderedText(struct linenoiseFold *f, const char *buf) {
     f->displaylen = (size_t)n;
 }
 
-/* Populate f with one fold reconstructed from a history entry. History stores
- * the real text, but not the original paste boundaries, so we reconstruct
- * an approximation of text we want to hide on the fly: if it is long or
- * contains newlines. */
+/**
+ * @brief Prepare a display fold for a large recalled history entry.
+ *
+ * @details l is a live session and f is output storage.
+ * @return 1 when a history fold is needed, otherwise 0.
+ *
+ * @note Populate f with one fold reconstructed from a history entry. History
+ * stores the real text, but not the original paste boundaries, so we
+ * reconstruct an approximation of text we want to hide on the fly: if it is
+ * long or contains newlines.
+ */
 static int linenoiseBuildHistoryFold(struct linenoiseState *l, struct linenoiseFold *f) {
     f->start = f->end = f->displaylen = 0;
     if (l->len == 0 || maskmode) return 0;
@@ -967,9 +1167,17 @@ static int linenoiseBuildHistoryFold(struct linenoiseState *l, struct linenoiseF
     return 1;
 }
 
-/* Populate fs with the folds to render for the current buffer. As a side
+/**
+ * @brief Gather the folds to apply to the current display.
+ *
+ * @details l is a live session and fs is output storage. Updates fold labels
+ * and returns 1 when at least one usable fold exists, otherwise 0; the count
+ * is stored in fs.
+ *
+ * @note Populate fs with the folds to render for the current buffer. As a side
  * effect, the rendered text of each fold is updated. Return 1 if folding
- * should be used, or 0 if the buffer should be rendered as-is. */
+ * should be used, or 0 if the buffer should be rendered as-is.
+ */
 static int linenoiseGetRenderFolds(struct linenoiseState *l, struct linenoiseFolds *fs) {
     int j;
 
@@ -990,11 +1198,19 @@ static int linenoiseGetRenderFolds(struct linenoiseState *l, struct linenoiseFol
     return fs->count != 0;
 }
 
-/* Return the freshly allocated string content that is actually displayed in
- * the user prompt. It can be the actual edited line, or a special version
+/**
+ * @brief Build display text with folded spans and a corresponding cursor offset.
+ *
+ * @details l is a live session. Writes an owned NUL-terminated string to out
+ * plus byte length and cursor offset; returns 0 on success, -1 on allocation
+ * failure. The caller frees the string.
+ *
+ * @note Return the freshly allocated string content that is actually displayed
+ * in the user prompt. It can be the actual edited line, or a special version
  * where pasted or multiline history ranges are replaced by their folded
  * "[...]" style versions. outpos is l->pos translated into this rendered
- * buffer. */
+ * buffer.
+ */
 static int linenoiseRenderBuffer(struct linenoiseState *l, char **out, size_t *outlen, size_t *outpos) {
     struct linenoiseFolds fs;
     size_t len, pos, src, dst;
@@ -1061,8 +1277,12 @@ static int linenoiseRenderBuffer(struct linenoiseState *l, char **out, size_t *o
     return 0;
 }
 
-/* Return the number of bytes to move right from pos. If pos is at the start of
- * a folded range, the whole hidden range is skipped by one cursor movement. */
+/**
+ * @brief Measure the next editing unit, treating a fold as one unit.
+ *
+ * @details pos is a source-byte boundary in l.
+ * @return the byte distance to the next grapheme or fold edge.
+ */
 static size_t linenoiseEditNextLen(struct linenoiseState *l, size_t pos) {
     struct linenoiseFolds fs;
     int j;
@@ -1076,8 +1296,12 @@ static size_t linenoiseEditNextLen(struct linenoiseState *l, size_t pos) {
     return utf8NextCharLen(l->buf,pos,l->len);
 }
 
-/* Return the number of bytes to move left from pos. If pos is at the end of a
- * folded range, the whole hidden range is skipped by one cursor movement. */
+/**
+ * @brief Measure the previous editing unit, treating a fold as one unit.
+ *
+ * @details pos is a source-byte boundary in l.
+ * @return the byte distance to the previous grapheme or fold edge.
+ */
 static size_t linenoiseEditPrevLen(struct linenoiseState *l, size_t pos) {
     struct linenoiseFolds fs;
     int j;
@@ -1091,7 +1315,12 @@ static size_t linenoiseEditPrevLen(struct linenoiseState *l, size_t pos) {
     return utf8PrevCharLen(l->buf,pos);
 }
 
-/* Add a fold range, keeping the array sorted by start offset. */
+/**
+ * @brief Register a source range to abbreviate in the display.
+ *
+ * @details start and end are byte offsets with an exclusive end. Uses the
+ * fixed fold slots; does not remove or rewrite source text.
+ */
 static void linenoiseFoldAdd(struct linenoiseState *l, size_t start, size_t end) {
     int j;
 
@@ -1107,12 +1336,22 @@ static void linenoiseFoldAdd(struct linenoiseState *l, size_t start, size_t end)
     l->fold_count++;
 }
 
-/* Clear all remembered fold ranges. */
+/**
+ * @brief Remove all display folds from an editing session.
+ *
+ * @details l retains its text; subsequent refreshes display it without fold
+ * labels.
+ */
 static void linenoiseFoldClear(struct linenoiseState *l) {
     l->fold_count = 0;
 }
 
-/* Remove one remembered fold range. */
+/**
+ * @brief Remove one display fold and shift later fold entries.
+ *
+ * @details j is a valid zero-based fold index in l. Source text is left
+ * intact.
+ */
 static void linenoiseFoldRemove(struct linenoiseState *l, int j) {
     memmove(l->fold_start+j,l->fold_start+j+1,
             sizeof(size_t)*(l->fold_count-j-1));
@@ -1121,7 +1360,12 @@ static void linenoiseFoldRemove(struct linenoiseState *l, int j) {
     l->fold_count--;
 }
 
-/* Return true if [pos,pos+len) overlaps any folded range. */
+/**
+ * @brief Check whether a proposed deletion intersects a folded source range.
+ *
+ * @details pos and len define a source-byte range.
+ * @return 1 on overlap, otherwise 0.
+ */
 static int linenoiseRangeOverlapsFold(struct linenoiseState *l, size_t pos, size_t len) {
     size_t end = pos + len;
     int j;
@@ -1133,8 +1377,12 @@ static int linenoiseRangeOverlapsFold(struct linenoiseState *l, size_t pos, size
     return 0;
 }
 
-/* Adjust fold ranges after an insertion. If insertion somehow lands inside a
- * fold, remove that fold because it no longer maps to an unchanged range. */
+/**
+ * @brief Shift or invalidate folds affected by inserted bytes.
+ *
+ * @details pos is the source-byte insertion point and len is the inserted byte
+ * count. Call alongside source mutation so fold coordinates stay consistent.
+ */
 static void linenoiseAdjustFoldsAfterInsert(struct linenoiseState *l, size_t pos, size_t len) {
     int j = 0;
 
@@ -1151,8 +1399,12 @@ static void linenoiseAdjustFoldsAfterInsert(struct linenoiseState *l, size_t pos
     }
 }
 
-/* Adjust fold ranges after a deletion. If deletion overlaps a fold, remove
- * that fold because it no longer maps to an unchanged range. */
+/**
+ * @brief Shift or invalidate folds affected by removed bytes.
+ *
+ * @details pos and len describe the deleted source-byte range. Call alongside
+ * source mutation before redrawing.
+ */
 static void linenoiseAdjustFoldsAfterDelete(struct linenoiseState *l, size_t pos, size_t len) {
     size_t end = pos + len;
     int j = 0;
@@ -1170,8 +1422,13 @@ static void linenoiseAdjustFoldsAfterDelete(struct linenoiseState *l, size_t pos
     }
 }
 
-/* Helper of refreshSingleLine() and refreshMultiLine() to show hints
- * to the right of the prompt. Now uses display widths for proper UTF-8. */
+/**
+ * @brief Append callback-provided hints if space remains after the input.
+ *
+ * @details ab is the output buffer, l the live session; pwidth and bufwidth
+ * are display columns. Releases hint text through the registered cleanup
+ * callback.
+ */
 void refreshShowHints(struct abuf *ab, struct linenoiseState *l, int pwidth, size_t bufwidth) {
     if (hintsCallback) {
         char seq[64];
@@ -1211,16 +1468,23 @@ void refreshShowHints(struct abuf *ab, struct linenoiseState *l, int pwidth, siz
     }
 }
 
-/* Single line low level line refresh.
+/**
+ * @brief Redraw the historical editor in a single terminal row.
  *
- * Rewrite the currently edited line accordingly to the buffer content,
- * cursor position, and number of columns of the terminal.
+ * @details l is a live session and flags select refresh behavior. Uses folded
+ * display text and horizontal clipping without changing the source buffer.
  *
- * Flags is REFRESH_* macros. The function can just remove the old
- * prompt, just write it, or both.
+ * @note Single line low level line refresh.
  *
- * This function is UTF-8 aware and uses display widths (not byte counts)
- * for cursor positioning and horizontal scrolling. */
+ * Rewrite the currently edited line accordingly to the buffer content, cursor
+ * position, and number of columns of the terminal.
+ *
+ * Flags is REFRESH_* macros. The function can just remove the old prompt, just
+ * write it, or both.
+ *
+ * This function is UTF-8 aware and uses display widths (not byte counts) for
+ * cursor positioning and horizontal scrolling.
+ */
 static void refreshSingleLine(struct linenoiseState *l, int flags) {
     char seq[64];
     size_t pwidth = utf8StrWidth(l->prompt, l->plen); /* Prompt display width */
@@ -1300,15 +1564,22 @@ static void refreshSingleLine(struct linenoiseState *l, int flags) {
     free(render);
 }
 
-/* Multi line low level line refresh.
+/**
+ * @brief Redraw the historical editor across the required terminal rows.
  *
- * Rewrite the currently edited line accordingly to the buffer content,
- * cursor position, and number of columns of the terminal.
+ * @details l is a live session and flags select refresh behavior. Tracks old
+ * occupied rows so shrinking input clears stale output.
  *
- * Flags is REFRESH_* macros. The function can just remove the old
- * prompt, just write it, or both.
+ * @note Multi line low level line refresh.
  *
- * This function is UTF-8 aware and uses display widths for positioning. */
+ * Rewrite the currently edited line accordingly to the buffer content, cursor
+ * position, and number of columns of the terminal.
+ *
+ * Flags is REFRESH_* macros. The function can just remove the old prompt, just
+ * write it, or both.
+ *
+ * This function is UTF-8 aware and uses display widths for positioning.
+ */
 static void refreshMultiLine(struct linenoiseState *l, int flags) {
     char seq[64];
     size_t pwidth = utf8StrWidth(l->prompt, l->plen);  /* Prompt display width */
@@ -1417,8 +1688,12 @@ static void refreshMultiLine(struct linenoiseState *l, int flags) {
     free(render);
 }
 
-/* Calls the two low level functions refreshSingleLine() or
- * refreshMultiLine() according to the selected mode. */
+/**
+ * @brief Choose the active historical rendering mode for a refresh.
+ *
+ * @details l is a live session and flags are the refresh bitmask; does not
+ * read another input event.
+ */
 static void refreshLineWithFlags(struct linenoiseState *l, int flags) {
     if (mlmode)
         refreshMultiLine(l,flags);
@@ -1426,12 +1701,22 @@ static void refreshLineWithFlags(struct linenoiseState *l, int flags) {
         refreshSingleLine(l,flags);
 }
 
-/* Utility function to avoid specifying REFRESH_ALL all the times. */
+/**
+ * @brief Redraw a historical editing session using the default refresh flags.
+ *
+ * @details Uses the global single-line or multiline setting and current cursor
+ * state.
+ */
 static void refreshLine(struct linenoiseState *l) {
     refreshLineWithFlags(l,REFRESH_ALL);
 }
 
-/* Hide the current line, when using the multiplexing API. */
+/**
+ * @brief Temporarily erase the prompt and edited input.
+ *
+ * @details Use before printing unrelated output during a live nonblocking
+ * session; linenoiseShow() redraws the same input afterward.
+ */
 void linenoiseHide(struct linenoiseState *l) {
     if (mlmode)
         refreshMultiLine(l,REFRESH_CLEAN);
@@ -1439,7 +1724,11 @@ void linenoiseHide(struct linenoiseState *l) {
         refreshSingleLine(l,REFRESH_CLEAN);
 }
 
-/* Show the current line, when using the multiplexing API. */
+/**
+ * @brief Redisplay an editing session after unrelated terminal output.
+ *
+ * @details l must be a live session previously hidden with linenoiseHide().
+ */
 void linenoiseShow(struct linenoiseState *l) {
     if (l->in_completion) {
         refreshLineWithCompletion(l,NULL,REFRESH_WRITE);
@@ -1448,9 +1737,13 @@ void linenoiseShow(struct linenoiseState *l) {
     }
 }
 
-/* Grow the editing buffer if this state owns a growable buffer. Only the
- * blocking linenoise() API sets buflen_max: the multiplexing API still uses
- * the caller-provided fixed buffer. */
+/**
+ * @brief Ensure the historical edit buffer can hold the requested text.
+ *
+ * @details needed excludes the NUL. Only dynamically owned sessions may grow;
+ * fixed buffers are bounded.
+ * @return 0 when capacity is sufficient, -1 on limit or allocation failure.
+ */
 static int linenoiseEditGrow(struct linenoiseState *l, size_t needed) {
     size_t newlen;
     char *newbuf;
@@ -1481,9 +1774,17 @@ static int linenoiseEditGrow(struct linenoiseState *l, size_t needed) {
     return 0;
 }
 
-/* Insert bytes into l->buf without repainting the prompt. The paste path uses
- * this to first store the real pasted bytes, then mark their range as folded,
- * and only then refresh so raw pasted newlines are never printed directly. */
+/**
+ * @brief Insert a byte span into the historical input without drawing.
+ *
+ * @details c contains clen bytes. Updates cursor, text and fold positions;
+ * returns 0 on success or -1 when capacity cannot grow.
+ *
+ * @note Insert bytes into l->buf without repainting the prompt. The paste path
+ * uses this to first store the real pasted bytes, then mark their range as
+ * folded, and only then refresh so raw pasted newlines are never printed
+ * directly.
+ */
 static int linenoiseEditInsertNoRefresh(struct linenoiseState *l, const char *c, size_t clen) {
     size_t insert_pos = l->pos;
 
@@ -1503,10 +1804,19 @@ static int linenoiseEditInsertNoRefresh(struct linenoiseState *l, const char *c,
     return 0;
 }
 
-/* Insert the character(s) 'c' of length 'clen' at cursor current position.
- * This handles both single-byte ASCII and multi-byte UTF-8 sequences.
+/**
+ * @brief Insert a byte span and update the historical display.
  *
- * On error writing to the terminal -1 is returned, otherwise 0. */
+ * @details c contains clen bytes.
+ * @return -1 only for a failed direct terminal write; returns 0 otherwise,
+ * including when insertion is skipped because storage cannot grow.
+ *
+ * @note Insert the character(s) 'c' of length 'clen' at cursor current
+ * position. This handles both single-byte ASCII and multi-byte UTF-8
+ * sequences.
+ *
+ * On error writing to the terminal -1 is returned, otherwise 0.
+ */
 int linenoiseEditInsert(struct linenoiseState *l, const char *c, size_t clen) {
     if (l->len == l->pos) {
         int needs_refresh = memchr(c, '\n', clen) != NULL ||
@@ -1536,7 +1846,12 @@ int linenoiseEditInsert(struct linenoiseState *l, const char *c, size_t clen) {
     return 0;
 }
 
-/* Move cursor on the left. Moves by one UTF-8 character, not byte. */
+/**
+ * @brief Move left by one grapheme or folded editing unit.
+ *
+ * @details l is a live session. Stops at the input start and redraws after a
+ * successful move.
+ */
 void linenoiseEditMoveLeft(struct linenoiseState *l) {
     if (l->pos > 0) {
         l->pos -= linenoiseEditPrevLen(l, l->pos);
@@ -1544,7 +1859,12 @@ void linenoiseEditMoveLeft(struct linenoiseState *l) {
     }
 }
 
-/* Move cursor on the right. Moves by one UTF-8 character, not byte. */
+/**
+ * @brief Move right by one grapheme or folded editing unit.
+ *
+ * @details l is a live session. Stops at the input end and redraws after a
+ * successful move.
+ */
 void linenoiseEditMoveRight(struct linenoiseState *l) {
     if (l->pos != l->len) {
         l->pos += linenoiseEditNextLen(l, l->pos);
@@ -1552,7 +1872,11 @@ void linenoiseEditMoveRight(struct linenoiseState *l) {
     }
 }
 
-/* Move cursor to the start of the line. */
+/**
+ * @brief Move to the start of the historical input.
+ *
+ * @details l is a live session; redraws only when the cursor changes.
+ */
 void linenoiseEditMoveHome(struct linenoiseState *l) {
     if (l->pos != 0) {
         l->pos = 0;
@@ -1560,7 +1884,11 @@ void linenoiseEditMoveHome(struct linenoiseState *l) {
     }
 }
 
-/* Move cursor to the end of the line. */
+/**
+ * @brief Move to the end of the historical input.
+ *
+ * @details l is a live session; redraws only when the cursor changes.
+ */
 void linenoiseEditMoveEnd(struct linenoiseState *l) {
     if (l->pos != l->len) {
         l->pos = l->len;
@@ -1572,6 +1900,13 @@ void linenoiseEditMoveEnd(struct linenoiseState *l) {
  * entry as specified by 'dir'. */
 #define LINENOISE_HISTORY_NEXT 0
 #define LINENOISE_HISTORY_PREV 1
+/**
+ * @brief Recall an adjacent history entry into the live edit buffer.
+ *
+ * @details dir selects LINENOISE_HISTORY_PREV or LINENOISE_HISTORY_NEXT. Saves
+ * the current entry before moving and keeps history navigation within its
+ * bounds.
+ */
 void linenoiseEditHistoryNext(struct linenoiseState *l, int dir) {
     if (history_len > 1) {
         const char *src;
@@ -1612,9 +1947,12 @@ void linenoiseEditHistoryNext(struct linenoiseState *l, int dir) {
     }
 }
 
-/* Delete the character at the right of the cursor without altering the cursor
- * position. Basically this is what happens with the "Delete" keyboard key.
- * Now handles multi-byte UTF-8 characters. */
+/**
+ * @brief Delete the editing unit after the historical cursor.
+ *
+ * @details Uses grapheme and fold boundaries, updates remaining folds and
+ * redraws; does nothing at input end.
+ */
 void linenoiseEditDelete(struct linenoiseState *l) {
     if (l->len > 0 && l->pos < l->len) {
         size_t clen = linenoiseEditNextLen(l, l->pos);
@@ -1626,7 +1964,12 @@ void linenoiseEditDelete(struct linenoiseState *l) {
     }
 }
 
-/* Backspace implementation. Deletes the UTF-8 character before the cursor. */
+/**
+ * @brief Delete the editing unit before the historical cursor.
+ *
+ * @details Moves the cursor to the surviving boundary, updates folds and
+ * redraws; does nothing at input start.
+ */
 void linenoiseEditBackspace(struct linenoiseState *l) {
     if (l->pos > 0 && l->len > 0) {
         size_t clen = linenoiseEditPrevLen(l, l->pos);
@@ -1639,8 +1982,12 @@ void linenoiseEditBackspace(struct linenoiseState *l) {
     }
 }
 
-/* Delete the previous word, maintaining the cursor at the start of the
- * current word. Handles UTF-8 by moving character-by-character. */
+/**
+ * @brief Remove the previous whitespace-delimited word.
+ *
+ * @details l is a live session. Deletes preceding whitespace and word text,
+ * adjusts folds and redraws.
+ */
 void linenoiseEditDeletePrevWord(struct linenoiseState *l) {
     size_t old_pos = l->pos;
     size_t diff;
@@ -1658,29 +2005,13 @@ void linenoiseEditDeletePrevWord(struct linenoiseState *l) {
     refreshLine(l);
 }
 
-/* This function is part of the multiplexed API of Linenoise, that is used
- * in order to implement the blocking variant of the API but can also be
- * called by the user directly in an event driven program. It will:
+/**
+ * @brief Start a nonblocking line-editing session with a caller-provided buffer.
  *
- * 1. Initialize the linenoise state passed by the user.
- * 2. Put the terminal in RAW mode.
- * 3. Show the prompt.
- * 4. Return control to the user, that will have to call linenoiseEditFeed()
- *    each time there is some data arriving in the standard input.
- *
- * The user can also call linenoiseEditHide() and linenoiseEditShow() if it
- * is required to show some input arriving asyncronously, without mixing
- * it with the currently edited line.
- *
- * When linenoiseEditFeed() returns non-NULL, the user finished with the
- * line editing session (pressed enter CTRL-D/C): in this case the caller
- * needs to call linenoiseEditStop() to put back the terminal in normal
- * mode. This will not destroy the buffer, as long as the linenoiseState
- * is still valid in the context of the caller.
- *
- * The function returns 0 on success, or -1 if writing to standard output
- * fails. If stdin_fd or stdout_fd are set to -1, the default is to use
- * STDIN_FILENO and STDOUT_FILENO.
+ * @details buf must have at least buflen writable bytes including room for NUL
+ * and remain alive until stop; -1 descriptors select standard streams. Pair
+ * feed calls with linenoiseEditStop().
+ * @return 0 on success, -1 on setup failure.
  */
 int linenoiseEditStart(struct linenoiseState *l, int stdin_fd, int stdout_fd, char *buf, size_t buflen, const char *prompt) {
     /* Populate the linenoise state that we pass to functions implementing
@@ -1723,8 +2054,13 @@ int linenoiseEditStart(struct linenoiseState *l, int stdin_fd, int stdout_fd, ch
     return 0;
 }
 
-/* Make sure the temporary paste buffer can hold len+need bytes. Return -1 on
- * allocation failure or if the requested size is over PASTE_MAX_BYTES. */
+/**
+ * @brief Grow temporary paste storage within the historical paste limit.
+ *
+ * @details buf and cap are updated only on successful allocation. len is used
+ * bytes and need is additional bytes; returns 0 if capacity is available, -1
+ * on limit or allocation failure.
+ */
 static int pasteBufferReserve(char **buf, size_t *cap, size_t len, size_t need) {
     size_t want;
     char *nb;
@@ -1754,8 +2090,13 @@ static int pasteBufferReserve(char **buf, size_t *cap, size_t len, size_t need) 
     return 0;
 }
 
-/* Append bytes to the temporary paste buffer, growing both it and l->buf as
- * needed. Return -1 if the paste is too large or allocation fails. */
+/**
+ * @brief Append paste bytes while checking both paste and line limits.
+ *
+ * @details s supplies slen bytes and maxlen is the allowed paste length.
+ * Updates the owned temporary buffer, capacity and length; returns 0 on
+ * success or -1 without appending on failure.
+ */
 static int pasteBufferAppend(struct linenoiseState *l, char **buf, size_t *cap,
                              size_t *len, const char *s, size_t slen, size_t maxlen) {
     size_t needed;
@@ -1771,8 +2112,13 @@ static int pasteBufferAppend(struct linenoiseState *l, char **buf, size_t *cap,
     return 0;
 }
 
-/* Read a bracketed paste until ESC[201~ and insert the real bytes. If folding
- * is needed, remember the inserted range so only rendering is shortened. */
+/**
+ * @brief Read a bracketed paste and insert its original bytes as one edit.
+ *
+ * @details Call after consuming the opening marker. Large spans may receive a
+ * display fold; source bytes remain available for editing and return to the
+ * caller.
+ */
 static void linenoiseEditPaste(struct linenoiseState *l) {
     static const char END[] = "\x1b[201~";
     const size_t ENDLEN = sizeof(END)-1;
@@ -1854,23 +2200,12 @@ static void linenoiseEditPaste(struct linenoiseState *l) {
 
 char *linenoiseEditMore = "If you see this, you are misusing the API: when linenoiseEditFeed() is called, if it returns linenoiseEditMore the user is yet editing the line. See the README file for more information.";
 
-/* This function is part of the multiplexed API of linenoise, see the top
- * comment on linenoiseEditStart() for more information. Call this function
- * each time there is some data to read from the standard input file
- * descriptor. In the case of blocking operations, this function can just be
- * called in a loop, and block.
+/**
+ * @brief Process input for a live nonblocking line-editing session.
  *
- * The function returns linenoiseEditMore to signal that line editing is still
- * in progress, that is, the user didn't yet pressed enter / CTRL-D. Otherwise
- * the function returns the pointer to the heap-allocated buffer with the
- * edited line, that the user should free with linenoiseFree().
- *
- * On special conditions, NULL is returned and errno is populated:
- *
- * EAGAIN if the user pressed Ctrl-C
- * ENOENT if the user pressed Ctrl-D
- *
- * Some other errno: I/O error.
+ * @details Do not free the sentinel; finish with linenoiseEditStop().
+ * @return linenoiseEditMore while editing continues, an owned completed line
+ * to release with linenoiseFree(), or NULL on end or error.
  */
 char *linenoiseEditFeed(struct linenoiseState *l) {
     /* Not a TTY, pass control to line reading without character
@@ -2077,21 +2412,36 @@ char *linenoiseEditFeed(struct linenoiseState *l) {
     return linenoiseEditMore;
 }
 
-/* This is part of the multiplexed linenoise API. See linenoiseEditStart()
- * for more information. This function is called when linenoiseEditFeed()
- * returns something different than NULL. At this point the user input
- * is in the buffer, and we can restore the terminal in normal mode. */
+/**
+ * @brief Finish a historical editing session and restore terminal input.
+ *
+ * @details l must have been started successfully. Restores raw mode and emits
+ * a newline for terminal sessions; does not free the caller's edit buffer.
+ *
+ * @note This is part of the multiplexed linenoise API. See
+ * linenoiseEditStart() for more information. This function is called when
+ * linenoiseEditFeed() returns something different than NULL. At this point the
+ * user input is in the buffer, and we can restore the terminal in normal mode.
+ */
 void linenoiseEditStop(struct linenoiseState *l) {
     if (!isatty(l->ifd) && !getenv("LINENOISE_ASSUME_TTY")) return;
     disableRawMode(l->ifd);
     printf("\n");
 }
 
-/* This just implements a blocking loop for the multiplexed API.
- * In many applications that are not event-drivern, we can just call
- * the blocking linenoise API, wait for the user to complete the editing
- * and return the buffer. This wrapper owns l.buf, so it can let the edit
- * state grow it dynamically for large pasted input. */
+/**
+ * @brief Drive the nonblocking API until a line is accepted or editing ends.
+ *
+ * @details Owns a dynamically growing session buffer.
+ * @return an owned completed line or NULL, releasing temporary storage and
+ * stopping the session before returning.
+ *
+ * @note This just implements a blocking loop for the multiplexed API. In many
+ * applications that are not event-drivern, we can just call the blocking
+ * linenoise API, wait for the user to complete the editing and return the
+ * buffer. This wrapper owns l.buf, so it can let the edit state grow it
+ * dynamically for large pasted input.
+ */
 static char *linenoiseBlockingEdit(int stdin_fd, int stdout_fd, const char *prompt)
 {
     struct linenoiseState l;
@@ -2116,9 +2466,12 @@ static char *linenoiseBlockingEdit(int stdin_fd, int stdout_fd, const char *prom
     return res;
 }
 
-/* This special mode is used by linenoise in order to print scan codes
- * on screen for debugging / development purposes. It is implemented
- * by the linenoise_example program using the --keycodes option. */
+/**
+ * @brief Run an interactive raw-byte logger for terminal key diagnostics.
+ *
+ * @details Writes incoming byte values until the logger's quit sequence is
+ * received, then restores terminal mode.
+ */
 void linenoisePrintKeyCodes(void) {
     char quit[4];
 
@@ -2145,8 +2498,13 @@ void linenoisePrintKeyCodes(void) {
     disableRawMode(STDIN_FILENO);
 }
 
-/* Read a newline-terminated record from fp with no fixed-size stack buffer.
- * Used for non-tty input, unsupported terminals, and history loading. */
+/**
+ * @brief Read an arbitrary-length line from a stream without terminal editing.
+ *
+ * @details fp is readable and err may be NULL.
+ * @return owned NUL-terminated text without LF, or NULL at empty EOF or
+ * allocation failure; err reports allocation failure when supplied.
+ */
 static char *linenoiseReadLine(FILE *fp, int *err) {
     char *line = NULL;
     size_t len = 0, cap = 0;
@@ -2187,20 +2545,35 @@ static char *linenoiseReadLine(FILE *fp, int *err) {
     }
 }
 
-/* This function is called when linenoise() is called with the standard
- * input file descriptor not attached to a TTY. So for example when the
- * program using linenoise is called in pipe or with a file redirected
- * to its standard input. In this case, we want to be able to return the
- * line regardless of its length. */
+/**
+ * @brief Read a line from redirected stdin using the stream reader.
+ *
+ * @return owned NUL-terminated text without LF, or NULL at EOF or allocation
+ * failure; no prompt or raw mode is used.
+ *
+ * @note This function is called when linenoise() is called with the standard
+ * input file descriptor not attached to a TTY. So for example when the program
+ * using linenoise is called in pipe or with a file redirected to its standard
+ * input. In this case, we want to be able to return the line regardless of its
+ * length.
+ */
 static char *linenoiseNoTTY(void) {
     return linenoiseReadLine(stdin,NULL);
 }
 
-/* The high level function that is the main API of the linenoise library.
+/**
+ * @brief Read a line with terminal editing or a plain-stream fallback.
+ *
+ * @details prompt is borrowed NUL-terminated text.
+ * @return owned input to release with linenoiseFree(), or NULL on EOF,
+ * interruption or failure.
+ *
+ * @note The high level function that is the main API of the linenoise library.
  * This function checks if the terminal has basic capabilities, just checking
- * for a blacklist of stupid terminals, and later either calls the line
- * editing function or uses a simple line reader so that you will be able
- * to type something even in the most desperate of the conditions. */
+ * for a blacklist of stupid terminals, and later either calls the line editing
+ * function or uses a simple line reader so that you will be able to type
+ * something even in the most desperate of the conditions.
+ */
 char *linenoise(const char *prompt) {
     if (!isatty(STDIN_FILENO) && !getenv("LINENOISE_ASSUME_TTY")) {
         /* Not a tty: read from file / pipe. In this mode we don't want any
@@ -2227,10 +2600,17 @@ char *linenoise(const char *prompt) {
     }
 }
 
-/* This is just a wrapper the user may want to call in order to make sure
+/**
+ * @brief Release a line returned by the historical editing API.
+ *
+ * @details Accepts NULL and ignores linenoiseEditMore so an accidentally
+ * passed continuation sentinel is not freed.
+ *
+ * @note This is just a wrapper the user may want to call in order to make sure
  * the linenoise returned buffer is freed with the same allocator it was
  * created with. Useful when the main program is using an alternative
- * allocator. */
+ * allocator.
+ */
 void linenoiseFree(void *ptr) {
     if (ptr == linenoiseEditMore) return; // Protect from API misuse.
     free(ptr);
@@ -2238,8 +2618,12 @@ void linenoiseFree(void *ptr) {
 
 /* ================================ History ================================= */
 
-/* Free the history, but does not reset it. Only used when we have to
- * exit() to avoid memory leaks are reported by valgrind & co. */
+/**
+ * @brief Release the historical process-wide history at exit.
+ *
+ * @details Does not reset global pointers for reuse; use only during process
+ * cleanup.
+ */
 static void freeHistory(void) {
     if (history) {
         int j;
@@ -2250,19 +2634,31 @@ static void freeHistory(void) {
     }
 }
 
-/* At exit we'll try to fix the terminal to the initial conditions. */
+/**
+ * @brief Restore historical terminal mode and release history at process exit.
+ *
+ * @details Registered when raw mode is first enabled; not a session reset
+ * routine.
+ */
 static void linenoiseAtExit(void) {
     disableRawMode(STDIN_FILENO);
     freeHistory();
 }
 
-/* This is the API call to add a new entry in the linenoise history.
- * It uses a fixed array of char pointers that are shifted (memmoved)
- * when the history max length is reached in order to remove the older
- * entry and make room for the new one, so it is not exactly suitable for huge
- * histories, but will work well for a few hundred of entries.
+/**
+ * @brief Append a copied line to the process-wide history.
  *
- * Using a circular buffer is smarter, but a bit more complex to handle. */
+ * @details line is NUL-terminated. Avoids consecutive duplicates and respects
+ * the current limit; returns 1 when added, 0 when skipped or allocation fails.
+ *
+ * @note This is the API call to add a new entry in the linenoise history. It
+ * uses a fixed array of char pointers that are shifted (memmoved) when the
+ * history max length is reached in order to remove the older entry and make
+ * room for the new one, so it is not exactly suitable for huge histories, but
+ * will work well for a few hundred of entries.
+ *
+ * Using a circular buffer is smarter, but a bit more complex to handle.
+ */
 int linenoiseHistoryAdd(const char *line) {
     char *linecopy;
 
@@ -2292,10 +2688,17 @@ int linenoiseHistoryAdd(const char *line) {
     return 1;
 }
 
-/* Set the maximum length for the history. This function can be called even
- * if there is already some history, the function will make sure to retain
+/**
+ * @brief Change the number of entries retained in historical line editing.
+ *
+ * @details len must be positive. Drops oldest entries when shrinking; returns
+ * 1 on success, 0 for invalid length or allocation failure.
+ *
+ * @note Set the maximum length for the history. This function can be called
+ * even if there is already some history, the function will make sure to retain
  * just the latest 'len' elements if the new history length value is smaller
- * than the amount of items already inside the history. */
+ * than the amount of items already inside the history.
+ */
 int linenoiseHistorySetMaxLen(int len) {
     char **new;
 
@@ -2324,8 +2727,13 @@ int linenoiseHistorySetMaxLen(int len) {
     return 1;
 }
 
-/* Save the history in the specified file. On success 0 is returned
- * otherwise -1 is returned. */
+/**
+ * @brief Write historical entries as newline-separated text with private permissions.
+ *
+ * @details filename is NUL-terminated.
+ * @return 0 when the file can be opened and entries are written, -1 if opening
+ * fails; this legacy routine does not validate every write.
+ */
 int linenoiseHistorySave(const char *filename) {
     mode_t old_umask = umask(S_IXUSR|S_IRWXG|S_IRWXO);
     FILE *fp;
@@ -2349,11 +2757,13 @@ int linenoiseHistorySave(const char *filename) {
     return 0;
 }
 
-/* Load the history from the specified file. If the file does not exist
- * zero is returned and no operation is performed.
+/**
+ * @brief Append entries read from a saved history file.
  *
- * If the file exists and the operation succeeded 0 is returned, otherwise
- * on error -1 is returned. */
+ * @details filename is NUL-terminated.
+ * @return 0 on completion, -1 on open or allocation failure; entries already
+ * loaded remain if a later read fails.
+ */
 int linenoiseHistoryLoad(const char *filename) {
     FILE *fp = fopen(filename,"r");
     char *buf;
