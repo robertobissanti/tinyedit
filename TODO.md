@@ -26,7 +26,7 @@ partenza da cui il log sarà accurato in avanti.
     incompatibili e ritorno alla prosa dopo la chiusura.
 
 Bug fixing prioritario rispetto alle nuove feature e ai refactoring di
-sola granularità. Estratto dall'[analisi del 2026-10-04](reports/analisi-granularita-2026-10-04.md):
+sola granularità. Estratto dall’analisi locale del 2026-10-04:
 i difetti sotto sono stati corretti il 2026-10-04, con regressioni
 automatiche aggiunte. Cause ed evidenze descrivono lo stato precedente al fix.
 
@@ -195,8 +195,8 @@ I test mirati `test_core`, `test_render` e `test_fileio` passano anche con ASan/
 
 - [x] **Punto 10: misure di scalabilità, redraw e documentazione coerente**
   - _Inserito: 2026-10-04 · Completato: 2026-10-04_
-  - Benchmark riproducibile (`make benchmark`), dati prima/dopo e limiti in
-    `reports/performance-2026-10-04.md`; interventi sui costi misurati.
+  - Benchmark riproducibile (`make benchmark`), metodo e limiti in
+    `tests/README.md`; interventi sui costi misurati.
   - Draw wrapped sequenziale; conteggi grapheme e pair memorizzati con
     invalidazione; buffer di output con crescita geometrica.
   - Eliminati controlli NULL irraggiungibili dopo gli allocator fatali.

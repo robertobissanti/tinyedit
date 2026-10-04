@@ -769,8 +769,8 @@ historical linenoise code. `@brief` explains the purpose in one sentence;
 describes results and failure values; `@note` preserves useful design rationale.
 Only include tags that add information, rather than restating the signature.
 
-Performance measurements and their limits are in
-[`reports/performance-2026-10-04.md`](reports/performance-2026-10-04.md).
+Benchmark methodology and limits are described in
+[`tests/README.md`](tests/README.md).
 `make benchmark` measures CPU work without terminal I/O. Wrapped drawing locates
 its first visible segment once, then walks the viewport; character counts and
 matching pairs reuse document caches, invalidated after source changes and

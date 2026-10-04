@@ -21,3 +21,7 @@ tests/*
 __pycache__/
 .DS_Store
 *.un~
+
+# Local analysis artifacts; keep outside the published source tree.
+/reports/
+/STATE_DECOMPOSITION_ANALYSIS.md

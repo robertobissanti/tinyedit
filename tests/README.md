@@ -48,5 +48,11 @@ I test nel core verificano applicazione alla sessione, annullamento della vista
 e invalidazione dopo edit, undo/redo e cambio documento.
 
 `make benchmark` compila `benchmark_core.c` e misura il core senza I/O terminale.
-Metodo, dati prima/dopo e limiti sono in `reports/performance-2026-10-04.md`.
+Usa `clock()` (tempo CPU), fixture Unicode di 1.000, 10.000 e 50.000 righe,
+viewport 80×40, soft wrap 72 e cache di wrap preparate. Draw, conteggio e pair
+sono medie di 20 chiamate; con i cache di conteggio/pair includono una chiamata
+iniziale e 19 riusi. Gli snapshot sono cinque cicli di copia e rilascio.
+Il benchmark esclude I/O terminale, avvio e caricamento, e non misura RSS.
+Undo conserva snapshot completi; il payload scala con documento e profondità.
+Alcune conversioni e la prima scansione delle parentesi restano lineari.
 `test_backup_paths.c` verifica gli errori recuperabili della risoluzione POSIX.

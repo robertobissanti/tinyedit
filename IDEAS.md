@@ -62,7 +62,7 @@ momento buono non convincono più.
   `MAX_LINES`. Il tokenizer viene aggiornato sulle modifiche, non a ogni
   redraw; wrap e conteggi hanno cache e il rendering percorre la viewport
   in sequenza. Misure riproducibili: `make benchmark` e
-  `reports/performance-2026-10-04.md`. Restano lineari alcune conversioni
+  `tests/README.md`. Restano lineari alcune conversioni
   riga/video e il primo matching di una parentesi distante. Gli snapshot undo
   copiano tutto il testo e possono usare molta memoria con file grandi:
   valutare undo a delta o un budget in byte solo con requisiti e misure dedicati.
