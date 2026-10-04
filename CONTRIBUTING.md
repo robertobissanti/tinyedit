@@ -14,8 +14,6 @@ Please read these documents before proposing or implementing a change:
 
 - [`README.md`](README.md) explains the editor, build process, behavior, and
   source layout.
-- [`TODO.md`](TODO.md) records planned work, decisions already made, and open
-  design questions marked.
 - [`IDEAS.md`](IDEAS.md) collects possible future features that have not been
   prioritized.
 
@@ -258,7 +256,7 @@ Update user-facing documentation in the same pull request as the behavior it
 describes. Depending on the change, this may include:
 
 - shortcuts, settings, features, or code layout in `README.md`;
-- planned work and recorded design decisions in `TODO.md`;
+- planned work and design decisions in the related issue or pull request;
 - non-prioritized future directions in `IDEAS.md`;
 - sample syntax configurations and `syntax-configs/README.md`;
 - the Module map in `src/tinyedit.c`.
@@ -281,8 +279,8 @@ and open a pull request with a concise title. The description should state:
 
 Before submitting, check that:
 
-- [ ] the change is focused and agrees with an accepted issue or an existing
-      decision in `TODO.md`;
+- [ ] the change is focused and agrees with an accepted issue or a documented
+      design decision;
 - [ ] `make` succeeds without new warnings;
 - [ ] `make test` passes;
 - [ ] new behavior has appropriate automated or documented manual coverage;

@@ -25,3 +25,4 @@ __pycache__/
 # Local analysis artifacts; keep outside the published source tree.
 /reports/
 /STATE_DECOMPOSITION_ANALYSIS.md
+/TODO.md

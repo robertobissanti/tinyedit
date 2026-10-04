@@ -1,16 +1,16 @@
 # IDEAS
 
 Feature future, non pianificate né prioritarie. Idee da valutare quando
-il core (vedi `TODO.md`) sarà completo e stabile — o da scartare se al
+il core sarà completo e stabile — o da scartare se al
 momento buono non convincono più.
 
 ## Editing avanzato
 
 - **Syntax highlighting: linguaggi oltre agli 8 già coperti** (vedi
-  `TODO.md`, completato: C, C++, Python, Shell, JS/TS, Markdown,
+  `README.md`: C, C++, Python, Shell, JS/TS, Markdown,
   HTML/XML, CSS). Un linguaggio "C-like" (keyword + stringhe +
   commenti, es. Go, Rust, Java, PHP, Lua) può essere aggiunto in due
-  modi ormai entrambi disponibili (vedi `TODO.md`): built-in
+  modi ormai entrambi disponibili (vedi `README.md`): built-in
   (`struct syntaxLang` in `syntax.c`, aggiunto a `syntaxLangTable[]`) o
   utente, senza ricompilare, da un file
   `~/.tinyedit/syntax/<nome>.conf` (stesso formato `chiave = valore` di
@@ -20,7 +20,7 @@ momento buono non convincono più.
   `syntaxHighlightRow()` — non estendibile da file esterno.
   - **Python — stringhe triple-quote** (`"""`/`'''`): oggi renderizzano
     come tre stringhe a carattere singolo consecutive invece di un
-    blocco unico multi-riga (compromesso accettato in `TODO.md`) — un
+    blocco unico multi-riga (limite attuale del tokenizer) — un
     tokenizer Python dedicato (invece di riuso della tabella generica)
     risolverebbe correttamente, non giustificato finora dal beneficio.
   - **HTML — nome del tag colorato separatamente** dai suoi delimitatori
@@ -48,7 +48,7 @@ momento buono non convincono più.
 ## Robustezza
 
 - **Decoder UTF-8 rigoroso, bounded e con recupero non distruttivo
-  (implementato; vedi `TODO.md`)** — l'idea è stata suggerita da Juuso
+  (implementato)** — l'idea è stata suggerita da Juuso
   Alasuutari (`imaami`) durante una discussione sul parser di tinyedit; la
   [mappa degli stati](https://i.imgur.com/nVfDRT8.png) del suo progetto
   [`c.utf-8`](https://github.com/imaami/c.utf-8) è stata usata solo per
@@ -82,7 +82,7 @@ momento buono non convincono più.
   mostrando o facendo scorrere le alternative quando ce n'è più di una.
   Riutilizzare lo stesso comportamento anche nel prompt del primo
   salvataggio di un buffer senza nome.
-- **Mouse support opzionale** — vedi nota in `TODO.md`: possibile solo
+- **Mouse support opzionale** — possibile solo
   come opzione esplicita via config, mai default, perché disattiva la
   selezione nativa del terminale.
 - **Temi colore** per la TUI delle impostazioni e per il syntax

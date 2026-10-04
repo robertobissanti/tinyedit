@@ -795,8 +795,8 @@ dependency.
 
 ## Project status
 
-See [`TODO.md`](TODO.md) for planned and in-progress work, and
-[`IDEAS.md`](IDEAS.md) for future features not yet prioritized.
+See [`IDEAS.md`](IDEAS.md) for future features not yet prioritized, and
+the repository issues and pull requests for publicly discussed work.
 
 ## Author and license
 
