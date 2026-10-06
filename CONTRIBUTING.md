@@ -190,6 +190,96 @@ If a new API must recover from an allocation failure instead of terminating,
 document that contract explicitly. Such an API must keep the original pointer
 until allocation succeeds and propagate the error to its caller.
 
+### Memory design and use in C99
+
+Memory management must preserve correctness, clarity, and portability. Every optimization must provide a verifiable benefit and follow the project's rules.
+
+#### Scope and precedence
+
+These guidelines are subordinate to the requirements for types, allocation helpers, UTF-8 handling, source organization, and C99/POSIX portability. The absence of external dependencies and approved design decisions remain binding.
+
+Memory savings do not justify an exception. Any change to these constraints must be discussed and approved before implementation. The techniques below are options to evaluate, not requirements to introduce new representations or infrastructure.
+
+#### Account for the complete cost
+
+Consider payload, metadata, padding, pointers, separate allocations, unused capacity, allocator overhead, and temporary copies.
+
+Distinguish steady-state use from peaks during loading, growth, conversions, and rebuilding. Prioritize costs multiplied by each element or retained operation.
+
+#### Follow type conventions
+
+Use the prescribed types for each family of values. Do not narrow individual fields if this introduces artificial limits, additional casts, or inconsistent operations.
+
+Preserve documented exceptions and signatures required by external APIs. Compact encodings must expose interfaces consistent with these rules.
+
+Measure structure size and padding with `sizeof` and `offsetof` before rearranging fields. A smaller field type does not necessarily reduce the overall structure size.
+
+#### Make ownership and lifetime explicit
+
+Every allocation must have an identifiable owner. Function contracts must clarify who releases memory, whether a reference is borrowed, and which operations invalidate it.
+
+Document ownership transfers and sharing when they are not evident from the code. Avoid comments that merely repeat an allocation or release.
+
+#### Use the project's allocation helpers
+
+Application code must use only `teMalloc()`, `teRealloc()`, and `teStrdup()`; do not call `malloc()`, `realloc()`, or `strdup()` directly.
+
+The helpers terminate in a controlled manner on failure, allowing registered `atexit()` handlers to restore terminal state. Since `teRealloc()` does not return `NULL`, its result may replace the original pointer directly.
+
+An API that must recover from allocation failure must document that exception, preserve the original pointer until allocation succeeds, and explicitly propagate the error.
+
+Check overflow and limits before calculating allocation sizes, including sums, products, capacity growth, and numeric conversions. Use `sizeof(*ptr)` when sizing elements.
+
+#### Reduce unnecessary copies and allocations
+
+Before duplicating data, consider ownership transfer, borrowed references, or processing in chunks.
+
+Avoid allocations for empty states or implicit values when this keeps the code simple. For objects with the same lifetime, consider contiguous storage if it reduces allocations without complicating ownership or mutation. C99 flexible array members may be used with correct alignment, checked size calculations, and reference invalidation during growth.
+
+Sharing, arenas, and alternative representations require a measured benefit; do not introduce additional infrastructure for marginal savings. Adaptive representations must have explicit thresholds and conversions that preserve semantics and avoid costly oscillation.
+
+#### Manage length and capacity
+
+Separate logical length from allocated capacity in containers that grow repeatedly.
+
+Choose a growth policy suited to the workload: spare capacity for frequent changes, exact sizing when the final size is known, and bounded growth for large buffers.
+
+Treat unused capacity as a deliberate cost. Avoid reallocating on every insertion or deletion; consider shrinking after substantial reductions.
+
+#### Preserve correct text handling
+
+Optimizations must distinguish byte representation from characters, grapheme clusters, and display columns.
+
+Use the prescribed UTF-8 helpers for interpretation, traversal, and width calculation. Already bounded spans may be copied with `memcpy()` or `memmove()`; these operations do not replace correct determination of text boundaries.
+
+Preserve original bytes even when UTF-8 is malformed. Do not remove coordinates or metadata required for correctness by assuming that byte offsets and display columns coincide.
+
+#### Control caches and retained memory
+
+Every cache must have an authoritative source, invalidation rules, and a defined lifetime.
+
+For potentially large structures, measure retained memory and temporary peaks. Budgets, conversions, and eviction policies must follow approved design decisions and have explicit behavior.
+
+Do not silently lose data, history, or results to meet a limit. Account for old and new representations coexisting during conversions and rebuilding.
+
+#### Preserve C99 and portability
+
+Respect alignment, aliasing rules, object lifetimes, and buffer bounds. Do not use casts to bypass these constraints. Do not access memory beyond the size requested from the allocator.
+
+Do not introduce packed structures, pointer tagging, or allocator-specific APIs as routine optimizations. Their use requires explicit evaluation against the project's requirements and prior agreement for any exceptions.
+
+Do not introduce third-party libraries or code without the prior agreement required by the project's rules.
+
+#### Measure and verify
+
+For each significant optimization, compare memory use, allocation counts, peaks, and latency on representative workloads. Distinguish bytes requested from allocation helpers from process resident memory: freeing memory does not guarantee an immediate reduction in RSS.
+
+Verify empty cases, growth, shrinkage, limits, and conversion thresholds. Run the required project checks and relevant tests, including UTF-8 cases when the change affects text.
+
+Keep changes focused and update documentation, contracts, and the Module map when necessary.
+
+An optimization is acceptable when it reduces a demonstrated cost, keeps the code understandable, and fully respects the project's rules.
+
 ### Source organization
 
 Keep one clear responsibility per module without over-engineering. Every C

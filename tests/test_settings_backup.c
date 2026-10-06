@@ -45,6 +45,7 @@ int main(void) {
     fputs("tab_stop = not-a-number\n", fp);
     fputs("backup_interval = -20\n", fp);
     fputs("scrolloff = 999\n", fp);
+    fputs("undo_memory_mb = 32\n", fp);
     fputs("auto_indent = false\n", fp);
     fputs("color_gutter = cyan-dark\n", fp);
     if (fclose(fp) != 0) fail("close test config");
@@ -57,7 +58,10 @@ int main(void) {
     if (settings.scrolloff != 20) fail("scrolloff range clamp");
     if (settings.auto_indent != 0) fail("valid bool parse");
     if (settings.color_gutter != COLOR_CYAN_DARK) fail("valid enum parse");
+    if (settings.undo_memory_mb != 32) fail("undo memory budget parse");
     if (!settingsSave(&settings)) fail("settingsSave");
+    settingsLoad(&settings);
+    if (settings.undo_memory_mb != 32) fail("undo memory budget persistence");
 
     char filename[1024];
     snprintf(filename, sizeof(filename), "%s/document.txt", home);

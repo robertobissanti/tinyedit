@@ -13,7 +13,7 @@ static double elapsedMilliseconds(clock_t start, int32_t repetitions) {
 
 int main(void) {
     const int32_t sizes[] = {1000, 10000, 50000};
-    puts("rows,draw_ms,count_ms,pair_ms,snapshot_ms,snapshot_bytes");
+    puts("rows,draw_ms,count_ms,pair_ms,snapshot_ms,snapshot_bytes,delta_edit_ms,delta_200_bytes");
     for (size_t k = 0; k < sizeof(sizes) / sizeof(sizes[0]); k++) {
         settingsDefaults(&S);
         S.show_line_numbers = 0;
@@ -60,7 +60,17 @@ int main(void) {
             historyFreeSnapshot(&snapshot);
         }
         double snapshot_ms = elapsedMilliseconds(start, 5);
-        printf("%d,%.6f,%.6f,%.6f,%.6f,%zu\n", sizes[k], draw_ms, count_ms, pair_ms, snapshot_ms, snapshot_bytes);
+        historySetBudget(&E.document, HISTORY_DEFAULT_BUDGET);
+        start = clock();
+        for (int32_t i = 0; i < 200; i++) {
+            historyRecordEdit(&E.document, 200, EDIT_OTHER, i);
+            bufferRowInsertByte(&E.document.buffer.rows[0], 0, 'x');
+            historyFinishEdit(&E.document);
+        }
+        double delta_ms = elapsedMilliseconds(start, 200);
+        printf("%d,%.6f,%.6f,%.6f,%.6f,%zu,%.6f,%zu\n", sizes[k], draw_ms,
+            count_ms, pair_ms, snapshot_ms, snapshot_bytes, delta_ms, E.document.history.bytes);
+
         editorResetDocument();
     }
     return 0;

@@ -1,8 +1,11 @@
 #include "buffer.h"
 
 #include "alloc.h"
+#include "history.h"
 #include "utf8.h"
 
+#include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -65,11 +68,25 @@ int32_t bufferRowRxToCx(const erow *row, int32_t target_rx, int32_t tab_stop) {
  */
 void bufferInsertRow(struct editorBuffer *buffer, int32_t at, const char *text, size_t len) {
     if (at < 0 || at > buffer->row_count) return;
-    buffer->rows = teRealloc(buffer->rows, sizeof(erow) * (size_t)(buffer->row_count + 1));
+    if (historyInsertRow(buffer, at, text, len)) return;
+    if (len > INT32_MAX || buffer->row_count == INT32_MAX) {
+        errno = ENOMEM; perror("tinyedit: buffer size"); exit(EXIT_FAILURE);
+    }
+    if (buffer->capacity <= buffer->row_count) {
+        int32_t capacity = buffer->capacity > 0 ? buffer->capacity : 1;
+        capacity = capacity <= INT32_MAX / 2 ? capacity * 2 : INT32_MAX;
+        if ((size_t)capacity > SIZE_MAX / sizeof(*buffer->rows)) {
+            errno = ENOMEM; perror("tinyedit: buffer size"); exit(EXIT_FAILURE);
+        }
+        buffer->rows = teRealloc(buffer->rows, sizeof(*buffer->rows) * (size_t)capacity);
+        buffer->capacity = capacity;
+    }
     memmove(&buffer->rows[at + 1], &buffer->rows[at],
         sizeof(erow) * (size_t)(buffer->row_count - at));
     erow *row = &buffer->rows[at];
     memset(row, 0, sizeof(*row));
+    row->owner = buffer;
+    row->chars_capacity = len + 1;
     row->size = (int32_t)len;
     row->chars = teMalloc(len + 1);
     memcpy(row->chars, text, len);
@@ -100,6 +117,7 @@ void bufferFreeRow(erow *row) {
  */
 void bufferDeleteRow(struct editorBuffer *buffer, int32_t at) {
     if (at < 0 || at >= buffer->row_count) return;
+    if (historyDeleteRow(buffer, at)) return;
     bufferFreeRow(&buffer->rows[at]);
     memmove(&buffer->rows[at], &buffer->rows[at + 1],
         sizeof(erow) * (size_t)(buffer->row_count - at - 1));
@@ -117,15 +135,18 @@ void bufferClear(struct editorBuffer *buffer) {
     free(buffer->rows);
     buffer->rows = NULL;
     buffer->row_count = 0;
+    buffer->capacity = 0;
+    buffer->history = NULL;
 }
 
 /**
  * @brief Insert a single raw byte into a row.
  *
  * @details at is a source-byte offset; byte is not a Unicode code point. This
- * helper does not rebuild rendering, record undo or mark dirty.
+ * helper records into an active transaction but does not rebuild rendering
+ * or mark dirty.
  */
-void bufferRowInsertByte(erow *row, int32_t at, int32_t byte) {
+void bufferRowInsertByte(erow *row, int32_t at, uint8_t byte) {
     char value = (char)byte;
     bufferRowInsert(row, at, &value, 1);
 }
@@ -139,7 +160,21 @@ void bufferRowInsertByte(erow *row, int32_t at, int32_t byte) {
  */
 void bufferRowInsert(erow *row, int32_t at, const char *text, size_t len) {
     if (at < 0 || at > row->size) at = row->size;
-    row->chars = teRealloc(row->chars, (size_t)row->size + len + 1);
+    if (len > (size_t)(INT32_MAX - row->size)) {
+        if (row->owner && row->owner->history && row->owner->history->pending) {
+            row->owner->history->error = HISTORY_SIZE; return;
+        }
+        errno = ENOMEM; perror("tinyedit: row size"); exit(EXIT_FAILURE);
+    }
+    size_t needed = (size_t)row->size + len + 1;
+    if (!historyPrepareRow(row, needed)) return;
+    if (row->chars_capacity < needed) {
+        struct editorHistory *history = row->owner ? row->owner->history : NULL;
+        char *grown = history && history->pending ? teTryRealloc(row->chars, needed) :
+            teRealloc(row->chars, needed);
+        if (!grown) { history->error = HISTORY_MEMORY; return; }
+        row->chars = grown; row->chars_capacity = needed;
+    }
     memmove(&row->chars[at + (int32_t)len], &row->chars[at],
         (size_t)(row->size - at + 1));
     memcpy(&row->chars[at], text, len);
@@ -150,13 +185,11 @@ void bufferRowInsert(erow *row, int32_t at, const char *text, size_t len) {
  * @brief Append a byte span to a row's source text.
  *
  * @details text contains len bytes and must remain valid across resizing.
- * Preserves NUL termination but does not update rendering or undo.
+ * Preserves NUL termination; active transactions record source changes.
+ * Rendering remains the caller's responsibility.
  */
 void bufferRowAppend(erow *row, const char *text, size_t len) {
-    row->chars = teRealloc(row->chars, (size_t)row->size + len + 1);
-    memcpy(&row->chars[row->size], text, len);
-    row->size += (int32_t)len;
-    row->chars[row->size] = '\0';
+    bufferRowInsert(row, row->size, text, len);
 }
 
 /**
@@ -179,6 +212,7 @@ void bufferRowDeleteRange(erow *row, int32_t start, int32_t end) {
     if (start < 0) start = 0;
     if (end > row->size) end = row->size;
     if (start >= end) return;
+    if (!historyPrepareRow(row, (size_t)row->size + 1)) return;
     memmove(&row->chars[start], &row->chars[end], (size_t)(row->size - end + 1));
     row->size -= end - start;
 }
@@ -217,9 +251,11 @@ char *bufferSerialize(const struct editorBuffer *buffer, enum lineEndingMode end
     uint8_t final_newline,
     size_t *out_len) {
     size_t ending_len = ending == LINE_ENDING_CRLF ? 2 : 1, total = 0;
-    for (int32_t i = 0; i < buffer->row_count; i++)
-        total += (size_t)buffer->rows[i].size +
-            ((i + 1 < buffer->row_count || final_newline) ? ending_len : 0);
+    for (int32_t i = 0; i < buffer->row_count; i++) {
+        size_t bytes = teSizeAdd((size_t)buffer->rows[i].size,
+            (i + 1 < buffer->row_count || final_newline) ? ending_len : 0);
+        total = teSizeAdd(total, bytes);
+    }
     *out_len = total;
     char *result = teMalloc(total > 0 ? total : 1), *dst = result;
     for (int32_t i = 0; i < buffer->row_count; i++) {
@@ -251,9 +287,10 @@ char *bufferSerializeRange(const struct editorBuffer *buffer, int32_t start_y,
     for (int32_t y = start_y; y <= end_y; y++) {
         int32_t from = y == start_y ? start_x : 0;
         int32_t to = y == end_y ? end_x : buffer->rows[y].size;
-        total += (size_t)(to - from) + (y < end_y ? 1u : 0u);
+        size_t bytes = teSizeAdd((size_t)(to - from), y < end_y ? 1u : 0u);
+        total = teSizeAdd(total, bytes);
     }
-    char *result = teMalloc(total + 1), *dst = result;
+    char *result = teMalloc(teSizeAdd(total, 1)), *dst = result;
     for (int32_t y = start_y; y <= end_y; y++) {
         int32_t from = y == start_y ? start_x : 0;
         int32_t to = y == end_y ? end_x : buffer->rows[y].size;

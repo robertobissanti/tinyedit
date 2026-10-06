@@ -5,6 +5,7 @@
 #include "utf8.h"
 
 #include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -313,9 +314,15 @@ static char *syntaxDupTrimmed(const char *s) {
  */
 static char **syntaxSplitList(const char *value, int32_t *out_count) {
     int32_t count = 1;
-    for (const char *p = value; *p; p++) if (*p == ',') count++;
+    for (const char *p = value; *p; p++) {
+        if (*p != ',') continue;
+        if (count == INT32_MAX) {
+            errno = ENOMEM; perror("tinyedit: syntax list count"); exit(EXIT_FAILURE);
+        }
+        count++;
+    }
 
-    char **items = teMalloc(sizeof(char *) * (size_t)(count + 1));
+    char **items = teMalloc(teArrayBytes((size_t)count + 1, sizeof(*items)));
     int32_t n = 0;
     const char *start = value;
     for (;;) {
@@ -441,7 +448,7 @@ static const struct syntaxLang *syntaxParseLangFile(const char *path) {
         filetype = NULL;
     }
 
-    struct syntaxLang *lang = teMalloc(sizeof(struct syntaxLang));
+    struct syntaxLang *lang = teMalloc(sizeof(*lang));
     lang->extensions = (const char *const *)extensions;
     lang->keywords = (const char *const *)keywords;
     lang->quote_chars = quote_chars;
@@ -507,8 +514,11 @@ static void syntaxLoadUserLangs(void) {
         const struct syntaxLang *lang = syntaxParseLangFile(filepath);
         if (!lang) continue;
 
+        if (userLangTableCount == INT32_MAX) {
+            errno = ENOMEM; perror("tinyedit: syntax language count"); exit(EXIT_FAILURE);
+        }
         userLangTable = teRealloc(userLangTable,
-            sizeof(struct syntaxLang *) * (size_t)(userLangTableCount + 1));
+            teArrayBytes((size_t)userLangTableCount + 1, sizeof(*userLangTable)));
         userLangTable[userLangTableCount++] = lang;
     }
     closedir(dir);
@@ -609,6 +619,21 @@ static int32_t matchKeyword(const char *const *list, const char *s, int32_t avai
     return 0;
 }
 
+/* Highlighting is optional: an OOM discards this cache, not source text. */
+static uint8_t syntaxReserveHighlight(erow *row) {
+    uint8_t *highlight = teTryRealloc(row->hl, (size_t)row->rsize);
+    if (!highlight) {
+        free(row->hl);
+        row->hl = NULL;
+        row->hl_heading = 0;
+        row->hl_open_comment = row->hl_open_math = 0;
+        row->hl_open_frontmatter = row->hl_open_emphasis = 0;
+        return 0;
+    }
+    row->hl = highlight;
+    return 1;
+}
+
 /**
  * @brief Color a row using a table-driven language definition.
  *
@@ -617,7 +642,7 @@ static int32_t matchKeyword(const char *const *list, const char *s, int32_t avai
  */
 static void syntaxHighlightRowGeneric(erow *row, const struct syntaxLang *lang,
     uint8_t prev_open_comment, uint8_t prev_open_math) {
-    row->hl = teRealloc(row->hl, (size_t)row->rsize);
+    if (!syntaxReserveHighlight(row)) return;
     memset(row->hl, HL_NORMAL, (size_t)row->rsize);
 
     const char *s = row->render;
@@ -803,7 +828,7 @@ static void syntaxHighlightRowGeneric(erow *row, const struct syntaxLang *lang,
  * @details ext is NUL-terminated without a dot.
  * @return 1 for md or markdown, ignoring ASCII case.
  */
-static uint8_t isMdExtension(const char *ext) {
+uint8_t syntaxIsMarkdownExtension(const char *ext) {
     return syntaxExtensionEquals(ext, "md") || syntaxExtensionEquals(ext, "markdown");
 }
 
@@ -1111,7 +1136,7 @@ static uint8_t syntaxMarkdownMathFence(const char *s, int32_t len) {
  */
 static void syntaxHighlightRowMarkdown(erow *row, uint8_t prev_in_fence, uint8_t prev_in_math,
     uint8_t prev_in_frontmatter, int32_t row_index, uint8_t prev_in_emphasis) {
-    row->hl = teRealloc(row->hl, (size_t)row->rsize);
+    if (!syntaxReserveHighlight(row)) return;
     memset(row->hl, HL_NORMAL, (size_t)row->rsize);
 
     const char *s = row->render;
@@ -1218,7 +1243,7 @@ static void syntaxHighlightRowMarkdown(erow *row, uint8_t prev_in_fence, uint8_t
      * syntaxHighlightRow(), so reaching here with prev_in_emphasis set
      * means this row has text. */
     if (prev_in_emphasis) {
-        char marker_cls = (prev_in_emphasis == 1) ? (char)HL_KEYWORD : (char)HL_EMPHASIS_STRONG;
+        char marker_cls = (prev_in_emphasis == 1) ? (char)HL_EMPHASIS : (char)HL_EMPHASIS_STRONG;
         int32_t run_needed = (prev_in_emphasis == 1) ? 1 : 2;
 
         int32_t close_start = -1;
@@ -1247,10 +1272,15 @@ static void syntaxHighlightRowMarkdown(erow *row, uint8_t prev_in_fence, uint8_t
         return;
     }
 
-    if (source_len > 0 && source[0] == '#') {
-        int32_t k = 0;
+    int32_t heading_start = 0;
+    while (heading_start < source_len && heading_start < 3 && source[heading_start] == ' ')
+        heading_start++;
+    if (heading_start < source_len && source[heading_start] == '#') {
+        int32_t k = heading_start;
         while (k < source_len && source[k] == '#') k++;
-        if (k < source_len && source[k] == ' ') {
+        if (k - heading_start <= 6 &&
+            (k == source_len || source[k] == ' ' || source[k] == '\t')) {
+            row->hl_heading = 1;
             for (int32_t i = 0; i < len; i++) row->hl[i] = HL_PREPROCESSOR;
             row->hl_open_comment = 0;
             row->hl_open_math = 0;
@@ -1321,11 +1351,11 @@ static void syntaxHighlightRowMarkdown(erow *row, uint8_t prev_in_fence, uint8_t
             }
             if (close_start >= 0) {
                 /* run == 1: a single asterisk or underscore marker,
-                 * i.e. italic -- mapped to HL_KEYWORD. run >= 2: a
+                 * i.e. italic -- mapped to HL_EMPHASIS. run >= 2: a
                  * doubled marker, i.e. bold -- its own
                  * HL_EMPHASIS_STRONG class so the two are
                  * independently colorable. */
-                enum syntaxHighlight cls = (run == 1) ? HL_KEYWORD : HL_EMPHASIS_STRONG;
+                enum syntaxHighlight cls = (run == 1) ? HL_EMPHASIS : HL_EMPHASIS_STRONG;
                 for (int32_t k = i; k < close_start + run; k++) row->hl[k] = (uint8_t)cls;
                 i = close_start + run;
                 continue;
@@ -1337,7 +1367,7 @@ static void syntaxHighlightRowMarkdown(erow *row, uint8_t prev_in_fence, uint8_t
              * than whitespace -- so a trailing "*" or a lone "5 * 3"
              * asterisk doesn't start a span. */
             if (i + run < len && s[i + run] != ' ' && s[i + run] != '\t') {
-                enum syntaxHighlight cls = (run == 1) ? HL_KEYWORD : HL_EMPHASIS_STRONG;
+                enum syntaxHighlight cls = (run == 1) ? HL_EMPHASIS : HL_EMPHASIS_STRONG;
                 for (int32_t k = i; k < len; k++) row->hl[k] = (uint8_t)cls;
                 row->hl_open_comment = 0;
                 row->hl_open_math = 0;
@@ -1431,7 +1461,7 @@ static int32_t syntaxTryHighlightTemplateBlock(erow *row, const char *s, int32_t
  */
 static uint8_t syntaxHighlightRowXml(erow *row, uint8_t prev_open_comment,
     const char *const *template_delimiters) {
-    row->hl = teRealloc(row->hl, (size_t)row->rsize);
+    if (!syntaxReserveHighlight(row)) return 0;
     memset(row->hl, HL_NORMAL, (size_t)row->rsize);
 
     const char *s = row->render;
@@ -1555,7 +1585,7 @@ static uint8_t isCssExtension(const char *ext) {
  * hl_open_comment; returns the outgoing comment flag.
  */
 static uint8_t syntaxHighlightRowCss(erow *row, uint8_t prev_open_comment) {
-    row->hl = teRealloc(row->hl, (size_t)row->rsize);
+    if (!syntaxReserveHighlight(row)) return 0;
     memset(row->hl, HL_NORMAL, (size_t)row->rsize);
 
     const char *s = row->render;
@@ -1632,6 +1662,7 @@ static uint8_t syntaxHighlightRowCss(erow *row, uint8_t prev_open_comment) {
 void syntaxHighlightRow(erow *row, const char *filename,
     uint8_t syntax_highlight_enabled, uint8_t prev_open_comment, uint8_t prev_open_math,
     uint8_t prev_open_frontmatter, int32_t row_index, uint8_t prev_open_emphasis) {
+    row->hl_heading = 0;
     if (!syntax_highlight_enabled || !filename || row->rsize <= 0) {
         free(row->hl);
         row->hl = NULL;
@@ -1667,7 +1698,7 @@ void syntaxHighlightRow(erow *row, const char *filename,
         return;
     }
 
-    if (ext && isMdExtension(ext)) {
+    if (ext && syntaxIsMarkdownExtension(ext)) {
         syntaxHighlightRowMarkdown(row, prev_open_comment, prev_open_math,
             prev_open_frontmatter, row_index, prev_open_emphasis);
         return;
@@ -1719,6 +1750,7 @@ const char *syntaxColorFor(enum syntaxHighlight hl, const struct editorSettings 
             if (s->color_syntax_normal == COLOR_TERMINAL_DEFAULT) return NULL;
             return ansiColorCode(s->color_syntax_normal);
         case HL_COMMENT:      return ansiColorCode(s->color_syntax_comment);
+        case HL_EMPHASIS:
         case HL_KEYWORD:      return ansiColorCode(s->color_syntax_keyword);
         case HL_STRING:       return ansiColorCode(s->color_syntax_string);
         case HL_NUMBER:       return ansiColorCode(s->color_syntax_number);
@@ -1744,7 +1776,7 @@ uint8_t syntaxHasBuiltinExtension(const char *ext) {
      * rather than appearing in syntaxLangTable, so they have to be
      * asked separately -- same order as the dispatch in
      * syntaxHighlightRow(). */
-    if (isMdExtension(ext) || isXmlExtension(ext) || isCssExtension(ext)) return 1;
+    if (syntaxIsMarkdownExtension(ext) || isXmlExtension(ext) || isCssExtension(ext)) return 1;
 
     for (int32_t i = 0; i < syntaxLangTableCount; i++) {
         const struct syntaxLang *lang = syntaxLangTable[i];

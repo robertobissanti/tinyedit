@@ -3,9 +3,9 @@
 #ifndef TE_COMMAND_H
 #define TE_COMMAND_H
 
-#include <stdint.h>
-
 #include "settings.h"
+
+#include <stdint.h>
 
 enum editorCommand {
     CMD_NONE,

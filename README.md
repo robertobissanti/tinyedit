@@ -412,7 +412,24 @@ text, so the requested margin may be smaller.
 
 ### Top and status bars
 
-The optional top bar (`show_top_bar`) shows the filename/path and
+The filename and modified indicator are centered in the optional top bar.
+
+Enable **Markdown bold and italic** in F2 (or set
+`markdown_text_styles = true` in `~/.tinyeditrc`) to render Markdown emphasis
+with bold/italic terminal attributes and headings in bold. Markup remains
+visible and editable; syntax highlighting must be enabled. The option is off
+by default and combines with heading reverse video.
+
+For Markdown ATX headings (`#` through `######`), enable **Reverse Markdown
+heading colors** in F2, or set `markdown_heading_reverse = true` in
+`~/.tinyeditrc`. This swaps the existing heading foreground and editor
+background using terminal reverse video, including right-hand padding,
+and wrapped continuations. Line numbers keep their normal style. Syntax highlighting must be enabled. Code fences,
+front matter, and math blocks retain their ordinary appearance. Set the option
+to `false` to disable it. Setext headings (`===` or `---`) are not covered.
+
+
+The optional top bar (`show_top_bar`) shows only the filename (without its directory path) and
 unsaved-changes state as a persistent title, useful on long files
 where you lose track of position while scrolling. When it's on, the
 filename doesn't repeat in the bottom status bar (which then shows
@@ -705,8 +722,9 @@ and asks whether to restore the changes before proceeding.
 - `src/alloc.c`, `inc/alloc.h`: Checked application allocations. Failure exits
   through the registered terminal cleanup handlers.
 - `src/buffer.c`, `inc/buffer.h`: Dynamic logical rows and source-text mutations.
-- `src/history.c`, `inc/history.h`: Complete source snapshots for undo/redo,
-  including cursor restoration and edit coalescing.
+- `src/history.c`, `inc/history.h`: Differential undo/redo for changed rows,
+  owned source swaps, cursor restoration, edit coalescing and transactional
+  rollback. Both stacks share a memory budget.
 - `src/render.c`, `inc/render.h`: UTF-8 layout, wrapping caches and conversions
   between source positions and visual rows/columns.
 - `src/terminal.c`, `inc/terminal.h`: Raw mode, terminal feature setup/cleanup,
@@ -775,11 +793,33 @@ Benchmark methodology and limits are described in
 its first visible segment once, then walks the viewport; character counts and
 matching pairs reuse document caches, invalidated after source changes and
 history restoration. Pair results also depend on the cursor position. Output
-buffers grow geometrically. Undo still copies full source snapshots: its memory
-cost scales with file size and configured history depth, not just changed text.
+buffers grow geometrically. Undo records only modified rows and structural row
+changes. A one-byte edit retains the affected row, so very long single lines
+still cost their full row size. Undo/redo transfer owned source spans without
+allocating source text; replay display text is prepared before changing the
+history position.
+
+`undo_memory_mb` defaults to **64 MiB** and limits the combined undo/redo
+journal. It is available in F2 and `~/.tinyeditrc`; changes take effect after
+closing/opening a document or restarting the editor. `undo_max_depth` remains
+a second limit. Successful edits may remove the oldest complete actions, with
+a status message. An individual action exceeding the budget is cancelled and
+its text, cursor, selection and existing history are restored.
+
+The journal charges metadata and the maximum source capacity required by each
+record in either direction. A pending edit has a separate reservation, also
+bounded by the same budget, so retained plus pending journal reservations can
+reach twice the setting. The live document, row-vector capacity, temporary
+render/highlight caches and allocator overhead are additional costs; this
+setting is not a limit on process RSS or a guarantee against kernel OOM kills.
+No compression or external dependencies are used.
 
 Application allocations use `teMalloc`/`teRealloc`/`teStrdup` and terminate with
-terminal cleanup on failure. POSIX APIs that allocate internally (`getline`,
+terminal cleanup on failure. Recording and replay preparation use documented
+recoverable `teTryMalloc`/`teTryRealloc`: failed journal/source allocations roll
+back the entire edit; failed replay rendering leaves undo/redo unchanged and
+can be retried. Highlight allocation failure falls back to unstyled text.
+Other application allocations retain the existing controlled-exit contract. POSIX APIs that allocate internally (`getline`,
 `realpath`) have a separate recoverable error contract: load/save/backup report
 failure and preserve the active document. Only `ENOENT` permits the path fallback
 for a target that has not been created yet.

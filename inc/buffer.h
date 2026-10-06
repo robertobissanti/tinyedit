@@ -51,9 +51,10 @@ void bufferClear(struct editorBuffer *buffer);
  * @brief Insert a single raw byte into a row.
  *
  * @details at is a source-byte offset; byte is not a Unicode code point. This
- * helper does not rebuild rendering, record undo or mark dirty.
+ * helper records into an active transaction but does not rebuild rendering
+ * or mark dirty.
  */
-void bufferRowInsertByte(erow *row, int32_t at, int32_t byte);
+void bufferRowInsertByte(erow *row, int32_t at, uint8_t byte);
 /**
  * @brief Insert a byte span into the source text of a row.
  *
@@ -66,7 +67,8 @@ void bufferRowInsert(erow *row, int32_t at, const char *text, size_t len);
  * @brief Append a byte span to a row's source text.
  *
  * @details text contains len bytes and must remain valid across resizing.
- * Preserves NUL termination but does not update rendering or undo.
+ * Preserves NUL termination; active transactions record source changes.
+ * Rendering remains the caller's responsibility.
  */
 void bufferRowAppend(erow *row, const char *text, size_t len);
 /**

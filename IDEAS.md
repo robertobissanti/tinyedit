@@ -63,10 +63,11 @@ momento buono non convincono più.
   redraw; wrap e conteggi hanno cache e il rendering percorre la viewport
   in sequenza. Misure riproducibili: `make benchmark` e
   `tests/README.md`. Restano lineari alcune conversioni
-  riga/video e il primo matching di una parentesi distante. Gli snapshot undo
-  copiano tutto il testo e possono usare molta memoria con file grandi:
-  valutare undo a delta o un budget in byte solo con requisiti e misure dedicati.
-  Anche i vettori delle righe/history meritano misure specifiche su caricamenti
+  riga/video e il primo matching di una parentesi distante. Undo/Redo
+  conserva le righe modificate con budget condiviso e rollback in caso di OOM
+  nei percorsi della cronologia. Restano da misurare le copie intermedie
+  delle righe lunghe durante l’accorpamento e i picchi delle cache temporanee.
+  Il vettore delle righe merita misure specifiche su caricamenti
   e modifiche strutturali; non confondere questo costo con i redraw ripetuti.
 
 ## Interfaccia

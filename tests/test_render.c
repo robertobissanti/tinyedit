@@ -18,7 +18,7 @@ static void setRender(erow *row, const char *text) {
 }
 
 int main(void) {
-    struct editorBuffer buffer = {0, NULL};
+    struct editorBuffer buffer = {0};
     struct editorView view = {0, 0, 0, 0, 20};
     bufferInsertRow(&buffer, 0, "one two three", 13);
     bufferInsertRow(&buffer, 1, "four", 4);

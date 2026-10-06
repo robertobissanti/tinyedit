@@ -53,6 +53,28 @@ viewport 80×40, soft wrap 72 e cache di wrap preparate. Draw, conteggio e pair
 sono medie di 20 chiamate; con i cache di conteggio/pair includono una chiamata
 iniziale e 19 riusi. Gli snapshot sono cinque cicli di copia e rilascio.
 Il benchmark esclude I/O terminale, avvio e caricamento, e non misura RSS.
-Undo conserva snapshot completi; il payload scala con documento e profondità.
+La colonna snapshot misura il vecchio costo completo come riferimento;
+l'applicazione usa invece differenze per riga.
 Alcune conversioni e la prima scansione delle parentesi restano lineari.
 `test_backup_paths.c` verifica gli errori recuperabili della risoluzione POSIX.
+
+
+`test_history.c` injects allocation failures into the actual journal and buffer
+code. It checks compound rollback, preservation of redo after a failed edit,
+allocation-free source undo/redo, malformed UTF-8 and embedded NUL, coalescing,
+depth and memory limits, deferred budget changes and grouped replace sessions.
+A 20 MiB / 20,000-row fixture measures requested bytes and allocation count for
+one changed row; these values exclude allocator overhead, caches and RSS.
+`test_core.c` also injects rendering OOM before edits and both replay directions,
+checks retry behavior and oversized selection replacement rollback.
+
+Benchmark locale 2026-10-06 (una esecuzione, tempo CPU): su 50.000 righe
+lo snapshot completo richiede 4.700.002 byte e 0,355 ms circa; 200 edit
+differenziali distinti della stessa riga trattengono 77.500 byte in totale,
+con circa 0,00009 ms per edit (esclusi rendering e I/O). I risultati servono
+al confronto dei costi del journal, non alla previsione della latenza UI.
+
+`test_memory_contracts.c` verifica somme/prodotti e crescita ai limiti di
+SIZE_MAX, rifiuto prima dell'allocazione mediante processi figli, clipboard
+interna vuota, NUL finale e copie indipendenti con byte malformati/NUL interni.
+Non accede alla clipboard di sistema e non provoca esaurimento reale di RAM.

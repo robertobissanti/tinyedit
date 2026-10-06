@@ -10,13 +10,16 @@ static void fail(const char *message) {
 }
 
 int main(void) {
-    struct editorBuffer buffer = {0, NULL};
+    struct editorBuffer buffer = {0};
     bufferInsertRow(&buffer, 0, "A\tB", 3);
     bufferInsertRow(&buffer, 1, "caff\xc3\xa8", 6);
     if (buffer.row_count != 2) fail("row insertion");
     if (bufferRowCxToRx(&buffer.rows[0], 2, 4) != 4) fail("tab cx to rx");
     if (bufferRowRxToCx(&buffer.rows[0], 3, 4) != 1) fail("tab rx to cx");
 
+    bufferRowInsertByte(&buffer.rows[0], 0, UINT8_MAX);
+    if ((uint8_t)buffer.rows[0].chars[0] != UINT8_MAX) fail("raw byte preserves all bits");
+    bufferRowDeleteRange(&buffer.rows[0], 0, 1);
     bufferRowInsertByte(&buffer.rows[0], 1, '!');
     bufferRowDeleteByte(&buffer.rows[0], 1);
     bufferRowInsert(&buffer.rows[0], 1, "XYZ", 3);

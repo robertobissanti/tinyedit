@@ -29,4 +29,17 @@ void *teRealloc(void *ptr, size_t size);
  */
 char *teStrdup(const char *s);
 
+/** @brief Attempt allocation, returning NULL with ENOMEM on failure.
+ * @details Recoverable exception to the fatal helpers; caller owns cleanup. */
+void *teTryMalloc(size_t size);
+/** @brief Attempt resizing without losing the original pointer on failure.
+ * @details Zero requests allocate one byte. The caller uses a temporary pointer. */
+void *teTryRealloc(void *ptr, size_t size);
+
+/* Size arithmetic follows the fatal helpers' terminal-cleanup contract. */
+size_t teSizeAdd(size_t left, size_t right);
+size_t teArrayBytes(size_t count, size_t element_size);
+/* Grow to at least needed without exceeding limit or overflowing. */
+size_t teGrowCapacity(size_t capacity, size_t needed, size_t limit);
+
 #endif /* __TE_ALLOC_H */

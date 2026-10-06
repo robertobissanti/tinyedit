@@ -17,7 +17,7 @@ SOURCES := $(SRC_DIR)/tinyedit.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c \
 HEADERS := $(wildcard $(INC_DIR)/*.h)
 TEST_BINS := $(TEST_DIR)/test_syntax $(TEST_DIR)/test_settings_backup \
 	$(TEST_DIR)/test_editor_state $(TEST_DIR)/test_buffer $(TEST_DIR)/test_history \
-	$(TEST_DIR)/test_render $(TEST_DIR)/test_utf8 $(TEST_DIR)/test_core $(TEST_DIR)/test_fileio $(TEST_DIR)/test_search $(TEST_DIR)/test_backup_paths
+	$(TEST_DIR)/test_render $(TEST_DIR)/test_utf8 $(TEST_DIR)/test_core $(TEST_DIR)/test_fileio $(TEST_DIR)/test_search $(TEST_DIR)/test_backup_paths $(TEST_DIR)/test_memory_contracts
 
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
@@ -55,39 +55,42 @@ install-syntax-force:
 	@mkdir -p $(SYNTAX_DIR)
 	@cp syntax-configs/*.conf $(SYNTAX_DIR)/ && echo "overwrote $(SYNTAX_DIR) with shipped configs"
 
-$(TEST_DIR)/test_syntax: $(TEST_DIR)/test_syntax.c $(SRC_DIR)/syntax.c $(SRC_DIR)/settings.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(HEADERS)
-	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_syntax.c $(SRC_DIR)/syntax.c $(SRC_DIR)/settings.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c
+$(TEST_DIR)/test_syntax: $(TEST_DIR)/test_syntax.c $(SRC_DIR)/syntax.c $(SRC_DIR)/settings.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(HEADERS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_syntax.c $(SRC_DIR)/syntax.c $(SRC_DIR)/settings.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c
 
-$(TEST_DIR)/test_settings_backup: $(TEST_DIR)/test_settings_backup.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(HEADERS)
-	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_settings_backup.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c
+$(TEST_DIR)/test_settings_backup: $(TEST_DIR)/test_settings_backup.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(HEADERS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_settings_backup.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c
 
 $(TEST_DIR)/test_editor_state: $(TEST_DIR)/test_editor_state.c $(SRC_DIR)/editor_state.c $(HEADERS)
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_editor_state.c $(SRC_DIR)/editor_state.c
 
-$(TEST_DIR)/test_buffer: $(TEST_DIR)/test_buffer.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
-	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_buffer.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
+$(TEST_DIR)/test_buffer: $(TEST_DIR)/test_buffer.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_buffer.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
 
 $(TEST_DIR)/test_history: $(TEST_DIR)/test_history.c $(SRC_DIR)/history.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
-	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_history.c $(SRC_DIR)/history.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
 
-$(TEST_DIR)/test_render: $(TEST_DIR)/test_render.c $(SRC_DIR)/render.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
-	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_render.c $(SRC_DIR)/render.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
+$(TEST_DIR)/test_render: $(TEST_DIR)/test_render.c $(SRC_DIR)/render.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_render.c $(SRC_DIR)/render.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
 
-$(TEST_DIR)/test_utf8: $(TEST_DIR)/test_utf8.c $(SRC_DIR)/render.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
-	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_utf8.c $(SRC_DIR)/render.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
+$(TEST_DIR)/test_utf8: $(TEST_DIR)/test_utf8.c $(SRC_DIR)/render.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_utf8.c $(SRC_DIR)/render.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
 
-$(TEST_DIR)/test_fileio: $(TEST_DIR)/test_fileio.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c $(HEADERS)
-	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c
+$(TEST_DIR)/test_fileio: $(TEST_DIR)/test_fileio.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c $(HEADERS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c
 
-$(TEST_DIR)/test_backup_paths: $(TEST_DIR)/test_backup_paths.c $(SRC_DIR)/backup.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
-	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_backup_paths.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
+$(TEST_DIR)/test_backup_paths: $(TEST_DIR)/test_backup_paths.c $(SRC_DIR)/backup.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_backup_paths.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
 
-$(TEST_DIR)/test_search: $(TEST_DIR)/test_search.c $(SRC_DIR)/search.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
-	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_search.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
+$(TEST_DIR)/test_search: $(TEST_DIR)/test_search.c $(SRC_DIR)/search.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_search.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
 
 # The included core intentionally accepts prompt formats and variadic format wrappers.
 $(TEST_DIR)/test_core: $(TEST_DIR)/test_core.c $(SOURCES) $(HEADERS)
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Wno-format-nonliteral -o $@ $(TEST_DIR)/test_core.c $(filter-out $(SRC_DIR)/tinyedit.c,$(SOURCES))
+
+$(TEST_DIR)/test_memory_contracts: $(TEST_DIR)/test_memory_contracts.c $(SRC_DIR)/clipboard.c $(SRC_DIR)/alloc.c $(HEADERS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_memory_contracts.c $(SRC_DIR)/alloc.c
 
 test: $(TARGET) $(TEST_BINS)
 	./$(TEST_DIR)/test_syntax
@@ -101,6 +104,7 @@ test: $(TARGET) $(TEST_BINS)
 	./$(TEST_DIR)/test_fileio
 	./$(TEST_DIR)/test_search
 	./$(TEST_DIR)/test_backup_paths
+	./$(TEST_DIR)/test_memory_contracts
 	python3 $(TEST_DIR)/test_pty.py
 
 clean:

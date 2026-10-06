@@ -109,6 +109,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, line_ending), 0, 0, lineEndingNames, 3 },
     { "redo_key", "Redo key", SETTING_ENUM,
       offsetof(struct editorSettings, redo_key), 0, 0, redoKeyNames, 2 },
+    { "undo_memory_mb", "Undo memory MiB (next document/session)", SETTING_INT,
+      offsetof(struct editorSettings, undo_memory_mb), 1, 4096, NULL, 0 },
     { "undo_max_depth", "Undo history depth", SETTING_INT,
       offsetof(struct editorSettings, undo_max_depth), 10, 2000, NULL, 0 },
     { "color_gutter", "Gutter color", SETTING_ENUM,
@@ -145,6 +147,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, color_invisibles), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "syntax_highlight", "Syntax highlighting", SETTING_BOOL,
       offsetof(struct editorSettings, syntax_highlight), 0, 0, NULL, 0 },
+
+
     { "color_syntax_normal", "Syntax: normal text color", SETTING_ENUM,
       offsetof(struct editorSettings, color_syntax_normal), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_syntax_keyword", "Syntax: keyword color", SETTING_ENUM,
@@ -157,14 +161,20 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, color_syntax_number), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_syntax_preprocessor", "Syntax: preprocessor color", SETTING_ENUM,
       offsetof(struct editorSettings, color_syntax_preprocessor), 0, 0, colorNames, SETTING_COLOR_COUNT },
-    { "color_syntax_emphasis_strong", "Syntax: bold text color (Markdown)", SETTING_ENUM,
-      offsetof(struct editorSettings, color_syntax_emphasis_strong), 0, 0, colorNames, SETTING_COLOR_COUNT },
-    { "color_syntax_math", "Syntax: LaTeX math color (Markdown)", SETTING_ENUM,
-      offsetof(struct editorSettings, color_syntax_math), 0, 0, colorNames, SETTING_COLOR_COUNT },
+
+
     { "color_syntax_function", "Syntax: function name color (C/C++)", SETTING_ENUM,
       offsetof(struct editorSettings, color_syntax_function), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_background", "Editor background color (off=terminal default)", SETTING_ENUM,
       offsetof(struct editorSettings, color_background), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "markdown_text_styles", "Markdown bold and italic", SETTING_BOOL,
+      offsetof(struct editorSettings, markdown_text_styles), 0, 0, NULL, 0 },
+    { "markdown_heading_reverse", "Markdown: reverse heading colors", SETTING_BOOL,
+      offsetof(struct editorSettings, markdown_heading_reverse), 0, 0, NULL, 0 },
+    { "color_syntax_emphasis_strong", "Markdown: bold text color", SETTING_ENUM,
+      offsetof(struct editorSettings, color_syntax_emphasis_strong), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_syntax_math", "Markdown: LaTeX math color", SETTING_ENUM,
+      offsetof(struct editorSettings, color_syntax_math), 0, 0, colorNames, SETTING_COLOR_COUNT },
 };
 const int32_t settingDescriptorCount = (int32_t)(sizeof(settingDescriptors) / sizeof(settingDescriptors[0]));
 
@@ -238,6 +248,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->tab_stop = 4;
     out->redo_key = REDO_KEY_CTRL_Y;
     out->undo_max_depth = 200;
+    out->undo_memory_mb = 64;
     out->color_gutter = COLOR_GRAY_LIGHT;
     out->color_selection = COLOR_WHITE_DARK;
     out->color_statusbar = COLOR_WHITE_DARK;
@@ -255,6 +266,8 @@ void settingsDefaults(struct editorSettings *out) {
     out->show_invisibles = 0;
     out->color_invisibles = COLOR_GRAY_LIGHT;
     out->syntax_highlight = 1;
+    out->markdown_heading_reverse = 0;
+    out->markdown_text_styles = 0;
     out->color_syntax_normal = COLOR_TERMINAL_DEFAULT;
     out->color_syntax_keyword = COLOR_BLUE_LIGHT;
     out->color_syntax_string = COLOR_GREEN_LIGHT;
@@ -364,8 +377,11 @@ static void addFiletypeOverride(const char *ext, const char *name) {
             return;
         }
     }
+    if (filetypeOverrideCount == INT32_MAX) {
+        errno = ENOMEM; perror("tinyedit: filetype count"); exit(EXIT_FAILURE);
+    }
     filetypeOverrides = teRealloc(filetypeOverrides,
-        sizeof(struct filetypeEntry) * (size_t)(filetypeOverrideCount + 1));
+        teArrayBytes((size_t)filetypeOverrideCount + 1, sizeof(*filetypeOverrides)));
     filetypeOverrides[filetypeOverrideCount].ext = teStrdup(ext);
     filetypeOverrides[filetypeOverrideCount].name = teStrdup(name);
     filetypeOverrideCount++;

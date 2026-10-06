@@ -11,6 +11,7 @@ tests/*
 !tests/test_search.c
 !tests/benchmark_core.c
 !tests/test_backup_paths.c
+!tests/test_memory_contracts.c
 __pycache__/
 .DS_Store
 *.un~

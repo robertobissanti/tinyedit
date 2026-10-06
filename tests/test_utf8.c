@@ -86,7 +86,7 @@ int main(void) {
     check(at == 0, "backward end");
     check(utf8StrWidth(text, sizeof(text)) == 7, "malformed width");
 
-    struct editorBuffer buffer = {0, NULL};
+    struct editorBuffer buffer = {0};
     bufferInsertRow(&buffer, 0, text, sizeof(text));
     erow *row = &buffer.rows[0];
     check(bufferRowCxToRx(row, 6, 4) == 5, "file offset to screen column");

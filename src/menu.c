@@ -6,11 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 
-struct menuDefinition {
-    const char *label;
-    const enum editorCommand *items;
-    int32_t item_count;
-};
+
 
 static const enum editorCommand app_items[] = {
     CMD_INFO, CMD_SETTINGS, CMD_NONE, CMD_QUIT

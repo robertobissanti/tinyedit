@@ -105,7 +105,13 @@ enum editorKey {
 
 enum undoEditType { EDIT_NONE, EDIT_INSERT, EDIT_DELETE, EDIT_OTHER };
 
+struct editorBuffer;
+struct historyAction;
+struct historyChange;
+
 typedef struct erow {
+    struct editorBuffer *owner;
+    size_t chars_capacity;
     int32_t size;
     int32_t rsize;  /* size of the rendered line (tabs expanded) */
     int32_t grapheme_count;
@@ -123,6 +129,7 @@ typedef struct erow {
      * into the next row's syntaxHighlightRow() call as its
      * prev_open_comment argument -- see syntax.h. */
     uint8_t hl_open_comment;
+    uint8_t hl_heading;
     /* Multiline math state: 0 = prose, 1 = \[...\] display math,
      * 2 = standalone $ block, 3 = standalone $$ block (Markdown).
      * Separate from comment/fence state so their delimiters cannot collide. */
@@ -161,7 +168,7 @@ typedef struct erow {
 
 typedef struct undoRow {
     int32_t size;
-    char *chars;
+    char *chars; /* Borrowed span within its snapshot allocation. */
 } undoRow;
 
 typedef struct undoSnapshot {
@@ -203,6 +210,8 @@ struct abuf {
 };
 
 struct editorBuffer {
+    struct editorHistory *history;
+    int32_t capacity;
     int32_t row_count;
     erow *rows;
 };
@@ -218,11 +227,37 @@ struct editorSelection {
     uint8_t pinned;
 };
 
+enum historyChangeKind { HISTORY_ROW_SWAP, HISTORY_ROW_INSERT, HISTORY_ROW_DELETE };
+
+enum historyError { HISTORY_OK, HISTORY_MEMORY, HISTORY_LIMIT, HISTORY_SIZE };
+
+struct historyChange {
+    struct historyChange *previous, *next;
+    erow spare;
+    int32_t at;
+    enum historyChangeKind kind;
+    size_t charge;
+};
+
+struct historyAction {
+    struct historyAction *previous, *next;
+    struct historyChange *first, *last;
+    struct editorCursor before, after;
+    struct editorSelection selection;
+    size_t bytes;
+    uint8_t dirty;
+    uint8_t final_newline;
+    uint8_t coalesce;
+};
+
 struct editorHistory {
-    undoSnapshot *undo_stack;
-    int32_t undo_count;
-    undoSnapshot *redo_stack;
-    int32_t redo_count;
+    struct historyAction *undo_stack, *redo_stack, *pending;
+    struct editorDocument *document;
+    int32_t undo_count, redo_count;
+    int32_t max_depth, dropped_count;
+    uint8_t hold;
+    size_t bytes, budget;
+    enum historyError error;
     enum undoEditType last_edit_type;
     time_t last_edit_time;
 };

@@ -4,6 +4,7 @@
 #define _BSD_SOURCE
 #define _GNU_SOURCE
 
+#include "alloc.h"
 #include "fileio.h"
 #include "syntax.h"
 
@@ -15,9 +16,17 @@ static void coreHighlightRow(erow *row, const char *filename, uint8_t enabled,
 static enum fileSaveResult coreAtomicSave(const char *filename, const char *bytes, size_t len);
 int tinyeditApplicationMain(int argc, char **argv);
 #define fileioAtomicSave coreAtomicSave
+static uint8_t fail_core_render;
+static void *coreTryMalloc(size_t bytes);
+#define teTryMalloc coreTryMalloc
 #define main tinyeditApplicationMain
 #include "../src/tinyedit.c"
 #undef main
+#undef teTryMalloc
+
+static void *coreTryMalloc(size_t bytes) {
+    return fail_core_render ? NULL : teTryMalloc(bytes);
+}
 #undef fileioAtomicSave
 #undef syntaxHighlightRow
 
@@ -64,6 +73,90 @@ static void testPromptGrowth(void) {
     free(text);
 }
 
+static void testUndoModified(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    editorInsertChar('x');
+    check(E.document.file.dirty, "insertion marks unnamed document modified");
+    editorUndo();
+    check(!E.document.file.dirty && E.document.history.undo_count == 0,
+        "undo to unnamed empty document clears modified");
+    editorRedo();
+    check(E.document.file.dirty, "redo restores modified");
+    editorResetDocument();
+    char path[] = "/tmp/tinyedit-undo-modified-XXXXXX";
+    int fd = mkstemp(path);
+    check(fd >= 0, "create undo saved-state fixture");
+    close(fd);
+    check(editorOpen(path), "open undo fixture");
+    editorInsertChar('a');
+    editorUndo();
+    check(!E.document.file.dirty, "undo to disk content clears modified");
+    editorRedo();
+    check(E.document.file.dirty, "redo away from disk marks modified");
+    check(editorSaveToPath(path) == FILE_SAVE_DURABLE, "save undo fixture");
+    editorUndo();
+    check(E.document.file.dirty && E.document.history.undo_count == 0,
+        "zero undo remains modified when earlier text differs from saved file");
+    editorRedo();
+    check(!E.document.file.dirty, "redo back to saved text clears modified");
+    editorResetDocument();
+    unlink(path);
+}
+
+static void testHistoryMemoryRecovery(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    size_t initial_budget = E.document.history.budget;
+    S.undo_memory_mb = 1;
+    editorInsertChar('a');
+    check(E.document.history.budget == initial_budget, "setting deferred even before first edit");
+    S.undo_memory_mb = 64;
+    editorInsertChar('b');
+    editorUndo();
+    E.document.selection.active = 1;
+    fail_core_render = 1;
+    editorHandleCommandKey(CTRL_KEY('y'));
+    check(E.document.selection.active, "redo OOM preserves selection through dispatch");
+    check(E.document.buffer.row_count == 0 && E.document.history.redo_count == 1,
+        "redo render OOM leaves document and history position unchanged");
+    fail_core_render = 0;
+    editorRedo();
+    check(!strcmp(E.document.buffer.rows[0].chars, "ab"), "redo retry succeeds");
+    E.document.history.last_edit_type = EDIT_NONE;
+    fail_core_render = 1;
+    editorInsertChar('c');
+    check(!strcmp(E.document.buffer.rows[0].chars, "ab") && E.document.cursor.cx == 2 &&
+        E.document.history.undo_count == 1, "render OOM rolls back edit and cursor");
+    fail_core_render = 0;
+    editorInsertChar('d');
+    fail_core_render = 1;
+    editorUndo();
+    check(!strcmp(E.document.buffer.rows[0].chars, "abd") &&
+        E.document.history.undo_count == 2, "undo render OOM leaves source and stack unchanged");
+    fail_core_render = 0;
+    editorUndo();
+    check(!strcmp(E.document.buffer.rows[0].chars, "ab"), "undo retry succeeds");
+    E.document.selection.active = 1;
+    E.document.selection.anchor_x = 0;
+    E.document.cursor.cx = 2;
+    size_t old_bytes = E.document.history.bytes;
+    E.document.history.budget = old_bytes + 400;
+    char text[1024]; memset(text, 'z', sizeof(text));
+    editorReplaceSelectionWithText(1, 0, 0, 0, 2, text, sizeof(text));
+    check(!strcmp(E.document.buffer.rows[0].chars, "ab") &&
+        E.document.selection.active && E.document.cursor.cx == 2 &&
+        E.document.history.bytes == old_bytes && E.document.history.redo_count == 1,
+        "oversized selection replacement restores text cursor selection and redo");
+    E.document.selection.active = 0;
+    E.document.cursor.cx = 1;
+    E.document.history.budget = sizeof(struct historyAction) + 1;
+    editorHandleEditKey(DEL_KEY);
+    check(E.document.cursor.cx == 1 && !strcmp(E.document.buffer.rows[0].chars, "ab"),
+        "failed forward delete restores cursor before dispatch movement");
+    editorResetDocument();
+}
+
 static void testTopBar(void) {
     char filename[1024];
     memset(filename, 'a', sizeof(filename) - 1);
@@ -91,6 +184,21 @@ static void testTopBar(void) {
         }
         abFree(&ab);
     }
+    E.document.file.filename = "src/nested/abc.md";
+    E.view.screencols = 20;
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawTopBar(&ab);
+    abAppend(&ab, "", 1);
+    check(strstr(ab.b, "       abc.md       ") != NULL, "top bar title centered");
+    check(strstr(ab.b, "src/") == NULL, "top bar omits relative directory");
+    abFree(&ab);
+    E.document.file.filename = "/tmp/project/abc.md";
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawTopBar(&ab);
+    abAppend(&ab, "", 1);
+    check(strstr(ab.b, "       abc.md       ") != NULL && strstr(ab.b, "/tmp/") == NULL,
+        "top bar omits absolute directory and centers basename");
+    abFree(&ab);
     E.document.file.filename = NULL;
     S.show_top_bar = 0;
     E.view.screencols = 80;
@@ -618,6 +726,77 @@ static void drawWrappedReference(struct abuf *ab) {
     }
 }
 
+static void testHeadingReverse(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    E.document.file.filename = teStrdup("heading.md");
+    E.view.screencols = 12;
+    E.view.screenrows = 5;
+    E.view.rowoff = 0;
+    S.show_line_numbers = 1;
+    S.soft_wrap = 8;
+    S.markdown_heading_reverse = 1;
+    editorInsertRow(0, "# Héading long enough to wrap", strlen("# Héading long enough to wrap"));
+    editorInsertRow(1, "plain", 5);
+    struct abuf ab = ABUF_INIT;
+    editorDrawRows(&ab);
+    abAppend(&ab, "", 1);
+    const char *background = "\x1b[7m";
+    check(strstr(ab.b, background) != NULL, "heading reverse video emitted");
+    char ending[64];
+    snprintf(ending, sizeof(ending), "%s        \x1b[5G", background);
+    check(strstr(ab.b, ending) != NULL, "heading paints text columns and preserves gutter");
+    check(!drawing_heading, "heading rendering state restored");
+    abFree(&ab);
+    S.markdown_heading_reverse = 0;
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRows(&ab);
+    abAppend(&ab, "", 1);
+    check(strstr(ab.b, background) == NULL, "heading reverse video disabled");
+    abFree(&ab);
+    editorResetDocument();
+    settingsDefaults(&S);
+}
+
+static void testMarkdownStyles(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    S.markdown_text_styles = 1;
+    E.document.file.filename = teStrdup("styles.MD");
+    editorInsertRow(0, "**bold** and *italic* é", strlen("**bold** and *italic* é"));
+    editorInsertRow(1, "# Heading", 9);
+    struct abuf ab = ABUF_INIT;
+    editorDrawRowSegment(&ab, 0, 0, E.document.buffer.rows[0].rsize,
+        0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    check(strstr(ab.b, "\x1b[1m") != NULL, "Markdown strong uses bold");
+    check(strstr(ab.b, "\x1b[3m") != NULL, "Markdown emphasis uses italic");
+    abFree(&ab);
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRowSegment(&ab, 1, 0, E.document.buffer.rows[1].rsize,
+        0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    check(strstr(ab.b, "\x1b[1m") != NULL, "Markdown heading uses bold without reverse");
+    abFree(&ab);
+    editorInsertRow(2, "[label](url) <tag>", strlen("[label](url) <tag>"));
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRowSegment(&ab, 2, 0, E.document.buffer.rows[2].rsize,
+        0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    check(strstr(ab.b, "\x1b[3m") == NULL, "Markdown links and tags are not italic");
+    abFree(&ab);
+    S.markdown_text_styles = 0;
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRowSegment(&ab, 0, 0, E.document.buffer.rows[0].rsize,
+        0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    check(strstr(ab.b, "\x1b[1m") == NULL && strstr(ab.b, "\x1b[3m") == NULL,
+        "Markdown styles opt-in");
+    abFree(&ab);
+    editorResetDocument();
+    settingsDefaults(&S);
+}
+
 static void testRedrawCaches(void) {
     editorResetDocument();
     settingsDefaults(&S);
@@ -683,7 +862,19 @@ int main(void) {
     E.search.search_match_y = -1;
     E.search.search_match_end_y = -1;
     testPromptGrowth();
+    testUndoModified();
+    testHistoryMemoryRecovery();
     testTopBar();
+    erow heading = {0};
+    heading.render = "   ## Héading";
+    heading.rsize = (int32_t)strlen(heading.render);
+    syntaxHighlightRow(&heading, "test.md", 1, 0, 0, 0, 1, 0);
+    check(heading.hl_heading, "indented Markdown heading recognized");
+    syntaxHighlightRow(&heading, "test.md", 1, 1, 0, 0, 1, 0);
+    check(!heading.hl_heading, "heading inside code fence excluded");
+    syntaxHighlightRow(&heading, "test.c", 1, 0, 0, 0, 1, 0);
+    check(!heading.hl_heading, "heading state cleared on filetype change");
+    free(heading.hl);
     testEmptyPages();
     testUnicodeTabs();
     testDocumentTransactions();
@@ -691,6 +882,8 @@ int main(void) {
     testSharedAutoClose();
     testEditBatches();
     testSearchSession();
+    testMarkdownStyles();
+    testHeadingReverse();
     testRedrawCaches();
     puts("core tests: ok");
     return 0;

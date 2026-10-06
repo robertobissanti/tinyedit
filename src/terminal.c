@@ -875,8 +875,9 @@ char *terminalReadPastedText(size_t *outlen) {
          * (those bytes are real pasted content, not part of the end
          * marker after all) before handling `c` itself. */
         if (matched > 0) {
-            if (len + (size_t)matched > cap) {
-                while (len + (size_t)matched > cap) cap *= 2;
+            size_t needed = teSizeAdd(len, (size_t)matched);
+            if (needed > cap) {
+                cap = teGrowCapacity(cap, needed, SIZE_MAX);
                 buf = teRealloc(buf, cap);
             }
             memcpy(&buf[len], paste_end_marker, (size_t)matched);
@@ -893,7 +894,10 @@ char *terminalReadPastedText(size_t *outlen) {
             continue;
         }
 
-        if (len == cap) { cap *= 2; buf = teRealloc(buf, cap); }
+        if (len == cap) {
+            cap = teGrowCapacity(cap, teSizeAdd(len, 1), SIZE_MAX);
+            buf = teRealloc(buf, cap);
+        }
         buf[len++] = (char)c;
     }
 

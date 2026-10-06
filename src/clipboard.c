@@ -18,6 +18,9 @@
 
 static char *internal_buf = NULL;
 static size_t internal_len = 0;
+static ClipboardBackend backend = CLIPBOARD_BACKEND_UNKNOWN;
+
+/* ---- internal fallback operations ------------------------------------- */
 
 /**
  * @brief Keep an in-process copy when system clipboard access is unavailable.
@@ -26,10 +29,12 @@ static size_t internal_len = 0;
  * preserves a trailing NUL.
  */
 static void internalCopy(const char *data, size_t len) {
+    char *copy = teMalloc(teSizeAdd(len, 1));
+    if (len) memcpy(copy, data, len);
+    copy[len] = '\0';
     free(internal_buf);
-    internal_buf = teMalloc(len);
-    if (internal_buf) memcpy(internal_buf, data, len);
-    internal_len = internal_buf ? len : 0;
+    internal_buf = copy;
+    internal_len = len;
 }
 
 /**
@@ -40,17 +45,14 @@ static void internalCopy(const char *data, size_t len) {
  * nothing has been copied.
  */
 static char *internalPaste(size_t *outlen) {
-    if (!internal_buf || internal_len == 0) return NULL;
-    char *copy = teMalloc(internal_len + 1);
-    memcpy(copy, internal_buf, internal_len);
+    char *copy = teMalloc(teSizeAdd(internal_len, 1));
+    if (internal_len) memcpy(copy, internal_buf, internal_len);
     copy[internal_len] = '\0';
     if (outlen) *outlen = internal_len;
     return copy;
 }
 
 /* ---- backend detection --------------------------------------------------- */
-
-static ClipboardBackend backend = CLIPBOARD_BACKEND_UNKNOWN;
 
 /**
  * @brief Check whether an executable name can be found on PATH.
@@ -69,9 +71,11 @@ static uint8_t commandExists(const char *cmd) {
         size_t dirlen = colon ? (size_t)(colon - segment) : strlen(segment);
         const char *dir = dirlen ? segment : ".";
         size_t actual_dirlen = dirlen ? dirlen : 1;
-        size_t needed = actual_dirlen + 1 + strlen(cmd) + 1;
+        size_t needed = teSizeAdd(teSizeAdd(actual_dirlen, strlen(cmd)), 2);
         char *candidate = teMalloc(needed);
-        snprintf(candidate, needed, "%.*s/%s", (int)actual_dirlen, dir, cmd);
+        memcpy(candidate, dir, actual_dirlen);
+        candidate[actual_dirlen] = '/';
+        memcpy(candidate + actual_dirlen + 1, cmd, strlen(cmd) + 1);
         uint8_t found = access(candidate, X_OK) == 0;
         free(candidate);
         if (found) return 1;
@@ -278,7 +282,7 @@ static char *runPasteCommand(ClipboardBackend b, size_t *outlen) {
     while ((n = read(fds[0], buf + len, cap - len)) > 0) {
         len += (size_t)n;
         if (len == cap) {
-            cap *= 2;
+            cap = teGrowCapacity(cap, teSizeAdd(len, 1), SIZE_MAX);
             char *grown = teRealloc(buf, cap);
             buf = grown;
         }

@@ -13,14 +13,14 @@
  *
  * Module map (keep this list in sync whenever a source module is added,
  * removed, or given a materially different responsibility):
- *   alloc.c        checked allocation helpers
+ *   alloc.c        checked size arithmetic and fatal/recoverable allocations
  *   backup.c       crash-recovery snapshots
  *   buffer.c       document rows and text-buffer mutations
  *   clipboard.c    system clipboard integration and local fallback
  *   command.c      shared command metadata and setting-toggle links
  *   editor_state.c selection ranges and shared ASCII auto-close policy
  *   fileio.c       home-path expansion, staged loading and atomic replacement
- *   history.c      undo and redo snapshots
+ *   history.c      bounded row deltas, undo/redo and allocation-failure rollback
  *   linenoise.c    historical line-editor implementation; not built
  *   menu.c         rectangular menu overlay and its input navigation
  *   render.c       shared layout calculations for rows and wrapped text
@@ -69,7 +69,14 @@ static struct editorConfig E;
 static struct editorSettings S;
 static struct editorMenu M;
 static struct editorEditBatch edit_batch = {0, -1, 0};
+static struct editorCursor edit_saved_cursor;
+static struct editorSelection edit_saved_selection;
+static uint8_t edit_saved_dirty, edit_saved_final_newline;
+static enum historyError edit_last_error;
+static uint8_t replay_preparing;
 static uint8_t menu_mouse_motion_enabled;
+static uint8_t drawing_heading;
+static uint8_t drawing_heading_bold;
 
 static const char *const void_tags[] = {
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
@@ -353,8 +360,14 @@ static uint8_t editorMatchingPairAtCursor(int32_t *anchor_y, int32_t *anchor_x,
 
 static void editorBeginEdit(void) {
     if (edit_batch.depth++ == 0) {
+        if (!E.document.history.pending) E.document.history.error = HISTORY_OK;
         edit_batch.first_row = -1;
         edit_batch.undo_recorded = 0;
+        edit_saved_cursor = E.document.cursor;
+        edit_saved_selection = E.document.selection;
+        edit_saved_dirty = E.document.file.dirty;
+        edit_saved_final_newline = E.document.file.final_newline;
+        edit_last_error = HISTORY_OK;
     }
 }
 
@@ -400,7 +413,18 @@ static void editorRehighlightFrom(int32_t from, uint8_t force) {
  * @details Source mutations must be complete. Syntax propagation is separate
  * so compound commands never tokenize intermediate or partial UTF-8 text.
  */
-static void editorRebuildRow(erow *row) {
+/* Existing nontransactional display refreshes keep the controlled-exit
+ * contract; edit and replay preparations propagate failure to their caller. */
+static uint8_t editorRenderFailure(enum historyError error) {
+    if (!E.document.history.pending && !replay_preparing) {
+        errno = ENOMEM;
+        terminalDie("render allocation");
+    }
+    E.document.history.error = error;
+    return 0;
+}
+
+static uint8_t editorRebuildRow(erow *row) {
     size_t tabs = 0;
     for (size_t pos = 0; pos < (size_t)row->size; ) {
         if (row->chars[pos] == '\t') tabs++;
@@ -408,6 +432,16 @@ static void editorRebuildRow(erow *row) {
             utf8NextCharLen(row->chars, pos, (size_t)row->size);
     }
 
+    size_t padding = (size_t)(S.tab_stop - 1);
+    if (padding != 0 && tabs > (SIZE_MAX - (size_t)row->size - 1) / padding) {
+        return editorRenderFailure(HISTORY_SIZE);
+    }
+    size_t capacity = (size_t)row->size + tabs * padding + 1;
+    if (capacity - 1 > INT32_MAX) {
+        return editorRenderFailure(HISTORY_SIZE);
+    }
+    char *render = teTryMalloc(capacity);
+    if (!render) return editorRenderFailure(HISTORY_MEMORY);
     free(row->render);
     free(row->seg_start);
     free(row->seg_start_rx);
@@ -415,17 +449,7 @@ static void editorRebuildRow(erow *row) {
     row->seg_start_rx = NULL;
     row->seg_count = 0;
     row->seg_wrapcols = -1;
-    size_t padding = (size_t)(S.tab_stop - 1);
-    if (padding != 0 && tabs > (SIZE_MAX - (size_t)row->size - 1) / padding) {
-        errno = ENOMEM;
-        terminalDie("render size");
-    }
-    size_t capacity = (size_t)row->size + tabs * padding + 1;
-    if (capacity - 1 > INT32_MAX) {
-        errno = ENOMEM;
-        terminalDie("render size");
-    }
-    row->render = teMalloc(capacity);
+    row->render = render;
 
     int32_t idx = 0, rx = 0;
     row->grapheme_count = 0;
@@ -451,9 +475,11 @@ static void editorRebuildRow(erow *row) {
     row->rsize = idx;
 
     row->render_dirty = 0;
+    return 1;
 }
 
 static void editorUpdateRow(erow *row) {
+    if (historyFailed(&E.document)) return;
     editorInvalidateDocumentCaches();
     int32_t index = (int32_t)(row - E.document.buffer.rows);
     if (edit_batch.depth) {
@@ -461,31 +487,51 @@ static void editorUpdateRow(erow *row) {
         editorTouchRowsFrom(index);
         return;
     }
-    editorRebuildRow(row);
-    editorRehighlightFrom(index, 0);
+    if (editorRebuildRow(row)) editorRehighlightFrom(index, 0);
 }
 
+static void editorSetStatusMessage(const char *fmt, ...);
+
 static void editorEndEdit(void) {
-    if (--edit_batch.depth != 0 || edit_batch.first_row < 0) return;
+    if (--edit_batch.depth != 0) return;
     int32_t first = edit_batch.first_row;
     int32_t last = first;
-    for (int32_t i = first; i < E.document.buffer.row_count; i++) {
-        if (!E.document.buffer.rows[i].render_dirty) continue;
-        editorRebuildRow(&E.document.buffer.rows[i]);
-        last = i;
+    if (!historyFailed(&E.document) && first >= 0) {
+        for (int32_t i = first; i < E.document.buffer.row_count; i++) {
+            if (!E.document.buffer.rows[i].render_dirty) continue;
+            if (!editorRebuildRow(&E.document.buffer.rows[i])) break;
+            last = i;
+        }
     }
-    /* Changed rows cannot use the convergence shortcut: their previous
-     * outgoing state may match even though their own tokens changed. */
-    for (int32_t i = first; i <= last && i < E.document.buffer.row_count; i++) {
-        erow *row = &E.document.buffer.rows[i];
-        erow *previous = i > 0 ? &E.document.buffer.rows[i - 1] : NULL;
-        syntaxHighlightRow(row, E.document.file.filename, (uint8_t)S.syntax_highlight,
-            previous ? previous->hl_open_comment : 0,
-            previous ? previous->hl_open_math : 0,
-            previous ? previous->hl_open_frontmatter : 0, i,
-            previous ? previous->hl_open_emphasis : 0);
+    uint8_t recorded = E.document.history.pending != NULL;
+    edit_last_error = historyFinishEdit(&E.document);
+    if (edit_last_error != HISTORY_OK) {
+        if (!recorded || !E.document.history.hold) {
+            E.document.cursor = edit_saved_cursor;
+            E.document.selection = edit_saved_selection;
+            E.document.file.dirty = edit_saved_dirty;
+            E.document.file.final_newline = edit_saved_final_newline;
+        }
+        editorInvalidateDocumentCaches();
+        editorSetStatusMessage(edit_last_error == HISTORY_LIMIT ?
+            "Undo memory limit: edit cancelled" : "Not enough memory: edit cancelled");
+        E.document.history.error = HISTORY_OK;
+        editorRehighlightFrom(0, 1);
+    } else if (first >= 0) {
+        for (int32_t i = first; i <= last && i < E.document.buffer.row_count; i++) {
+            erow *row = &E.document.buffer.rows[i];
+            erow *previous = i > 0 ? &E.document.buffer.rows[i - 1] : NULL;
+            syntaxHighlightRow(row, E.document.file.filename, (uint8_t)S.syntax_highlight,
+                previous ? previous->hl_open_comment : 0,
+                previous ? previous->hl_open_math : 0,
+                previous ? previous->hl_open_frontmatter : 0, i,
+                previous ? previous->hl_open_emphasis : 0);
+        }
+        if (last + 1 < E.document.buffer.row_count) editorRehighlightFrom(last + 1, 0);
+        if (E.document.history.dropped_count)
+            editorSetStatusMessage("Undo limit: %d oldest action(s) removed",
+                E.document.history.dropped_count);
     }
-    if (last + 1 < E.document.buffer.row_count) editorRehighlightFrom(last + 1, 0);
     edit_batch.first_row = -1;
 }
 
@@ -519,6 +565,7 @@ static void editorUpdateAllRows(void) {
 static void editorInsertRow(int32_t at, const char *s, size_t len) {
     if (at < 0 || at > E.document.buffer.row_count) return;
     bufferInsertRow(&E.document.buffer, at, s, len);
+    if (historyFailed(&E.document)) return;
     editorUpdateRow(&E.document.buffer.rows[at]);
     E.document.file.dirty = 1;
 }
@@ -543,7 +590,7 @@ static void editorDelRow(int32_t at) {
  * @details at is a source-byte offset, c is a byte rather than a Unicode code
  * point. Marks dirty but leaves undo grouping to the caller.
  */
-static void editorRowInsertChar(erow *row, int32_t at, int32_t c) {
+static void editorRowInsertChar(erow *row, int32_t at, uint8_t c) {
     bufferRowInsertByte(row, at, c);
     editorUpdateRow(row);
     E.document.file.dirty = 1;
@@ -553,7 +600,7 @@ static void editorRowInsertChar(erow *row, int32_t at, int32_t c) {
  * @brief Insert a byte span into a row and refresh its display caches.
  *
  * @details text supplies len bytes and must remain valid during insertion. No
- * line splitting or undo snapshot is performed.
+ * line splitting or new undo boundary is performed.
  */
 static void editorRowInsertString(erow *row, int32_t at, const char *text, size_t len) {
     if (len == 0) return;
@@ -577,54 +624,72 @@ static void editorRowAppendString(erow *row, char *s, size_t len) {
 /* ---- undo / redo ------------------------------------------------------- */
 
 static void editorSetStatusMessage(const char *fmt, ...);
+static uint8_t editorDiffersFromDisk(void);
 
 /**
- * @brief Remember the document before an editing action.
+ * @brief Bind source rows and initialize the active document memory budget.
  *
- * @details Call before mutation. type controls whether nearby insertions or
- * deletions share an undo step; every new edit clears redo.
+ * @details A budget already active remains unchanged until document reset.
  */
+static void editorBindHistory(void) {
+    size_t units = (size_t)S.undo_memory_mb;
+    size_t unit = (size_t)1024 * 1024;
+    size_t budget = units > SIZE_MAX / unit ? SIZE_MAX : units * unit;
+    historySetBudget(&E.document, budget);
+}
+
+/** @brief Record one rollback boundary before source mutations. */
 static void editorPushUndo(enum undoEditType type) {
     if (edit_batch.depth && edit_batch.undo_recorded) return;
     if (edit_batch.depth) edit_batch.undo_recorded = 1;
+    editorBindHistory();
     historyRecordEdit(&E.document, S.undo_max_depth, type, time(NULL));
 }
 
 /**
- * @brief Restore the preceding text and cursor snapshot.
+ * @brief Prepare the target display before undo/redo changes source ownership.
  *
- * @details Updates row caches and status text. Reports an empty undo stack
- * without changing the document.
+ * @details On failure both text and history position remain unchanged.
  */
-static void editorUndo(void) {
-    undoSnapshot snapshot;
-    if (!historyBeginUndo(&E.document, &snapshot)) {
-        editorSetStatusMessage("Nothing to undo");
-        return;
+static uint8_t editorPrepareReplay(struct historyAction *action) {
+    if (!action) return 1;
+    replay_preparing = 1;
+    for (struct historyChange *change = action->first; change; change = change->next) {
+        if (change->spare.chars && !change->spare.render &&
+            !editorRebuildRow(&change->spare)) {
+            historyReleaseDisplay(action);
+            replay_preparing = 0;
+            E.document.history.error = HISTORY_OK;
+            editorSetStatusMessage("Not enough memory: undo/redo cancelled");
+            return 0;
+        }
     }
-    historyRestoreSnapshot(&E.document, &snapshot);
-    historyFreeSnapshot(&snapshot);
-    editorUpdateAllRows();
-    editorSetStatusMessage("Undo");
+    replay_preparing = 0;
+    return 1;
 }
 
-/**
- * @brief Reapply the next text and cursor snapshot.
- *
- * @details Updates row caches and status text. Reports an empty redo stack
- * without changing the document.
- */
-static void editorRedo(void) {
-    undoSnapshot snapshot;
-    if (!historyBeginRedo(&E.document, &snapshot)) {
-        editorSetStatusMessage("Nothing to redo");
+static void editorReplay(uint8_t reverse) {
+    if (historyFinishEdit(&E.document) != HISTORY_OK) {
+        E.document.history.error = HISTORY_OK;
+        editorSetStatusMessage("Not enough memory: edit cancelled");
         return;
     }
-    historyRestoreSnapshot(&E.document, &snapshot);
-    historyFreeSnapshot(&snapshot);
-    editorUpdateAllRows();
-    editorSetStatusMessage("Redo");
+    struct historyAction *action = reverse ? E.document.history.undo_stack :
+        E.document.history.redo_stack;
+    if (!editorPrepareReplay(action)) return;
+    if (!(reverse ? historyUndo(&E.document) : historyRedo(&E.document))) {
+        editorSetStatusMessage(reverse ? "Nothing to undo" : "Nothing to redo");
+        return;
+    }
+    E.document.selection.active = 0;
+    editorInvalidateDocumentCaches();
+    editorRehighlightFrom(0, 1);
+    E.document.file.dirty = editorDiffersFromDisk();
+    editorSetStatusMessage(reverse ? "Undo" : "Redo");
 }
+
+static void editorUndo(void) { editorReplay(1); }
+static void editorRedo(void) { editorReplay(0); }
 
 /* ---- editor operations --------------------------------------------------- */
 
@@ -632,11 +697,12 @@ static void editorRedo(void) {
  * @brief Insert one byte at the cursor as part of a larger action.
  *
  * @details Creates a row at EOF if needed and advances cx by one byte. The
- * caller must record the action's undo snapshot first.
+ * caller must record the action's undo boundary first.
  */
 static void editorInsertCharRaw(int32_t c) {
     if (E.document.cursor.cy == E.document.buffer.row_count) editorInsertRow(E.document.buffer.row_count, "", 0);
-    editorRowInsertChar(&E.document.buffer.rows[E.document.cursor.cy], E.document.cursor.cx, c);
+    if (historyFailed(&E.document)) return;
+    editorRowInsertChar(&E.document.buffer.rows[E.document.cursor.cy], E.document.cursor.cx, (uint8_t)c);
     E.document.cursor.cx++;
 }
 
@@ -647,27 +713,31 @@ static void editorInsertCharRaw(int32_t c) {
  * one undo step.
  */
 static void editorInsertChar(int32_t c) {
+    editorBeginEdit();
     editorPushUndo(EDIT_INSERT);
     editorInsertCharRaw(c);
+    editorEndEdit();
 }
 
 /**
  * @brief Split the current line and move to the start of the new row.
  *
  * @details Does not copy indentation or record undo. Use after recording a
- * snapshot when composing a multiline edit.
+ * boundary when composing a multiline edit.
  */
 static void editorInsertNewlineRaw(void) {
+    if (historyFailed(&E.document)) return;
     if (E.document.cursor.cx == 0) {
         editorInsertRow(E.document.cursor.cy, "", 0);
     } else {
         erow *row = &E.document.buffer.rows[E.document.cursor.cy];
         editorInsertRow(E.document.cursor.cy + 1, &row->chars[E.document.cursor.cx], (size_t)(row->size - E.document.cursor.cx));
         row = &E.document.buffer.rows[E.document.cursor.cy];
-        row->size = E.document.cursor.cx;
-        row->chars[row->size] = '\0';
+        if (historyFailed(&E.document)) return;
+        bufferRowDeleteRange(row, E.document.cursor.cx, row->size);
         editorUpdateRow(row);
     }
+    if (historyFailed(&E.document)) return;
     E.document.cursor.cy++;
     E.document.cursor.cx = 0;
 }
@@ -1001,6 +1071,7 @@ static void editorLoadLines(const char *data, size_t len) {
         terminalDie("recovery size");
     editorClearRows();
     E.document.buffer = candidate.buffer;
+    editorBindHistory();
     E.document.file.final_newline = candidate.file.final_newline;
     E.document.file.detected_line_ending = candidate.file.detected_line_ending;
     E.document.file.line_endings_mixed = candidate.file.line_endings_mixed;
@@ -1094,6 +1165,7 @@ static uint8_t editorOpen(const char *filename) {
      * closing the candidate have both succeeded. */
     editorResetDocument();
     E.document = candidate;
+    editorBindHistory();
     editorResolveFiletype();
     editorUpdateAllRows();
     if (E.document.file.line_endings_mixed)
@@ -1312,44 +1384,42 @@ static void editorSaveAs(void) {
 /**
  * @brief Check whether the serialized document actually differs from its file.
  *
- * @details Use before leaving a dirty document to avoid needless save prompts
- * after undo.
- * @return 1 for changed text, an unnamed document or an unreadable file.
- *
- * @note Whether the buffer differs from what's on disk, compared byte for
- * byte. E.document.file.dirty only ever goes from 0 to 1: undoing every edit,
- * or retyping what was deleted, leaves it set even though nothing actually
- * changed, and the user then gets asked to save a file that is already
- * identical. Checking the real contents catches all of those without having to
- * keep dirty exact after every keystroke -- this runs once, when leaving the
- * document, so reading the file back costs nothing during editing.
+ * @details Used after undo/redo and before leaving a dirty document.
+ * @return 1 for changed text or an unreadable file; unnamed empty buffers
+ * are unchanged.
  *
  * Any I/O failure answers "yes, it differs": if the file can't be read the
  * safe assumption is that there is something to lose, so the user still gets
- * the prompt. A buffer with no filename is likewise always different -- there
- * is nothing on disk to match.
+ * the prompt. An unnamed document is changed when it contains text.
  */
 static uint8_t editorDiffersFromDisk(void) {
-    if (!E.document.file.filename || E.document.file.save_uncertain) return 1;
+    if (E.document.file.save_uncertain) return 1;
+    if (!E.document.file.filename)
+        return E.document.buffer.row_count > 1 ||
+            (E.document.buffer.row_count == 1 && E.document.buffer.rows[0].size > 0);
 
     FILE *fp = fopen(E.document.file.filename, "rb");
     if (!fp) return 1;
 
-    size_t buflen;
-    char *buf = editorRowsToString(&buflen);
-    uint8_t differs = 1;
-
-    if (fseek(fp, 0, SEEK_END) == 0) {
-        long disklen = ftell(fp);
-        if (disklen >= 0 && (size_t)disklen == buflen && fseek(fp, 0, SEEK_SET) == 0) {
-            char *disk = teMalloc(buflen ? buflen : 1);
-            if (fread(disk, 1, buflen, fp) == buflen)
-                differs = (buflen > 0) && (memcmp(disk, buf, buflen) != 0);
-            free(disk);
+    uint8_t differs = 0;
+    char disk[4096];
+    const char *ending = editorEffectiveLineEnding() == LINE_ENDING_CRLF ? "\r\n" : "\n";
+    size_t ending_len = strlen(ending);
+    for (int32_t y = 0; !differs && y < E.document.buffer.row_count; y++) {
+        const erow *row = &E.document.buffer.rows[y];
+        for (size_t offset = 0; !differs && offset < (size_t)row->size; ) {
+            size_t count = (size_t)row->size - offset;
+            if (count > sizeof(disk)) count = sizeof(disk);
+            differs = fread(disk, 1, count, fp) != count ||
+                memcmp(disk, row->chars + offset, count) != 0;
+            offset += count;
         }
+        if (!differs && (y + 1 < E.document.buffer.row_count || E.document.file.final_newline))
+            differs = fread(disk, 1, ending_len, fp) != ending_len ||
+                memcmp(disk, ending, ending_len) != 0;
     }
+    if (!differs) differs = fgetc(fp) != EOF || ferror(fp) != 0;
 
-    free(buf);
     fclose(fp);
     return differs;
 }
@@ -1404,10 +1474,10 @@ static void editorResetDocument(void) {
     E.search.last_cy = -1;
     E.search.last_end_y = -1;
     if (E.document.file.filename) backupRemove(E.document.file.filename);
+    editorFreeUndoRedo();
     editorClearRows();
     free(E.document.file.filename);
     E.document.file.filename = NULL;
-    editorFreeUndoRedo();
 
     E.document.cursor.cx = 0;
     E.document.cursor.cy = 0;
@@ -1433,6 +1503,7 @@ static void editorResetDocument(void) {
     E.document.file.last_backup_time = 0;
     E.document.history.last_edit_type = EDIT_NONE;
     E.document.history.last_edit_time = 0;
+    editorBindHistory();
 }
 
 /**
@@ -1560,6 +1631,12 @@ static void abAppendReset(struct abuf *ab) {
     abAppend(ab, "\x1b[m", 3);
     const char *bg = ansiBgColorCode(S.color_background);
     if (bg[0]) abAppend(ab, bg, (int32_t)strlen(bg));
+    if (drawing_heading) {
+        const char *fg = ansiColorCode(S.color_syntax_preprocessor);
+        abAppend(ab, fg, (int32_t)strlen(fg));
+        abAppend(ab, "\x1b[7m", 4);
+    }
+    if (drawing_heading_bold) abAppend(ab, "\x1b[1m", 4);
 }
 
 /* ---- output ---------------------------------------------------------------- */
@@ -1839,6 +1916,9 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
     erow *row = &E.document.buffer.rows[filerow];
     int32_t len = seg_to - seg_from;
     if (len <= 0) return;
+    const char *ext = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
+    uint8_t markdown_styles = S.markdown_text_styles && S.syntax_highlight &&
+        ext && syntaxIsMarkdownExtension(ext + 1);
 
     char *line = &row->render[seg_from];
     int32_t row_sel_start = -1, row_sel_end = -1;
@@ -1887,7 +1967,8 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
         if (should_highlight && !in_sel) {
             const char *sel_color = ansiColorCode(S.color_selection);
             abAppend(ab, sel_color, (int32_t)strlen(sel_color));
-            abAppend(ab, "\x1b[7m", 4);
+            abAppend(ab, drawing_heading ? "\x1b[27m" : "\x1b[7m",
+                drawing_heading ? 5 : 4);
             in_sel = 1;
         } else if (!should_highlight && in_sel) {
             abAppendReset(ab);
@@ -1932,6 +2013,14 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
             }
         }
         if (syn_color) abAppend(ab, syn_color, (int32_t)strlen(syn_color));
+        uint8_t styled = markdown_styles && row->hl && rendercol < row->rsize;
+        if (styled) {
+            if (row->hl_heading || row->hl[rendercol] == HL_EMPHASIS_STRONG)
+                abAppend(ab, "\x1b[1m", 4);
+            else if (row->hl[rendercol] == HL_EMPHASIS)
+                abAppend(ab, "\x1b[3m", 4);
+            else styled = 0;
+        }
 
         /* Emit the complete UTF-8 sequence before resetting the color.
          * ANSI escapes between continuation bytes would split the codepoint
@@ -1940,7 +2029,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
         if (decoded.valid) abAppend(ab, &line[j], emitted_len);
         else abAppend(ab, "\xef\xbf\xbd", 3);
 
-        if (syn_color) abAppendReset(ab);
+        if (syn_color || styled) abAppendReset(ab);
         if (is_invisible_glyph) abAppendReset(ab);
         j += emitted_len;
     }
@@ -1975,7 +2064,8 @@ static uint8_t editorRowTerminatorHighlighted(int32_t filerow, uint8_t has_sel,
 static void editorDrawHighlightedTerminator(struct abuf *ab) {
     const char *sel_color = ansiColorCode(S.color_selection);
     abAppend(ab, sel_color, (int32_t)strlen(sel_color));
-    abAppend(ab, "\x1b[7m", 4);
+    abAppend(ab, drawing_heading ? "\x1b[27m" : "\x1b[7m",
+        drawing_heading ? 5 : 4);
     abAppend(ab, S.show_invisibles ? "$" : " ", 1);
     abAppendReset(ab);
 }
@@ -2112,6 +2202,32 @@ static void editorDrawSplashRow(struct abuf *ab, int32_t y, int32_t textcols) {
     abAppend(ab, display_line, len);
 }
 
+static void editorBeginHeadingRow(struct abuf *ab, int32_t filerow) {
+    uint8_t heading = filerow < E.document.buffer.row_count &&
+        E.document.buffer.rows[filerow].hl_heading;
+    drawing_heading = heading && S.markdown_heading_reverse;
+    drawing_heading_bold = heading && S.markdown_text_styles;
+    if (drawing_heading || drawing_heading_bold) abAppendReset(ab);
+    if (drawing_heading) {
+        /* Erase-to-end does not reliably paint reverse-video blanks. Write
+         * actual spaces first, then return to render the row over them. */
+        for (int32_t col = 0; col < editorTextCols(); col++) abAppend(ab, " ", 1);
+        char position[32];
+        int32_t len = snprintf(position, sizeof(position), "\x1b[%dG", editorGutterWidth() + 1);
+        abAppend(ab, position, len);
+    }
+}
+
+static void editorEndHeadingRow(struct abuf *ab) {
+    if (!drawing_heading) abAppend(ab, "\x1b[K", 3);
+    if (drawing_heading || drawing_heading_bold) {
+        drawing_heading = 0;
+        drawing_heading_bold = 0;
+        abAppendReset(ab);
+    }
+    abAppend(ab, "\r\n", 2);
+}
+
 /**
  * @brief Append the visible document rows or the startup splash.
  *
@@ -2131,6 +2247,7 @@ static void editorDrawRows(struct abuf *ab) {
         for (int32_t y = 0; y < E.view.screenrows; y++) {
             int32_t filerow = y + E.view.rowoff;
             editorDrawGutter(ab, gutter, filerow, 0);
+            editorBeginHeadingRow(ab, filerow);
 
             if (filerow >= E.document.buffer.row_count) {
                 if (E.document.buffer.row_count == 0) {
@@ -2149,8 +2266,7 @@ static void editorDrawRows(struct abuf *ab) {
                     editorDrawHighlightedTerminator(ab);
             }
 
-            abAppend(ab, "\x1b[K", 3);
-            abAppend(ab, "\r\n", 2);
+            editorEndHeadingRow(ab);
         }
         return;
     }
@@ -2184,6 +2300,7 @@ static void editorDrawRows(struct abuf *ab) {
         int32_t seg_to = editorSegVisibleEnd(row, nseg, row->seg_start, seg);
 
         editorDrawGutter(ab, gutter, filerow, seg > 0);
+        editorBeginHeadingRow(ab, filerow);
         editorDrawRowSegment(ab, filerow, seg_from, seg_to, has_sel, sel_y0, sel_x0, sel_y1, sel_x1,
             has_pair, pair_y0, pair_x0, pair_y1, pair_x1);
 
@@ -2211,8 +2328,7 @@ static void editorDrawRows(struct abuf *ab) {
             abAppendReset(ab);
         }
 
-        abAppend(ab, "\x1b[K", 3);
-        abAppend(ab, "\r\n", 2);
+        editorEndHeadingRow(ab);
         if (++seg == nseg) { filerow++; seg = 0; }
     }
 }
@@ -2273,7 +2389,7 @@ static const char *editorFiletypeLabel(void) {
  * @details Shows filename and modified state using the configured bar colors;
  * does nothing when the top bar is disabled.
  *
- * @note Top title bar (optional, show_top_bar): filename/path + dirty
+ * @note Top title bar (optional, show_top_bar): basename + dirty
  * indicator. Kept separate from the bottom status bar, which shows transient
  * position/count info instead -- the top bar acts as a persistent title that
  * stays visible while scrolling.
@@ -2291,15 +2407,29 @@ static void editorDrawTopBar(struct abuf *ab) {
     if (bar_bg[0]) abAppend(ab, bar_bg, (int32_t)strlen(bar_bg));
     abAppend(ab, bar_fg, (int32_t)strlen(bar_fg));
 
+    const char *name = E.document.file.filename;
+    if (name) {
+        const char *slash = strrchr(name, '/');
+        if (slash) name = slash + 1;
+    }
     const char *parts[] = {
-        E.document.file.filename ? E.document.file.filename : "[No Name]",
+        name ? name : "[No Name]",
         E.document.file.dirty ? " (modified)" : ""
     };
-    int32_t cols = 0;
-    if (E.view.screencols > 0) {
-        abAppend(ab, " ", 1);
-        cols = 1;
+    int32_t title_width = 0;
+    for (size_t part = 0; part < sizeof(parts) / sizeof(parts[0]); part++) {
+        size_t size = strlen(parts[part]), pos = 0;
+        while (pos < size) {
+            size_t len = utf8NextCharLen(parts[part], pos, size);
+            int32_t width = utf8SingleCharWidth(parts[part] + pos, len);
+            if (width > E.view.screencols - title_width) break;
+            title_width += width;
+            pos += len;
+        }
+        if (pos < size) break;
     }
+    int32_t cols = (E.view.screencols - title_width) / 2;
+    for (int32_t padding = 0; padding < cols; padding++) abAppend(ab, " ", 1);
     for (size_t part = 0; part < sizeof(parts) / sizeof(parts[0]); part++) {
         size_t size = strlen(parts[part]), pos = 0;
         while (pos < size) {
@@ -2742,6 +2872,7 @@ static char *editorSerializeRange(int32_t start_y, int32_t start_x, int32_t end_
  * Joins rows and marks dirty; the caller records undo before calling.
  */
 static void editorDeleteRangeRaw(int32_t start_y, int32_t start_x, int32_t end_y, int32_t end_x) {
+    if (historyFailed(&E.document)) return;
     editorBeginEdit();
     if (start_y == end_y) {
         erow *row = &E.document.buffer.rows[start_y];
@@ -2749,8 +2880,7 @@ static void editorDeleteRangeRaw(int32_t start_y, int32_t start_x, int32_t end_y
         editorUpdateRow(row);
     } else {
         erow *first = &E.document.buffer.rows[start_y];
-        first->size = start_x;
-        first->chars[first->size] = '\0';
+        bufferRowDeleteRange(first, start_x, first->size);
 
         erow *last = &E.document.buffer.rows[end_y];
         bufferRowAppend(first, &last->chars[end_x], (size_t)(last->size - end_x));
@@ -2823,12 +2953,13 @@ static void editorInsertTextRaw(const char *text, size_t len) {
     editorBeginEdit();
 
     size_t start = 0;
-    for (size_t i = 0; i <= len; i++) {
+    for (size_t i = 0; i <= len && !historyFailed(&E.document); i++) {
         if (i == len || text[i] == '\n') {
             size_t chunk_len = i - start;
             if (chunk_len > 0) {
                 if (E.document.cursor.cy == E.document.buffer.row_count)
                     editorInsertRow(E.document.buffer.row_count, "", 0);
+                if (historyFailed(&E.document)) break;
                 editorRowInsertString(&E.document.buffer.rows[E.document.cursor.cy],
                     E.document.cursor.cx, text + start, chunk_len);
                 E.document.cursor.cx += (int32_t)chunk_len;
@@ -3252,10 +3383,14 @@ static void editorFindAndReplace(const char *query) {
 
         if (do_replace) {
             editorBeginEdit();
-            if (count == 0) editorPushUndo(EDIT_OTHER);
+            if (count == 0) {
+                editorPushUndo(EDIT_OTHER);
+                E.document.history.hold = 1;
+            }
             editorDeleteRangeRaw(y, x, end_y, end_x);
             editorInsertTextRaw(replacement, rlen);
             editorEndEdit();
+            if (edit_last_error != HISTORY_OK) { count = 0; break; }
             count++;
             y = E.document.cursor.cy;
             x = E.document.cursor.cx;
@@ -3282,7 +3417,10 @@ static void editorFindAndReplace(const char *query) {
     E.search.search_match_y = -1;
     E.search.search_match_end_y = -1;
     free(replacement);
-    editorSetStatusMessage("Replaced %d occurrence(s).", count);
+    E.document.history.hold = 0;
+    historyFinishEdit(&E.document);
+    if (edit_last_error == HISTORY_OK)
+        editorSetStatusMessage("Replaced %d occurrence(s).", count);
 }
 
 /* ---- settings screen (F2) --------------------------------------------------- */
@@ -3395,10 +3533,11 @@ static int32_t editorSettingsLabelWidth(const struct editorSettings *edited) {
     for (int32_t i = 0; i < settingDescriptorCount; i++) {
         const struct settingDescriptor *d = &settingDescriptors[i];
         if (!edited->syntax_highlight && editorSettingsIsSyntaxColor(d)) continue;
+        uint8_t markdown_child = strncmp(d->label, "Markdown: ", 10) == 0;
         const char *label = editorSettingsIsSyntaxColor(d) ?
-            d->label + strlen("Syntax: ") : d->label;
+            d->label + strlen("Syntax: ") : markdown_child ? d->label + 10 : d->label;
         int32_t width = (int32_t)strlen(label) +
-            (editorSettingsIsSyntaxColor(d) ? 3 : 1);
+            (editorSettingsIsSyntaxColor(d) || markdown_child ? 3 : 1);
         if (width > widest) widest = width;
     }
     return widest;
@@ -3462,14 +3601,16 @@ static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected
     }
 
     uint8_t syntax_color = editorSettingsIsSyntaxColor(d);
-    const char *label = syntax_color ? d->label + strlen("Syntax: ") : d->label;
-    int32_t indent = syntax_color ? 3 : 1;
+    uint8_t markdown_child = strncmp(d->label, "Markdown: ", 10) == 0;
+    const char *label = syntax_color ? d->label + strlen("Syntax: ") :
+        markdown_child ? d->label + 10 : d->label;
+    int32_t indent = syntax_color || markdown_child ? 3 : 1;
     int32_t len = 0;
     line[len++] = scroll_indicator ? scroll_indicator : ' ';
     while (indent-- > 0 && len < (int32_t)sizeof(line) - 1) line[len++] = ' ';
     for (int32_t i = 0; label[i] && len < (int32_t)sizeof(line) - 1; i++)
         line[len++] = label[i];
-    int32_t dots = label_width - ((syntax_color ? 3 : 1) + (int32_t)strlen(label)) + 2;
+    int32_t dots = label_width - ((syntax_color || markdown_child ? 3 : 1) + (int32_t)strlen(label)) + 2;
     while (dots-- > 0 && len < (int32_t)sizeof(line) - 1) line[len++] = '.';
     for (int32_t i = 0; valuebuf[i] && len < (int32_t)sizeof(line) - 1; i++)
         line[len++] = valuebuf[i];
@@ -4820,7 +4961,6 @@ static uint8_t editorHandleCommandKey(int32_t c) {
             break;
 
         case CTRL_KEY('z'):
-            E.document.selection.active = 0;
             editorUndo();
             break;
         case CTRL_KEY('y'):
@@ -4829,7 +4969,6 @@ static uint8_t editorHandleCommandKey(int32_t c) {
              * from plain Ctrl-Z on a raw tty (see TODO.md), so Ctrl-Y
              * remains a reliable fallback even when the user picked
              * ctrl-shift-z in settings. */
-            E.document.selection.active = 0;
             editorRedo();
             break;
 
@@ -5137,6 +5276,7 @@ static void initEditor(void) {
     E.document.file.last_backup_time = 0;
 
     settingsLoad(&S);
+    editorBindHistory();
     menuInit(&M);
 
     E.document.history.undo_stack = NULL;

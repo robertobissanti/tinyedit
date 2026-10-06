@@ -3,9 +3,15 @@
 #ifndef TE_MENU_H
 #define TE_MENU_H
 
+#include "command.h"
+
 #include <stdint.h>
 
-#include "command.h"
+struct menuDefinition {
+    const char *label;
+    const enum editorCommand *items;
+    int32_t item_count;
+};
 
 typedef void (*menuAppendFn)(void *context, const char *text, int32_t len);
 

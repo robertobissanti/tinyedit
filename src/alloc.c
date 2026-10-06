@@ -1,8 +1,9 @@
-/* alloc.c -- fail-fast allocation with terminal-safe process cleanup. */
+/* alloc.c -- checked fatal allocations and explicit recoverable attempts. */
 
 #include "alloc.h"
 
 #include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -58,4 +59,40 @@ char *teStrdup(const char *s) {
     char *copy = teMalloc(len);
     memcpy(copy, s, len);
     return copy;
+}
+
+/* ---- recoverable allocations ---------------------------------------- */
+
+void *teTryMalloc(size_t size) {
+    void *ptr = malloc(size > 0 ? size : 1);
+    if (!ptr) errno = ENOMEM;
+    return ptr;
+}
+
+void *teTryRealloc(void *ptr, size_t size) {
+    void *grown = realloc(ptr, size > 0 ? size : 1);
+    if (!grown) errno = ENOMEM;
+    return grown;
+}
+
+/* ---- checked size arithmetic ---------------------------------------- */
+
+size_t teSizeAdd(size_t left, size_t right) {
+    if (right > SIZE_MAX - left) teOutOfMemory();
+    return left + right;
+}
+
+size_t teArrayBytes(size_t count, size_t element_size) {
+    if (element_size && count > SIZE_MAX / element_size) teOutOfMemory();
+    return count * element_size;
+}
+
+size_t teGrowCapacity(size_t capacity, size_t needed, size_t limit) {
+    if (capacity > limit || needed > limit) teOutOfMemory();
+    if (!capacity) capacity = needed;
+    while (capacity < needed) {
+        if (capacity > limit / 2) return needed;
+        capacity *= 2;
+    }
+    return capacity;
 }

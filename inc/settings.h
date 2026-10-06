@@ -104,6 +104,7 @@ struct editorSettings {
     int32_t tab_stop;
     int32_t redo_key;
     int32_t undo_max_depth;
+    int32_t undo_memory_mb; /* Applied at startup or document reset. */
     int32_t color_gutter;
     int32_t color_selection;
     int32_t color_statusbar;
@@ -166,6 +167,9 @@ struct editorSettings {
      * per file from its extension; this setting is the master on/off
      * switch. */
     int32_t syntax_highlight;
+    /* Swap heading foreground and background using terminal reverse video. */
+    int32_t markdown_heading_reverse;
+    int32_t markdown_text_styles;
     /* Color for text with no highlight class (HL_NORMAL, see
      * syntax.h) -- e.g. identifiers, punctuation, whitespace. Default
      * COLOR_TERMINAL_DEFAULT (no escape emitted, terminal's own

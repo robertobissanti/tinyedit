@@ -67,8 +67,8 @@ int32_t renderRowSegments(erow *row, int32_t wrapcols) {
     row->seg_wrapcols = wrapcols;
 
     int32_t capacity = 16;
-    row->seg_start = teMalloc(sizeof(int32_t) * (size_t)capacity);
-    row->seg_start_rx = teMalloc(sizeof(int32_t) * (size_t)capacity);
+    row->seg_start = teMalloc(teArrayBytes((size_t)capacity, sizeof(*row->seg_start)));
+    row->seg_start_rx = teMalloc(teArrayBytes((size_t)capacity, sizeof(*row->seg_start_rx)));
     if (wrapcols <= 0 || row->rsize == 0) {
         row->seg_start[0] = 0;
         row->seg_start_rx[0] = 0;
@@ -79,11 +79,12 @@ int32_t renderRowSegments(erow *row, int32_t wrapcols) {
     int32_t count = 0, line_start = 0, line_start_rx = 0;
     while (line_start < row->rsize) {
         if (count == capacity) {
-            capacity *= 2;
+            /* Each segment consumes at least one of rsize <= INT32_MAX bytes. */
+            capacity = capacity > INT32_MAX / 2 ? INT32_MAX : capacity * 2;
             row->seg_start = teRealloc(row->seg_start,
-                sizeof(int32_t) * (size_t)capacity);
+                teArrayBytes((size_t)capacity, sizeof(*row->seg_start)));
             row->seg_start_rx = teRealloc(row->seg_start_rx,
-                sizeof(int32_t) * (size_t)capacity);
+                teArrayBytes((size_t)capacity, sizeof(*row->seg_start_rx)));
         }
         row->seg_start[count] = line_start;
         row->seg_start_rx[count++] = line_start_rx;

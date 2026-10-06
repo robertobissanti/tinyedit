@@ -254,7 +254,7 @@ int main(void) {
      * is the common case, and used to lose its highlighting entirely. */
     initRow(&row, "*Python source in tinyedit, with line");
     highlight(&row, "d.md", 0, 0);
-    expectClass(&row, 1, HL_KEYWORD, "italic opened without closer on same line");
+    expectClass(&row, 1, HL_EMPHASIS, "italic opened without closer on same line");
     if (row.hl_open_emphasis != 1) {
         fprintf(stderr, "FAIL italic did not carry to next row\n");
         failures++;
@@ -263,7 +263,7 @@ int main(void) {
 
     initRow(&row, "and configurable syntax colors.*");
     syntaxHighlightRow(&row, "d.md", 1, 0, 0, 0, 2, 1);
-    expectClass(&row, 0, HL_KEYWORD, "italic continued from previous row");
+    expectClass(&row, 0, HL_EMPHASIS, "italic continued from previous row");
     if (row.hl_open_emphasis != 0) {
         fprintf(stderr, "FAIL italic did not close on its marker\n");
         failures++;

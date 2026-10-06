@@ -37,7 +37,7 @@ static void expectMatch(struct searchQuery *query, struct editorBuffer *buffer,
 
 int main(void) {
     struct searchQuery query = {0};
-    struct editorBuffer buffer = {0, NULL};
+    struct editorBuffer buffer = {0};
     struct searchMatch match = {-9, -9, -9, -9, -9};
     searchQueryPrepare(&query, "x", 0);
     check(!searchFind(&query, &buffer, 0, 0, 1, 1, &match) && match.start_y == -9,

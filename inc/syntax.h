@@ -32,11 +32,11 @@
 #ifndef __TE_SYNTAX_H
 #define __TE_SYNTAX_H
 
-#include <stddef.h>
-#include <stdint.h>
-
 #include "settings.h"
 #include "tinyedit.h"
+
+#include <stddef.h>
+#include <stdint.h>
 
 /* One value per byte of row->render (same length as row->rsize),
  * telling editorDrawRowSegment() which color to use for that byte span.
@@ -48,7 +48,7 @@
  * tag markers rather than inventing a parallel class, since it maps to
  * the same settingColor slot. HL_EMPHASIS_STRONG exists only for
  * Markdown bold text (double asterisk/underscore marker; single-marker
- * italic uses HL_KEYWORD instead) -- kept as its own class rather than
+ * italic uses HL_EMPHASIS instead) -- kept as its own class rather than
  * reused from another language's slot because bold and italic are
  * visually distinct concepts a user would reasonably want different
  * colors for, unlike (say) Markdown headings reusing HL_PREPROCESSOR's
@@ -72,7 +72,8 @@ enum syntaxHighlight {
     HL_PREPROCESSOR,
     HL_EMPHASIS_STRONG,
     HL_MATH,
-    HL_FUNCTION
+    HL_FUNCTION,
+    HL_EMPHASIS
 };
 
 struct syntaxLang {
@@ -147,6 +148,9 @@ struct syntaxLang {
 void syntaxHighlightRow(erow *row, const char *filename,
     uint8_t syntax_highlight_enabled, uint8_t prev_open_comment, uint8_t prev_open_math,
     uint8_t prev_open_frontmatter, int32_t row_index, uint8_t prev_open_emphasis);
+
+/* ext is a NUL-terminated extension without a dot, compared ignoring case. */
+uint8_t syntaxIsMarkdownExtension(const char *ext);
 
 /**
  * @brief Get the configured foreground sequence for a syntax class.
