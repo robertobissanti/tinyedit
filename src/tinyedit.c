@@ -22,7 +22,7 @@
  *   fileio.c       home-path expansion, staged loading and atomic replacement
  *   history.c      bounded row deltas, undo/redo and allocation-failure rollback
  *   linenoise.c    historical line-editor implementation; not built
- *   menu.c         rectangular menu overlay and its input navigation
+ *   menu.c         UTF-8 menu layout, viewport clipping and input navigation
  *   render.c       shared layout calculations for rows and wrapped text
  *   search.c       compiled queries, text search and source-coordinate results
  *   settings.c     persistent configuration parsing and serialization
@@ -871,7 +871,7 @@ static char *editorPromptDisplayText(const char *buf, size_t len) {
     size_t extra = 0;
     for (size_t i = 0; i < len; i++)
         if (buf[i] == '\n' || buf[i] == '\r') extra++;
-    char *display = teMalloc(len + extra + 1);
+    char *display = teMalloc(teSizeAdd(teSizeAdd(len, extra), 1));
     size_t dst = 0;
     for (size_t i = 0; i < len; i++) {
         if (buf[i] == '\n' || buf[i] == '\r') {
@@ -2583,11 +2583,11 @@ static void editorRefreshScreen(void) {
     abAppend(&ab, "\x1b[H", 3);
 
     editorDrawTopBar(&ab);
-    if (S.show_menu) menuDrawBar(&M, &S, editorMenuAppend, &ab);
+    if (S.show_menu) menuDrawBar(&M, &S, E.view.screencols, editorMenuAppend, &ab);
     editorDrawRows(&ab);
     editorDrawStatusBar(&ab);
     editorDrawMessageBar(&ab);
-    if (S.show_menu) menuDrawPopup(&M, &S, S.show_top_bar ? 2 : 1,
+    if (S.show_menu) menuDrawPopup(&M, &S, S.show_top_bar ? 2 : 1, E.view.screencols,
         editorMenuAppend, &ab);
 
     if (!M.open) {
@@ -3419,8 +3419,13 @@ static void editorFindAndReplace(const char *query) {
     free(replacement);
     E.document.history.hold = 0;
     historyFinishEdit(&E.document);
-    if (edit_last_error == HISTORY_OK)
-        editorSetStatusMessage("Replaced %d occurrence(s).", count);
+    if (edit_last_error == HISTORY_OK) {
+        if (E.document.history.dropped_count)
+            editorSetStatusMessage("Replaced %d occurrence(s). Undo limit: %d oldest action(s) removed.",
+                count, E.document.history.dropped_count);
+        else
+            editorSetStatusMessage("Replaced %d occurrence(s).", count);
+    }
 }
 
 /* ---- settings screen (F2) --------------------------------------------------- */
@@ -4689,7 +4694,7 @@ static int32_t editorHandleMouseEvent(void) {
         (mouseEventPress && mouseEventRow == (S.show_top_bar ? 2 : 1)))) {
         editorCancelMouseDrag();
         enum editorCommand command = menuHandleMouse(&M,
-            mouseEventRow, mouseEventCol, S.show_top_bar ? 2 : 1,
+            mouseEventRow, mouseEventCol, S.show_top_bar ? 2 : 1, E.view.screencols,
             mouseEventPress, (mouseEventButton & 32) != 0);
         editorSyncMenuMouseMotion();
         if (commandIsSetting(command)) editorToggleMenuSetting(command);

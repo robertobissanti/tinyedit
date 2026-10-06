@@ -52,28 +52,32 @@ enum editorCommand menuHandleKey(struct editorMenu *menu, int32_t key);
  * @param row One-based terminal row of the mouse report.
  * @param col One-based terminal column of the mouse report.
  * @param menu_row One-based terminal row occupied by the menu bar.
+ * @param screencols Visible terminal width, shared with the drawing helpers.
  * @param pressed Whether the report is a button press.
  * @param motion Whether the report is a motion event.
  */
 enum editorCommand menuHandleMouse(struct editorMenu *menu, int32_t row,
-    int32_t col, int32_t menu_row, uint8_t pressed, uint8_t motion);
+    int32_t col, int32_t menu_row, int32_t screencols, uint8_t pressed, uint8_t motion);
 /**
  * @brief Append the menu titles using the current UI colors.
  *
  * @details append copies bytes to the caller's output buffer through context.
+ * Text is clipped to screencols at grapheme boundaries.
  * Call at the bar's screen position; this helper also appends the line ending.
  */
 void menuDrawBar(const struct editorMenu *menu,
-    const struct editorSettings *settings, menuAppendFn append, void *context);
+    const struct editorSettings *settings, int32_t screencols,
+    menuAppendFn append, void *context);
 /**
  * @brief Append an open menu's border, items and setting checkmarks.
  *
  * @details menu_row is the one-based bar row. Uses absolute cursor positions
- * through append; does nothing when closed. The caller restores final frame
+ * through append; clips and positions the popup within screencols.
+ * Does nothing when closed. The caller restores final frame
  * attributes.
  */
 void menuDrawPopup(const struct editorMenu *menu,
-    const struct editorSettings *settings, int32_t menu_row,
+    const struct editorSettings *settings, int32_t menu_row, int32_t screencols,
     menuAppendFn append, void *context);
 
 #endif

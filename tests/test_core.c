@@ -857,11 +857,45 @@ static void testRedrawCaches(void) {
     abFree(&frame);
 }
 
+static void testReplaceAllHistoryNotice(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    S.undo_max_depth = 1;
+    E.view.screenrows = 20;
+    E.view.screencols = 80;
+    editorInsertChar('a');
+    int input[2];
+    check(pipe(input) == 0, "replacement input pipe");
+    check(write(input[1], "b\ra", 3) == 3, "replacement input bytes");
+    close(input[1]);
+    int saved_input = dup(STDIN_FILENO), saved_output = dup(STDOUT_FILENO);
+    int sink = open("/dev/null", O_WRONLY);
+    check(saved_input >= 0 && saved_output >= 0 && sink >= 0, "replacement descriptors");
+    check(dup2(input[0], STDIN_FILENO) >= 0 && dup2(sink, STDOUT_FILENO) >= 0,
+        "redirect replacement UI");
+    close(input[0]);
+    close(sink);
+    editorFindAndReplace("a");
+    check(dup2(saved_input, STDIN_FILENO) >= 0 && dup2(saved_output, STDOUT_FILENO) >= 0,
+        "restore replacement descriptors");
+    close(saved_input);
+    close(saved_output);
+    check(strcmp(E.document.buffer.rows[0].chars, "b") == 0,
+        "replace all changes source");
+    check(strstr(E.ui.statusmsg, "1 oldest action(s) removed") != NULL,
+        "replace all preserves undo eviction notice");
+    editorUndo();
+    check(strcmp(E.document.buffer.rows[0].chars, "a") == 0,
+        "replacement remains undoable after eviction");
+    editorResetDocument();
+}
+
 int main(void) {
     settingsDefaults(&S);
     E.search.search_match_y = -1;
     E.search.search_match_end_y = -1;
     testPromptGrowth();
+    testReplaceAllHistoryNotice();
     testUndoModified();
     testHistoryMemoryRecovery();
     testTopBar();

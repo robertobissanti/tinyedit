@@ -18,3 +18,5 @@ __pycache__/
 
 # Private project material and local helper scripts.
 /local/
+
+!tests/test_menu.c

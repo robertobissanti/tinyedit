@@ -58,7 +58,7 @@ static char *absolutePathOf(const char *filename) {
     if (base) {
         size_t dirlen = (size_t)(base - filename);
         if (dirlen == 0) dirlen = 1;
-        char *dir = teMalloc(dirlen + 1);
+        char *dir = teMalloc(teSizeAdd(dirlen, 1));
         memcpy(dir, filename, dirlen);
         dir[dirlen] = '\0';
         cwd = realpath(dir, NULL);
@@ -73,7 +73,7 @@ static char *absolutePathOf(const char *filename) {
         base = filename;
     }
 
-    size_t len = strlen(cwd) + 1 + strlen(base) + 1;
+    size_t len = teSizeAdd(teSizeAdd(strlen(cwd), strlen(base)), 2);
     char *absolute = teMalloc(len);
     snprintf(absolute, len, "%s/%s", cwd, base);
     free(cwd);
@@ -159,7 +159,7 @@ char *backupRead(const char *filename, size_t *outlen) {
     /* First line is the original path, kept for identification but not
      * part of the recovered content. Avoid a fixed-size line buffer:
      * the path is metadata and may be longer than our UI buffers. */
-    char byte;
+    uint8_t byte;
     ssize_t nread;
     do {
         nread = read(fd, &byte, 1);
@@ -172,7 +172,7 @@ char *backupRead(const char *filename, size_t *outlen) {
     while ((nread = read(fd, buf + len, cap - len)) > 0) {
         len += (size_t)nread;
         if (len == cap) {
-            cap *= 2;
+            cap = teGrowCapacity(cap, teSizeAdd(len, 1), SIZE_MAX);
             char *grown = teRealloc(buf, cap);
             buf = grown;
         }
