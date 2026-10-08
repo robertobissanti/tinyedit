@@ -4,6 +4,14 @@ Feature future, non pianificate né prioritarie. Idee da valutare quando
 il core sarà completo e stabile — o da scartare se al
 momento buono non convincono più.
 
+## Stato delle idee implementate (2026-10-08)
+
+Il completamento dei percorsi Open/Save e la sidebar filesystem sono ora
+implementati nel fork locale. Comandi e comportamento attuale sono descritti
+nel README; decisioni e verifiche sono registrate in `local/TODO.md`.
+La sidebar può rimanere aperta mentre si modifica il documento: Ctrl-E la
+mostra/nasconde e Ctrl-B cambia focus. Non abilita ancora buffer multipli.
+
 ## Editing avanzato
 
 - **Syntax highlighting: linguaggi oltre agli 8 già coperti** (vedi
@@ -72,15 +80,9 @@ momento buono non convincono più.
 
 ## Interfaccia
 
-- **Barra laterale di navigazione file** — un albero di cartelle e file,
-  richiamabile e richiudibile, per aprire documenti senza digitare il
-  percorso. Da valutare insieme al multi-buffer: la navigazione resta
-  utile anche con un solo documento, ma aprire più file senza perdere il
-  precedente ne aumenterebbe l'utilità. La barra deve lasciare spazio
-  sufficiente al testo nei terminali stretti.
-- **Mouse support opzionale** — possibile solo
-  come opzione esplicita via config, mai default, perché disattiva la
-  selezione nativa del terminale.
+- **Mouse support opzionale (implementato)** — attivabile da F2/config,
+  disabilitato per default perché sostituisce la selezione nativa del
+  terminale. Supporta anche focus, espansione e cambio radice della sidebar.
 - **Temi colore** per la TUI delle impostazioni e per il syntax
   highlighting, selezionabili da config.
 - **Status bar personalizzabile** (mostrare/nascondere backend clipboard

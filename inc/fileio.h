@@ -20,10 +20,13 @@ char *fileioExpandHomePath(const char *path);
 
 /** @brief Read all rows into an empty candidate; no active editor state is changed.
  * On failure, returns 0 with errno and releases candidate-owned storage.
- * A missing path becomes an empty named document. */
+ * Only regular files are accepted; pipes/devices are rejected without blocking.
+ * A missing path becomes an empty named document. NUL-containing binary input
+ * is rejected with EILSEQ; malformed UTF-8 text is preserved. */
 uint8_t fileioLoadDocument(const char *filename, struct editorDocument *candidate);
 /** @brief Read a stream into an empty candidate, checking read errors separately
- * from EOF. The caller owns and closes the stream; failure clears the buffer. */
+ * from EOF. NUL bytes are rejected with EILSEQ. The caller owns and closes
+ * the stream; failure clears the buffer. */
 uint8_t fileioLoadStream(FILE *stream, struct editorDocument *candidate);
 /** @brief Append one LF-delimited line, removing only its actual LF/CRLF terminator.
  * Tracks ending metadata and preserves content CR bytes. Returns 0 on size limits. */

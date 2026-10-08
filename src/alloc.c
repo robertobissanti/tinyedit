@@ -63,12 +63,18 @@ char *teStrdup(const char *s) {
 
 /* ---- recoverable allocations ---------------------------------------- */
 
+/**
+ * @brief Allocate caller-owned bytes, returning NULL on failure without exiting.
+ */
 void *teTryMalloc(size_t size) {
     void *ptr = malloc(size > 0 ? size : 1);
     if (!ptr) errno = ENOMEM;
     return ptr;
 }
 
+/**
+ * @brief Resize owned storage; NULL leaves the original allocation valid.
+ */
 void *teTryRealloc(void *ptr, size_t size) {
     void *grown = realloc(ptr, size > 0 ? size : 1);
     if (!grown) errno = ENOMEM;
@@ -77,16 +83,25 @@ void *teTryRealloc(void *ptr, size_t size) {
 
 /* ---- checked size arithmetic ---------------------------------------- */
 
+/**
+ * @brief Add byte counts, exiting with cleanup on overflow.
+ */
 size_t teSizeAdd(size_t left, size_t right) {
     if (right > SIZE_MAX - left) teOutOfMemory();
     return left + right;
 }
 
+/**
+ * @brief Compute array allocation bytes, exiting with cleanup on overflow.
+ */
 size_t teArrayBytes(size_t count, size_t element_size) {
     if (element_size && count > SIZE_MAX / element_size) teOutOfMemory();
     return count * element_size;
 }
 
+/**
+ * @brief Grow byte capacity to needed within limit, exiting if impossible.
+ */
 size_t teGrowCapacity(size_t capacity, size_t needed, size_t limit) {
     if (capacity > limit || needed > limit) teOutOfMemory();
     if (!capacity) capacity = needed;

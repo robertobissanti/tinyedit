@@ -216,6 +216,9 @@ void historySetBudget(struct editorDocument *document, size_t budget) {
     }
 }
 
+/**
+ * @brief Report whether the pending action has a recoverable preparation error.
+ */
 uint8_t historyFailed(const struct editorDocument *document) {
     return document->history.error != HISTORY_OK;
 }
@@ -300,6 +303,9 @@ static uint8_t historyReserveRows(struct editorBuffer *buffer) {
     return 1;
 }
 
+/**
+ * @brief Insert copied source bytes at a row index; return zero without mutation on failure.
+ */
 uint8_t historyInsertRow(struct editorBuffer *buffer, int32_t at,
     const char *text, size_t len) {
     struct editorHistory *history = buffer->history;
@@ -330,6 +336,9 @@ uint8_t historyInsertRow(struct editorBuffer *buffer, int32_t at,
     return 1;
 }
 
+/**
+ * @brief Detach the indexed source row into the pending action; return zero on failure.
+ */
 uint8_t historyDeleteRow(struct editorBuffer *buffer, int32_t at) {
     struct editorHistory *history = buffer->history;
     if (!history || (!history->pending && history->error == HISTORY_OK)) return 0;
@@ -442,9 +451,18 @@ static uint8_t historyReplay(struct editorDocument *document, uint8_t reverse) {
     return 1;
 }
 
+/**
+ * @brief Restore the previous action; return zero if absent. Caller rebuilds display data.
+ */
 uint8_t historyUndo(struct editorDocument *document) { return historyReplay(document, 1); }
+/**
+ * @brief Replay the next action; return zero if absent. Caller rebuilds display data.
+ */
 uint8_t historyRedo(struct editorDocument *document) { return historyReplay(document, 0); }
 
+/**
+ * @brief Release owned pending, undo and redo actions and reset history.
+ */
 void historyClear(struct editorHistory *history) {
     history->hold = 0;
     if (history->pending && history->document) historyFinishEdit(history->document);

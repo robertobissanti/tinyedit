@@ -29,7 +29,8 @@ enum editorCommand {
     CMD_TOGGLE_MENU,
     CMD_TOGGLE_INVISIBLES,
     CMD_TOGGLE_SYNTAX_HIGHLIGHT,
-    CMD_TOGGLE_AUTO_INDENT
+    CMD_TOGGLE_AUTO_INDENT,
+    CMD_TOGGLE_TREE
 };
 
 struct commandDescriptor {

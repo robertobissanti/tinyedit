@@ -32,6 +32,11 @@ static void invalid(const char *bytes, size_t length) {
 /* Exercise the decoder first, then the editor's byte and screen coordinates
  * with malformed bytes next to a valid multibyte character. */
 int main(void) {
+    const char *flags = "🇦🇧🇨🇩🇪";
+    check(utf8NextCharLen(flags, 0, strlen(flags)) == 8, "forward flag pair");
+    check(utf8PrevCharLen(flags, 12) == 4, "odd final indicator");
+    check(utf8PrevCharLen(flags, 16) == 8, "even final indicator pair");
+    check(utf8PrevCharLen(flags, 20) == 4, "five indicator run");
     const char nul[] = {0};
     check(utf8DecodeChar(nul, 0).consumed == 0, "empty buffer");
     valid(nul, 1, 0);

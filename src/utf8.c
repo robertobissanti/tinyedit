@@ -219,10 +219,16 @@ size_t utf8PrevCharLen(const char *buf, size_t pos) {
             decoded = previous;
             continue;
         } else if (isRegionalIndicator(cp) && isRegionalIndicator(prevcp)) {
-            /* Two regional indicators form a flag. But we need to be careful:
-             * flags are always pairs, so only join if we're at an even boundary.
-             * For simplicity, just join one pair. */
-            total += prevlen;
+            /* Pair from the start of the run, consistently with forward
+             * navigation; an odd final indicator is a separate grapheme. */
+            size_t run = 1, scan = curpos;
+            while (scan > 0) {
+                struct utf8DecodeResult indicator = utf8DecodePrev(buf, scan);
+                if (!indicator.valid || !isRegionalIndicator(indicator.codepoint)) break;
+                run++;
+                scan -= indicator.consumed;
+            }
+            if (run % 2 == 0) total += prevlen;
             break;
         } else {
             /* No more extending; we've found the start of the cluster. */

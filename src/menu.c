@@ -22,7 +22,7 @@ static const enum editorCommand edit_items[] = {
 static const enum editorCommand view_items[] = {
     CMD_TOGGLE_LINE_NUMBERS, CMD_TOGGLE_TOP_BAR, CMD_TOGGLE_MENU,
     CMD_TOGGLE_INVISIBLES, CMD_TOGGLE_SYNTAX_HIGHLIGHT,
-    CMD_TOGGLE_AUTO_INDENT
+    CMD_TOGGLE_AUTO_INDENT, CMD_NONE, CMD_TOGGLE_TREE
 };
 static const enum editorCommand help_items[] = { CMD_HELP };
 
@@ -62,6 +62,9 @@ static int32_t menuNextItem(int32_t menu_index, int32_t item, int32_t delta) {
     return item;
 }
 
+/**
+ * @brief Measure borrowed menu text in display columns.
+ */
 static int32_t menuTextWidth(const char *text) {
     size_t width = utf8StrWidth(text, strlen(text));
     return width < INT32_MAX - 8 ? (int32_t)width : INT32_MAX - 8;
@@ -106,6 +109,9 @@ static int32_t menuWidth(const struct menuDefinition *definition) {
 }
 
 /* Clip at grapheme boundaries: byte counts and terminal columns differ. */
+/**
+ * @brief Append borrowed menu text within a display-column budget.
+ */
 static int32_t menuAppendText(menuAppendFn append, void *context,
     const char *text, int32_t columns) {
     size_t len = strlen(text), offset = 0;
@@ -121,17 +127,26 @@ static int32_t menuAppendText(menuAppendFn append, void *context,
     return used;
 }
 
+/**
+ * @brief Compute popup width in screen columns from the selected menu.
+ */
 static int32_t menuPopupWidth(int32_t index, int32_t screencols) {
     if (screencols < 3) return 0;
     int32_t width = menuWidth(&menus[index]);
     return width < screencols - 2 ? width : screencols - 2;
 }
 
+/**
+ * @brief Compute the popup starting screen column.
+ */
 static int32_t menuPopupStart(int32_t index, int32_t width, int32_t screencols) {
     int32_t start = menuStartColumn(index);
     return start < screencols - width ? start : screencols - width - 1;
 }
 
+/**
+ * @brief Append one menu item with its selection and enabled state.
+ */
 static void menuAppendItem(menuAppendFn append, void *context,
     const char *mark, const struct commandDescriptor *descriptor, int32_t width) {
     const char *shortcut = descriptor->shortcut ? descriptor->shortcut : "";

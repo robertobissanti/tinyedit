@@ -151,6 +151,12 @@ void syntaxHighlightRow(erow *row, const char *filename,
     uint8_t prev_open_frontmatter, int32_t row_index, uint8_t prev_open_emphasis);
 
 /* ext is a NUL-terminated extension without a dot, compared ignoring case. */
+/**
+ * @brief Recognize extensions handled by the Markdown tokenizer.
+ *
+ * @details ext is NUL-terminated without a dot.
+ * @return 1 for md or markdown, ignoring ASCII case.
+ */
 uint8_t syntaxIsMarkdownExtension(const char *ext);
 
 /**

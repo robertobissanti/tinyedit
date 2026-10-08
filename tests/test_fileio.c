@@ -122,6 +122,13 @@ static void testLoading(const char *path, const char *directory) {
         free(document.file.filename);
         bufferClear(&document.buffer);
     }
+    const char binary[] = "text row\n\x89PNG\r\n\x1a\n\0binary";
+    putFile(path, binary, sizeof(binary) - 1);
+    struct editorDocument binary_document;
+    check(!fileioLoadDocument(path, &binary_document) && errno == EILSEQ,
+        "binary input rejected even after valid text rows");
+    check(binary_document.buffer.rows == NULL && binary_document.buffer.row_count == 0 &&
+        binary_document.file.filename == NULL, "binary rejection releases candidate");
     const char mixed[] = "a\r\nb\nc\r\r\nlast\r";
     putFile(path, mixed, sizeof(mixed) - 1);
     struct editorDocument mixed_document;
@@ -248,6 +255,14 @@ static void testHomePaths(const char *directory) {
 }
 
 int main(void) {
+    char fifo_dir[] = "/tmp/tinyedit-fifo-XXXXXX";
+    check(mkdtemp(fifo_dir) != NULL, "create FIFO directory");
+    char fifo_path[256]; snprintf(fifo_path, sizeof(fifo_path), "%s/pipe", fifo_dir);
+    check(mkfifo(fifo_path, 0600) == 0, "create FIFO");
+    struct editorDocument fifo_candidate;
+    check(!fileioLoadDocument(fifo_path, &fifo_candidate) && errno == EINVAL,
+        "opening FIFO returns immediately without reader");
+    unlink(fifo_path); rmdir(fifo_dir);
     char directory[] = "/tmp/tinyedit-fileio-XXXXXX";
     check(mkdtemp(directory) != NULL, "create test directory");
     char path[1024];

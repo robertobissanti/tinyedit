@@ -403,3 +403,41 @@ Be respectful, constructive, and specific in issues, reviews, and pull
 requests. Discuss the code and the design rather than the person, assume good
 intent, and make room for contributors with different levels of experience.
 Harassment, personal attacks, and discriminatory behavior are not acceptable.
+
+## Release notes
+
+Every bug fix and new feature must add a user-facing entry under `Unreleased`
+in `CHANGELOG.md` in the same change. Include documentation-only corrections
+and maintenance changes too, so no completed work is lost between releases.
+Use the sections `New features`, `Important fixes`, and `Other minor fixing`.
+Important fixes cover data integrity, crashes, security, or a substantial
+workflow regression; small visual corrections and maintenance belong in
+`Other minor fixing`. Describe the trigger and resulting behavior in plain
+language, with issue or pull-request links when available. Combine duplicate
+entries; never list an unimplemented or unverified fix as completed.
+
+When publishing or updating a release, collect all entries since its previous
+published version, preserve relevant existing notes, and use these sections in
+the release page. Explain compatibility changes and known limitations, and
+state automated and manual validation actually performed. Move released entries
+to a dated version heading in `CHANGELOG.md`, leaving `Unreleased` ready for
+future work. Verify that the release tag points to the tested published commit;
+do not silently move an existing published tag.
+
+## Commits
+
+Commit a coherent, reviewable change after its relevant checks pass; complete
+`make test` before merging or publishing. Split unrelated work into separate
+commits, but keep implementation, regression tests, documentation and release
+notes for one behavior together. Inspect the staged diff before committing and
+stage explicit paths; never include private `local/` files, generated binaries,
+or another contributor's work inadvertently.
+
+Use an English imperative subject in the form `type(scope): summary`, with
+`feat`, `fix`, `docs`, `test`, `refactor`, `perf`, or `chore` as the type and an
+optional short module scope. For example: `fix(search): treat replacement
+queries as literal prompt data`. Keep the subject concise (preferably within
+72 characters). Add a body for non-obvious reasons, compatibility changes and
+validation. Do not commit knowingly broken intermediate states to the branch
+being merged. Commit before merging; push after the merge and final checks.
+Do not rewrite shared history or move published tags without explicit approval.

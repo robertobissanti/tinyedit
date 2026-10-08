@@ -86,7 +86,7 @@ for real editing rather than just demonstrating how a terminal works.
 | Area | What you get |
 |---|---|
 | Editing | Familiar cursor movement, word jumps, selection, cut/copy/paste, automatic indentation, block indent/outdent with Tab, configurable pair and XML/HTML tag closing, matching-bracket highlighting, and an undo history of up to 2,000 steps (200 by default). |
-| Files | Open or switch files without restarting tinyedit, start a named file before it exists, save atomically, and recover unsaved work from automatic backups after a crash. |
+| Files | Open or switch files without restarting tinyedit, complete file paths with Tab, browse a persistent file tree, start a named file before it exists, save atomically, and recover unsaved work from automatic backups after a crash. |
 | Search | Incremental literal or POSIX regular-expression search, match navigation, and interactive search and replace. |
 | Syntax highlighting | Built-in support for C/C++, Python, Shell, JavaScript/TypeScript, Markdown, HTML/XML, CSS, and JSON, including function names. Simple C-like languages and HTML-based templates (Nunjucks, Jinja, Liquid, Twig) can be added with a user configuration file; ready-made ones ship in `syntax-configs/`. |
 | UTF-8 | Cursor movement, deletion, display width, wrapping, and character counts understand combining marks, CJK text, and multi-code-point emoji. |
@@ -172,6 +172,8 @@ make install PREFIX=/usr/local
 | `F10` | Open or close the menu; use arrows to navigate, Enter to choose, or Esc to dismiss |
 | `Ctrl-S` | Save (asks for a filename if none is set) |
 | `F4` (or `Ctrl-Shift-S` where the terminal sends it) | Save as: always asks for a filename, even when one is already set |
+| `Ctrl-E` | Show or hide the file tree. Opening focuses the tree. |
+| `Ctrl-B` | Switch focus between the visible file tree and document. |
 | `Ctrl-O` | Open another file by entering its path; offers to save the current file first. A missing path becomes a new file on first save. |
 | `Ctrl-W` | Close the current file without quitting tinyedit; offers to save first and leaves an empty buffer. |
 | `Ctrl-Q` | Quit (if there are unsaved changes, asks y/n/Esc: save-and-quit / quit without saving / cancel) |
@@ -210,6 +212,44 @@ folders get a trailing `/`. Typing or deleting starts a new completion.
 Relative paths, absolute paths, `~/`, spaces, and UTF-8 names are supported.
 Hidden names are offered when the last component starts with `.`. You can
 still type a new filename when saving.
+
+### File tree sidebar
+
+![tinyedit file tree sidebar](imgs/sidebar.png)
+
+Press `Ctrl-E` to show the filesystem tree on the left, rooted at the directory
+where tinyedit started. Press `Ctrl-E` again to hide it. `Ctrl-B` switches focus between the tree and
+the document while keeping the sidebar visible. Click either pane to focus it when mouse
+support is enabled. The sidebar stays visible while editing.
+
+In the tree, Up/Down move one entry at a time. PageUp/PageDown move by one
+visible page; Home selects the first entry (`..`), and End selects the last
+entry, scrolling it into view. Right on a folder makes it the new root of the tree. A single mouse click
+on a folder name or triangle expands or collapses it; a double click makes
+it the new root. Left collapses a
+folder or selects its tree parent.
+Enter toggles a folder or opens a file; Space also toggles a folder. Opening
+a file uses the usual save/discard/cancel
+confirmation for unsaved changes. Esc returns to the document; Tab keeps its normal indentation behavior
+in the document. `r` reloads the tree,
+`g` opens a path prompt: type a directory and press Enter to make it the
+new tree root, or Esc to cancel. Up from the root selects `.. (up a dir)`;
+Enter or a double click on that entry goes up one directory. Left collapses
+folders or selects their tree parent without changing the root. `Ctrl-C` copies the selected path.
+
+Close the sidebar with `Ctrl-E` from either pane, the `×` in its header when mouse
+support is enabled, or **View → Show/hide file tree**. Folders are sorted before
+files. Expansion is lazy, and symlinks are displayed as leaves to avoid cycles.
+The sidebar grows up to half the terminal width, shifts deep indentation left,
+and abbreviates long names in the middle while retaining their extensions.
+The top bar shows the selected path while the tree has focus, within the available
+screen width. Below 40 terminal columns the sidebar is temporarily hidden.
+
+PNG and other binary files containing NUL bytes are rejected on opening,
+leaving the current document intact. Malformed UTF-8 text remains editable.
+
+Sidebar hints follow the focused pane and return after temporary messages
+expire. Closing the tree restores the document shortcuts in the bottom bar.
 
 ### File information
 
@@ -435,6 +475,10 @@ and wrapped continuations. Line numbers keep their normal style. Syntax highligh
 front matter, and math blocks retain their ordinary appearance. Set the option
 to `false` to disable it. Setext headings (`===` or `---`) are not covered.
 
+Selection and search highlighting take precedence over Markdown heading
+reverse video and inline bold/italic styles, including selected newline cells.
+The empty area to the right of an ATX heading retains its heading background.
+
 
 The optional top bar (`show_top_bar`) shows only the filename (without its directory path) and
 unsaved-changes state as a persistent title, useful on long files
@@ -443,7 +487,7 @@ filename doesn't repeat in the bottom status bar (which then shows
 only line/char counts); when it's off, the filename shows up there
 instead. The unsaved-changes indicator is always visible in the
 bottom bar either way. The bottom bar also shows the cursor's actual
-column, on the right (`line/total: C column`) next to the line number.
+source byte column, on the right (`line/total: C column`) next to the line number.
 
 ### UTF-8 text
 
@@ -749,6 +793,8 @@ and asks whether to restore the changes before proceeding.
   between source positions and visual rows/columns.
 - `src/terminal.c`, `inc/terminal.h`: Raw mode, terminal feature setup/cleanup,
   key decoding and terminal I/O.
+- `src/tree.c`, `inc/tree.h`: Owned filesystem tree, lazy expansion, sorting,
+  collapse, root replacement and sidebar width calculation.
 - `src/search.c`, `inc/search.h`: Literal and POSIX regex matching, with
   reusable compiled queries and cached text for multiline search. Returns
   source-byte coordinates; the editor owns session navigation and applies

@@ -17,7 +17,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 BINARY = ROOT / "bin" / "tinyedit"
 
 
-def spawn_editor(arguments, home, extra_env=None):
+def spawn_editor(arguments, home, extra_env=None, cwd=None):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
     env = os.environ.copy()
@@ -26,7 +26,7 @@ def spawn_editor(arguments, home, extra_env=None):
         env.update(extra_env)
     process = subprocess.Popen(
         [str(BINARY), *arguments], stdin=slave, stdout=slave, stderr=slave,
-        cwd=ROOT, env=env, close_fds=True,
+        cwd=cwd or ROOT, env=env, close_fds=True,
     )
     os.close(slave)
     return process, master
@@ -96,6 +96,65 @@ def test_path_completion(home):
                 read_available(master, 0.2)
                 assert existing.read_bytes() == b"", "save accepts completed path"
                 existing.write_text("completion content\n")
+        finally:
+            finish(process, master)
+
+
+def test_sidebar(home):
+    root = pathlib.Path(home) / "tree-fixture"
+    root.mkdir()
+    branch = root / "branch"
+    branch.mkdir()
+    leaf = branch / "document é.txt"
+    leaf.write_text("tree leaf content\n")
+    original = pathlib.Path(home) / "tree-original.txt"
+    original.write_text("original content\n")
+    process, master = spawn_editor([str(original)], home, cwd=root)
+    try:
+        read_available(master)
+        os.write(master, b"\x05")
+        assert b"Files (^E close)" in read_until(master, b"Files (^E close)"), "Ctrl-E opens sidebar"
+        os.write(master, b"\x02X\x13")
+        assert b"Files (^E close)" in read_until(master, b"bytes written"), "sidebar persists while editing"
+        assert original.read_bytes() == b"Xoriginal content\n", "editor retains keyboard focus"
+        os.write(master, b"Y\x02\x1b[B\r\x1b[B\r")
+        assert b"Save changes before opening another file?" in read_until(master, b"Save changes before opening another file?"), "tree opening protects unsaved edits"
+        os.write(master, b"\x1b")
+        assert b"XYoriginal" in read_until(master, b"XYoriginal"), "cancel leaves current document intact"
+        os.write(master, b"\r")
+        read_until(master, b"Save changes before opening another file?")
+        os.write(master, b"n")
+        output = read_until(master, b"tree leaf content")
+        assert b"tree leaf content" in output and b"Files (^E close)" in output, "tree opens file and stays visible"
+        os.write(master, b"\x05")
+        output = read_available(master)
+        assert process.poll() is None, "closing sidebar does not exit editor"
+    finally:
+        finish(process, master)
+
+
+def test_binary_open_rejected(home):
+    root = pathlib.Path(home) / "binary-open-fixture"
+    root.mkdir()
+    image = root / "image.png"
+    image_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR"
+    image.write_bytes(image_bytes)
+    original = pathlib.Path(home) / "binary-open-original.txt"
+    original.write_text("keep original document\n")
+    for sidebar in (False, True):
+        process, master = spawn_editor([str(original)], home, cwd=root)
+        try:
+            read_available(master)
+            if sidebar:
+                os.write(master, b"\x05\x1b[B\r")
+            else:
+                os.write(master, b"\x0f")
+                read_until(master, b"Open file:")
+                os.write(master, os.fsencode(image) + b"\r")
+            output = read_until(master, b"binary files are not supported")
+            assert b"binary files are not supported" in output, "PNG rejected with readable error"
+            assert b"keep original document" in output, "binary rejection preserves active document"
+            assert image.read_bytes() == image_bytes, "binary file remains untouched"
         finally:
             finish(process, master)
 
@@ -1473,6 +1532,8 @@ def main():
         test_empty_page_navigation(home)
         test_f3(b"\x1bOR", "SS3", home)
         test_path_completion(home)
+        test_sidebar(home)
+        test_binary_open_rejected(home)
         test_f3(b"\x1b[13~", "CSI", home)
         test_kitty_f1_f2(home)
         test_ghostty_ctrl_i_is_drained(home)

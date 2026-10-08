@@ -6,7 +6,7 @@
  *   Enter                                 new line
  *   Backspace / Delete                    delete char
  *   Ctrl-S                                save
- *   Ctrl-Q                                quit (asks twice if unsaved)
+ *   Ctrl-Q                                quit (offers save/discard/cancel)
  *
  * Build:  make
  * Run:    bin/tinyedit [filename]
@@ -28,6 +28,7 @@
  *   settings.c     persistent configuration parsing and serialization
  *   syntax.c       filetype detection and syntax highlighting
  *   terminal.c     raw terminal setup, input decoding, and terminal I/O
+ *   tree.c         owned filesystem tree and lazy directory expansion
  *   tinyedit.c     application flow, editor commands, screens, and drawing
  *   utf8.c         UTF-8 decoding, navigation, and display-width helpers
  */
@@ -49,6 +50,7 @@
 #include "syntax.h"
 #include "menu.h"
 #include "terminal.h"
+#include "tree.h"
 #include "utf8.h"
 
 #include <ctype.h>
@@ -69,6 +71,10 @@
 static struct editorConfig E;
 static struct editorSettings S;
 static struct editorMenu M;
+static struct editorTree T;
+static struct timespec tree_click_time;
+static uint8_t tree_click_pending;
+static int32_t tree_click_index = -2;
 static struct editorEditBatch edit_batch = {0, -1, 0};
 static struct editorCursor edit_saved_cursor;
 static struct editorSelection edit_saved_selection;
@@ -167,6 +173,7 @@ static const struct helpEntry helpEntries[] = {
     { "Ctrl-R (inside Find)", "Switch to find & replace" },
     { NULL, "File & editor" },
     { "Ctrl-S", "Save" },
+    { "Ctrl-E", "Show/hide file tree; Ctrl-B switches focus, Esc returns to editor" },
     { "F4 (or Ctrl-Shift-S, terminal permitting)", "Save as (always prompts for a filename)" },
     { "Ctrl-O", "Open another file (offers to save current file first)" },
     { "Ctrl-W", "Close current file without quitting" },
@@ -254,6 +261,9 @@ static int32_t editorRowRxToCx(erow *row, int32_t target_rx) {
     return bufferRowRxToCx(row, target_rx, S.tab_stop);
 }
 
+/**
+ * @brief Discard derived document caches after source changes.
+ */
 static void editorInvalidateDocumentCaches(void) {
     searchInvalidateText(&E.search.query);
     E.document.display_cache.chars_valid = 0;
@@ -340,6 +350,9 @@ static uint8_t editorFindMatchingPair(int32_t *anchor_y, int32_t *anchor_x,
     return 0;
 }
 
+/**
+ * @brief Find a matching delimiter using source-byte cursor coordinates.
+ */
 static uint8_t editorMatchingPairAtCursor(int32_t *anchor_y, int32_t *anchor_x,
     int32_t *match_y, int32_t *match_x) {
     struct editorDisplayCache *cache = &E.document.display_cache;
@@ -359,6 +372,9 @@ static uint8_t editorMatchingPairAtCursor(int32_t *anchor_y, int32_t *anchor_x,
     return 1;
 }
 
+/**
+ * @brief Begin a grouped history action before source mutations.
+ */
 static void editorBeginEdit(void) {
     if (edit_batch.depth++ == 0) {
         if (!E.document.history.pending) E.document.history.error = HISTORY_OK;
@@ -372,6 +388,9 @@ static void editorBeginEdit(void) {
     }
 }
 
+/**
+ * @brief Mark derived rows stale from the supplied file-row index.
+ */
 static void editorTouchRowsFrom(int32_t from) {
     if (edit_batch.first_row < 0 || from < edit_batch.first_row)
         edit_batch.first_row = from;
@@ -409,13 +428,9 @@ static void editorRehighlightFrom(int32_t from, uint8_t force) {
 }
 
 /**
- * @brief Rebuild a changed row's display text and invalidate wrapping.
- *
- * @details Source mutations must be complete. Syntax propagation is separate
- * so compound commands never tokenize intermediate or partial UTF-8 text.
+ * @brief Propagate a display allocation failure during a transaction.
+ * @return zero with a history error; outside a transaction exits with cleanup.
  */
-/* Existing nontransactional display refreshes keep the controlled-exit
- * contract; edit and replay preparations propagate failure to their caller. */
 static uint8_t editorRenderFailure(enum historyError error) {
     if (!E.document.history.pending && !replay_preparing) {
         errno = ENOMEM;
@@ -425,6 +440,9 @@ static uint8_t editorRenderFailure(enum historyError error) {
     return 0;
 }
 
+/**
+ * @brief Rebuild row-owned render bytes and invalidate wrapping; return zero on preparation failure.
+ */
 static uint8_t editorRebuildRow(erow *row) {
     size_t tabs = 0;
     for (size_t pos = 0; pos < (size_t)row->size; ) {
@@ -479,6 +497,9 @@ static uint8_t editorRebuildRow(erow *row) {
     return 1;
 }
 
+/**
+ * @brief Rebuild the changed row and propagate its syntax state.
+ */
 static void editorUpdateRow(erow *row) {
     if (historyFailed(&E.document)) return;
     editorInvalidateDocumentCaches();
@@ -493,6 +514,9 @@ static void editorUpdateRow(erow *row) {
 
 static void editorSetStatusMessage(const char *fmt, ...);
 
+/**
+ * @brief Finish the grouped action and rebuild affected derived rows.
+ */
 static void editorEndEdit(void) {
     if (--edit_batch.depth != 0) return;
     int32_t first = edit_batch.first_row;
@@ -613,7 +637,7 @@ static void editorRowInsertString(erow *row, int32_t at, const char *text, size_
 /**
  * @brief Append source bytes to a row and refresh its display caches.
  *
- * @details s supplies len bytes. Marks dirty without recording undo; use to
+ * @details s supplies len bytes. Participates in any active undo action; use to
  * join rows as part of a larger action.
  */
 static void editorRowAppendString(erow *row, char *s, size_t len) {
@@ -669,6 +693,9 @@ static uint8_t editorPrepareReplay(struct historyAction *action) {
     return 1;
 }
 
+/**
+ * @brief Prepare and replay history while preserving the document on failure.
+ */
 static void editorReplay(uint8_t reverse) {
     if (historyFinishEdit(&E.document) != HISTORY_OK) {
         E.document.history.error = HISTORY_OK;
@@ -689,7 +716,13 @@ static void editorReplay(uint8_t reverse) {
     editorSetStatusMessage(reverse ? "Undo" : "Redo");
 }
 
+/**
+ * @brief Undo the previous action and restore cursor and derived display state.
+ */
 static void editorUndo(void) { editorReplay(1); }
+/**
+ * @brief Redo the next action and restore cursor and derived display state.
+ */
 static void editorRedo(void) { editorReplay(0); }
 
 /* ---- editor operations --------------------------------------------------- */
@@ -921,16 +954,25 @@ static void editorPromptAppend(char **buf, size_t *bufsize, size_t *buflen,
     (*buf)[*buflen] = '\0';
 }
 
+/**
+ * @brief Release owned completion candidates and reset cycling state.
+ */
 static void editorPathCompletionClear(struct editorPathCompletion *completion) {
     for (size_t i = 0; i < completion->count; i++) free(completion->paths[i]);
     free(completion->paths);
     memset(completion, 0, sizeof(*completion));
 }
 
+/**
+ * @brief Compare borrowed completion paths for sorting.
+ */
 static int editorPathCompare(const void *left, const void *right) {
     return strcmp(*(const char *const *)left, *(const char *const *)right);
 }
 
+/**
+ * @brief Complete the owned prompt buffer; updated storage remains owned by the caller.
+ */
 static void editorPathComplete(struct editorPathCompletion *completion,
     char **buf, size_t *capacity, size_t *length) {
     if (!strcmp(*buf, "~")) {
@@ -1629,7 +1671,8 @@ static void editorOpenFile(void) {
 
     struct stat st;
     if (!editorOpen(name)) {
-        editorSetStatusMessage("Can't open file: %s", strerror(errno));
+        editorSetStatusMessage("Can't open file: %s",
+            errno == EILSEQ ? "binary files are not supported" : strerror(errno));
         free(name);
         return;
     }
@@ -1729,16 +1772,13 @@ static void abAppendReset(struct abuf *ab) {
 /* ---- output ---------------------------------------------------------------- */
 
 /**
- * @brief Get the current line-number gutter width in screen columns.
- *
- * @return zero when line numbers are hidden; includes the padding between
- * numbers and text.
- *
- * @note Width of the left-hand line-number gutter, including one space of
- * padding before the text starts. Zero when gutter is disabled. Grows with
- * E.document.buffer.row_count so files with 1000+ lines still right-align
- * cleanly.
+ * @brief Get the visible sidebar width in screen columns, or zero if hidden.
  */
+static int32_t editorSidebarWidth(void) {
+    return treeWidth(&T, E.view.screencols);
+}
+
+/** @brief Get the line-number gutter width including padding, in columns. */
 static int32_t editorGutterWidth(void) {
     return renderGutterWidth(&E.document.buffer, (uint8_t)S.show_line_numbers);
 }
@@ -1750,7 +1790,9 @@ static int32_t editorGutterWidth(void) {
  * negative value.
  */
 static int32_t editorTextCols(void) {
-    return renderTextCols(&E.view, &E.document.buffer, (uint8_t)S.show_line_numbers);
+    struct editorView view = E.view;
+    view.screencols -= editorSidebarWidth();
+    return renderTextCols(&view, &E.document.buffer, (uint8_t)S.show_line_numbers);
 }
 
 /**
@@ -1768,7 +1810,9 @@ static int32_t editorTextCols(void) {
  * a narrower one.
  */
 static int32_t editorSoftWrapCols(void) {
-    return renderSoftWrapCols(&E.view, &E.document.buffer,
+    struct editorView view = E.view;
+    view.screencols -= editorSidebarWidth();
+    return renderSoftWrapCols(&view, &E.document.buffer,
         (uint8_t)S.show_line_numbers, S.soft_wrap);
 }
 
@@ -1872,7 +1916,7 @@ static void editorMouseToCursor(int32_t screen_col, int32_t screen_row, int32_t 
 
     int32_t cursor_row = screen_row - 1 - (S.show_top_bar ? 1 : 0) -
         (S.show_menu ? 1 : 0);
-    int32_t cursor_col = screen_col - 1 - gutter;
+    int32_t cursor_col = screen_col - 1 - gutter - editorSidebarWidth();
     if (cursor_row < 0) cursor_row = 0;
     if (cursor_col < 0) cursor_col = 0;
 
@@ -2052,10 +2096,10 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
              (filerow == pair_y1 && filecol == pair_x1));
         uint8_t should_highlight = should_sel || should_pair;
         if (should_highlight && !in_sel) {
+            abAppendReset(ab);
             const char *sel_color = ansiColorCode(S.color_selection);
             abAppend(ab, sel_color, (int32_t)strlen(sel_color));
-            abAppend(ab, drawing_heading ? "\x1b[27m" : "\x1b[7m",
-                drawing_heading ? 5 : 4);
+            abAppend(ab, "\x1b[7m", 4);
             in_sel = 1;
         } else if (!should_highlight && in_sel) {
             abAppendReset(ab);
@@ -2105,7 +2149,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
             }
         }
         if (syn_color) abAppend(ab, syn_color, (int32_t)strlen(syn_color));
-        uint8_t styled = markdown_styles && row->hl && rendercol < row->rsize;
+        uint8_t styled = !should_highlight && markdown_styles && row->hl && rendercol < row->rsize;
         if (styled) {
             if (row->hl_heading || row->hl[rendercol] == HL_EMPHASIS_STRONG)
                 abAppend(ab, "\x1b[1m", 4);
@@ -2154,10 +2198,10 @@ static uint8_t editorRowTerminatorHighlighted(int32_t filerow, uint8_t has_sel,
  * restores the normal rendering attributes.
  */
 static void editorDrawHighlightedTerminator(struct abuf *ab) {
+    abAppendReset(ab);
     const char *sel_color = ansiColorCode(S.color_selection);
     abAppend(ab, sel_color, (int32_t)strlen(sel_color));
-    abAppend(ab, drawing_heading ? "\x1b[27m" : "\x1b[7m",
-        drawing_heading ? 5 : 4);
+    abAppend(ab, "\x1b[7m", 4);
     abAppend(ab, S.show_invisibles ? "$" : " ", 1);
     abAppendReset(ab);
 }
@@ -2169,6 +2213,11 @@ static void editorDrawHighlightedTerminator(struct abuf *ab) {
  * Continuations keep the same gutter width without repeating the number.
  */
 static void editorDrawGutter(struct abuf *ab, int32_t gutter, int32_t filerow, uint8_t is_continuation) {
+    if (editorSidebarWidth()) {
+        char position[32];
+        int32_t len = snprintf(position, sizeof(position), "\x1b[%dG", editorSidebarWidth() + 1);
+        abAppend(ab, position, len);
+    }
     if (gutter <= 0) return;
     char numbuf[16];
     int32_t safe_gutter = gutter;
@@ -2225,7 +2274,7 @@ static void editorChooseSlogan(void) {
     if (!sampled) {
         /* Best-effort fallback for systems without /dev/urandom. */
         srand((unsigned int)time(NULL) ^ (unsigned int)getpid());
-        for (int i = 0; i < 8; i++) sample = (uint32_t)rand();
+        for (int32_t i = 0; i < 8; i++) sample = (uint32_t)rand();
     }
     uint32_t chosen = sample % choices;
     if (previous < count && chosen >= previous) chosen++;
@@ -2294,6 +2343,9 @@ static void editorDrawSplashRow(struct abuf *ab, int32_t y, int32_t textcols) {
     abAppend(ab, display_line, len);
 }
 
+/**
+ * @brief Apply heading presentation before rendering row text.
+ */
 static void editorBeginHeadingRow(struct abuf *ab, int32_t filerow) {
     uint8_t heading = filerow < E.document.buffer.row_count &&
         E.document.buffer.rows[filerow].hl_heading;
@@ -2305,11 +2357,14 @@ static void editorBeginHeadingRow(struct abuf *ab, int32_t filerow) {
          * actual spaces first, then return to render the row over them. */
         for (int32_t col = 0; col < editorTextCols(); col++) abAppend(ab, " ", 1);
         char position[32];
-        int32_t len = snprintf(position, sizeof(position), "\x1b[%dG", editorGutterWidth() + 1);
+        int32_t len = snprintf(position, sizeof(position), "\x1b[%dG", editorGutterWidth() + editorSidebarWidth() + 1);
         abAppend(ab, position, len);
     }
 }
 
+/**
+ * @brief Restore presentation after rendering a heading row.
+ */
 static void editorEndHeadingRow(struct abuf *ab) {
     if (!drawing_heading) abAppend(ab, "\x1b[K", 3);
     if (drawing_heading || drawing_heading_bold) {
@@ -2476,6 +2531,26 @@ static const char *editorFiletypeLabel(void) {
 }
 
 /**
+ * @brief Copy UI text with malformed bytes and terminal controls replaced.
+ * @return owned NUL-terminated text; document bytes are never modified.
+ */
+static char *editorDisplayText(const char *text) {
+    size_t bytes = strlen(text), source = 0, target = 0;
+    char *safe = teMalloc(teSizeAdd(bytes, 1));
+    while (source < bytes) {
+        struct utf8DecodeResult decoded = utf8DecodeChar(text + source, bytes - source);
+        size_t step = decoded.consumed;
+        uint8_t unsafe = !decoded.valid || decoded.codepoint < 32 ||
+            (decoded.codepoint >= 127 && decoded.codepoint <= 159);
+        if (unsafe) safe[target++] = '?';
+        else { memcpy(safe + target, text + source, step); target += step; }
+        source += step;
+    }
+    safe[target] = '\0';
+    return safe;
+}
+
+/**
  * @brief Append the optional document title bar.
  *
  * @details Shows filename and modified state using the configured bar colors;
@@ -2499,14 +2574,16 @@ static void editorDrawTopBar(struct abuf *ab) {
     if (bar_bg[0]) abAppend(ab, bar_bg, (int32_t)strlen(bar_bg));
     abAppend(ab, bar_fg, (int32_t)strlen(bar_fg));
 
-    const char *name = E.document.file.filename;
-    if (name) {
+    uint8_t tree_title = T.focused && editorSidebarWidth() && T.count;
+    const char *name = tree_title ? (T.parent_selected ? ".. (up a dir)" : T.entries[T.selected].path) : E.document.file.filename;
+    if (name && !tree_title) {
         const char *slash = strrchr(name, '/');
         if (slash) name = slash + 1;
     }
+    char *safe_name = editorDisplayText(name ? name : "[No Name]");
     const char *parts[] = {
-        name ? name : "[No Name]",
-        E.document.file.dirty ? " (modified)" : ""
+        safe_name,
+        !tree_title && E.document.file.dirty ? " (modified)" : ""
     };
     int32_t title_width = 0;
     for (size_t part = 0; part < sizeof(parts) / sizeof(parts[0]); part++) {
@@ -2538,6 +2615,7 @@ static void editorDrawTopBar(struct abuf *ab) {
         abAppend(ab, " ", 1);
         cols++;
     }
+    free(safe_name);
     abAppendReset(ab);
     abAppend(ab, "\r\n", 2);
 }
@@ -2559,16 +2637,18 @@ static void editorDrawStatusBar(struct abuf *ab) {
      * it's already there, showing it in both places is redundant.
      * The dirty indicator always shows here regardless of the top
      * bar, so it stays visible even if the user disables it. */
+    char *safe_name = editorDisplayText(E.document.file.filename ? E.document.file.filename : "[No Name]");
     int32_t len;
     if (S.show_top_bar) {
         len = snprintf(status, sizeof(status), "%d lines, %d chars %s",
             E.document.buffer.row_count, editorCountChars(), E.document.file.dirty ? "(modified)" : "");
     } else {
         len = snprintf(status, sizeof(status), "%.20s - %d lines, %d chars %s",
-            E.document.file.filename ? E.document.file.filename : "[No Name]", E.document.buffer.row_count, editorCountChars(),
+            safe_name, E.document.buffer.row_count, editorCountChars(),
             E.document.file.dirty ? "(modified)" : "");
     }
 
+    free(safe_name);
     const char *filetype = editorFiletypeLabel();
     const char *ending = editorEffectiveLineEnding() == LINE_ENDING_CRLF ? "CRLF" : "LF";
     const char *mixed = E.document.file.line_endings_mixed ? "*" : "";
@@ -2579,21 +2659,26 @@ static void editorDrawStatusBar(struct abuf *ab) {
     else
         rlen = snprintf(rstatus, sizeof(rstatus), "%s%s | %d/%d: C %d",
             ending, mixed, E.document.cursor.cy + 1, E.document.buffer.row_count, E.document.cursor.cx + 1);
-    if (len < 0) len = 0;
-    if ((size_t)len >= sizeof(status)) len = (int32_t)sizeof(status) - 1;
-    if (rlen < 0) rlen = 0;
-    if ((size_t)rlen >= sizeof(rstatus)) rlen = (int32_t)sizeof(rstatus) - 1;
-    if (len > E.view.screencols) len = E.view.screencols;
-    abAppend(ab, status, len);
+    char *safe_status = editorDisplayText(status);
+    char *safe_rstatus = editorDisplayText(rstatus);
+    size_t status_bytes = strlen(safe_status), at = 0;
+    len = 0;
+    while (at < status_bytes) {
+        size_t step = utf8NextCharLen(safe_status, at, status_bytes);
+        int32_t width = utf8SingleCharWidth(safe_status + at, step);
+        if (width > E.view.screencols - len) break;
+        abAppend(ab, safe_status + at, (int32_t)step);
+        at += step; len += width;
+    }
+    rlen = (int32_t)utf8StrWidth(safe_rstatus, strlen(safe_rstatus));
     while (len < E.view.screencols) {
         if (E.view.screencols - len == rlen) {
-            abAppend(ab, rstatus, rlen);
+            abAppend(ab, safe_rstatus, (int32_t)strlen(safe_rstatus));
             break;
-        } else {
-            abAppend(ab, " ", 1);
-            len++;
         }
+        abAppend(ab, " ", 1); len++;
     }
+    free(safe_status); free(safe_rstatus);
     abAppendReset(ab);
     abAppend(ab, "\r\n", 2);
 }
@@ -2608,23 +2693,26 @@ static void editorDrawMessageBar(struct abuf *ab) {
     abAppend(ab, "\x1b[K", 3);
     int32_t msglen = (int32_t)strlen(E.ui.statusmsg);
     const char *msg = E.ui.statusmsg;
-    if (msglen > E.view.screencols) {
-        /* Show the TAIL, not the head, when the message doesn't fit.
-         * Prompts built with editorPromptCB() put the fixed
-         * instructions first and the live text being typed last (see
-         * editorFind()/editorFindAndReplace()) -- truncating from the
-         * end, as this used to do unconditionally, would cut off
-         * exactly the part the user is actively looking at (what
-         * they're typing, and the cursor position editorRefreshScreen()
-         * places at the end of it) on any terminal too narrow for the
-         * full prompt, leaving them unable to see what they're
-         * searching for. Keeping the tail means the fixed instructions
-         * scroll off first instead. */
-        msg += msglen - E.view.screencols;
-        msglen = E.view.screencols;
+    if (!msglen || (!E.ui.statusmsg_sticky && time(NULL) - E.ui.statusmsg_time >= 5)) {
+        if (T.focused && editorSidebarWidth())
+            msg = "Tree: ^E close | ^B focus | arrows/Enter/Space | r refresh | g root";
+        else if (editorSidebarWidth())
+            msg = "^S save | ^O open | ^E close tree | ^B tree focus | F1 help";
+        else msg = "^S save | ^O open | ^E show tree | F1 help";
+        msglen = (int32_t)strlen(msg);
     }
-    if (msglen && (E.ui.statusmsg_sticky || time(NULL) - E.ui.statusmsg_time < 5))
-        abAppend(ab, msg, msglen);
+    char *safe_message = editorDisplayText(msg);
+    size_t bytes = strlen(safe_message), offset = bytes;
+    int32_t columns = 0;
+    while (offset > 0) {
+        size_t step = utf8PrevCharLen(safe_message, offset);
+        int32_t width = utf8SingleCharWidth(safe_message + offset - step, step);
+        if (width > E.view.screencols - columns) break;
+        columns += width;
+        offset -= step;
+    }
+    if (offset < bytes) abAppend(ab, safe_message + offset, (int32_t)(bytes - offset));
+    free(safe_message);
     if (S.show_menu && !M.open && E.view.screencols >= 8) {
         char position[32];
         int32_t row = E.view.screenrows + (S.show_top_bar ? 1 : 0) +
@@ -2633,6 +2721,110 @@ static void editorDrawMessageBar(struct abuf *ab) {
             E.view.screencols - 7);
         abAppend(ab, position, len);
         abAppend(ab, "F10 Menu", 8);
+    }
+}
+
+/* Emit names without terminal controls; truncate at grapheme boundaries,
+ * retaining both ends so extensions remain distinguishable. */
+/**
+ * @brief Append a sanitized borrowed label within a column budget; return emitted columns.
+ */
+static int32_t editorTreeLabel(struct abuf *ab, const char *label, int32_t available) {
+    if (available <= 0) return 0;
+    char *safe_label = editorDisplayText(label);
+    label = safe_label;
+    size_t bytes = strlen(label), end = bytes;
+    int32_t columns = 0;
+    uint8_t shortened = utf8StrWidth(label, bytes) > (size_t)available;
+    int32_t head = shortened ? (available - 1) / 2 : available;
+    size_t at = 0;
+    while (at < bytes) {
+        size_t step = utf8NextCharLen(label, at, bytes);
+        struct utf8DecodeResult decoded = utf8DecodeChar(label + at, step);
+        uint8_t control = decoded.valid && (decoded.codepoint < 32 || decoded.codepoint == 127);
+        int32_t cells = control ? 1 : utf8SingleCharWidth(label + at, step);
+        if (columns + cells > head) break;
+        abAppend(ab, control ? "?" : label + at, control ? 1 : (int32_t)step);
+        columns += cells;
+        at += step;
+    }
+    if (!shortened) { free(safe_label); return columns; }
+    abAppend(ab, "…", (int32_t)strlen("…"));
+    columns++;
+    int32_t tail = 0;
+    while (end > at) {
+        size_t step = utf8PrevCharLen(label, end);
+        struct utf8DecodeResult decoded = utf8DecodeChar(label + end - step, step);
+        uint8_t control = decoded.valid && (decoded.codepoint < 32 || decoded.codepoint == 127);
+        int32_t cells = control ? 1 : utf8SingleCharWidth(label + end - step, step);
+        if (columns + tail + cells > available) break;
+        tail += cells;
+        end -= step;
+    }
+    while (end < bytes) {
+        size_t step = utf8NextCharLen(label, end, bytes);
+        struct utf8DecodeResult decoded = utf8DecodeChar(label + end, step);
+        uint8_t control = decoded.valid && (decoded.codepoint < 32 || decoded.codepoint == 127);
+        abAppend(ab, control ? "?" : label + end, control ? 1 : (int32_t)step);
+        end += step;
+    }
+    free(safe_label);
+    return columns + tail;
+}
+
+/**
+ * @brief Append the visible filesystem tree without modifying document bytes.
+ */
+static void editorDrawSidebar(struct abuf *ab) {
+    int32_t width = editorSidebarWidth();
+    if (!width) return;
+    int32_t first_row = 1 + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0);
+    treeMove(&T, 0, E.view.screenrows - 2);
+    int32_t shift = 0;
+    if (T.count) {
+        const struct treeEntry *selected = &T.entries[T.selected];
+        const char *name = strrchr(selected->path, '/');
+        name = name && name[1] ? name + 1 : selected->path;
+        size_t name_width = utf8StrWidth(name, strlen(name));
+        int32_t room = name_width < (size_t)(width - 3) ? width - 3 - (int32_t)name_width : 0;
+        if (selected->depth > room / 2) shift = selected->depth - room / 2;
+    }
+    for (int32_t y = 0; y < E.view.screenrows; y++) {
+        char position[32];
+        int32_t len = snprintf(position, sizeof(position), "\x1b[%d;1H", first_row + y);
+        abAppend(ab, position, len);
+        int32_t index = T.scroll + y - 2;
+        uint8_t selected = T.focused && ((y == 1 && T.parent_selected) ||
+            (y > 1 && !T.parent_selected && index == T.selected));
+        if (selected) abAppend(ab, "\x1b[7m", 4);
+        const char *label = "Files (^E close)";
+        int32_t columns = 0;
+        if (y > 1 && index < T.count) {
+            const struct treeEntry *entry = &T.entries[index];
+            label = strrchr(entry->path, '/');
+            label = label && label[1] ? label + 1 : entry->path;
+            int32_t depth = entry->depth > shift ? entry->depth - shift : 0;
+            int32_t indent = depth > (width - 4) / 2 ? width - 4 : depth * 2;
+            for (; columns < indent; columns++) abAppend(ab, " ", 1);
+            if (entry->directory) abAppend(ab, index == 0 ? "\x1b[35m" : "\x1b[36m", 5);
+            else if (entry->symlink) abAppend(ab, "\x1b[35m", 5);
+            const char *marker = entry->directory ? (entry->expanded ? "▾ " : "▸ ") : "  ";
+            abAppend(ab, marker, (int32_t)strlen(marker));
+            columns += 2;
+        } else if (y == 1) {
+            label = ".. (up a dir)";
+            abAppend(ab, "\x1b[36m", 5);
+        } else if (y > 1) label = "";
+        columns += editorTreeLabel(ab, label, width - 1 - columns - (y == 0 ? 3 : 0));
+        if (y == 0) {
+            while (columns < width - 4) { abAppend(ab, " ", 1); columns++; }
+            abAppend(ab, " × ", (int32_t)strlen(" × "));
+            columns += 3;
+        }
+        while (columns++ < width - 1) abAppend(ab, " ", 1);
+        abAppend(ab, "\x1b[m", 3);
+        abAppendReset(ab);
+        abAppend(ab, "│", (int32_t)strlen("│"));
     }
 }
 
@@ -2679,10 +2871,11 @@ static void editorRefreshScreen(void) {
     editorDrawRows(&ab);
     editorDrawStatusBar(&ab);
     editorDrawMessageBar(&ab);
+    editorDrawSidebar(&ab);
     if (S.show_menu) menuDrawPopup(&M, &S, S.show_top_bar ? 2 : 1, E.view.screencols,
         editorMenuAppend, &ab);
 
-    if (!M.open) {
+    if (!M.open && !(T.focused && editorSidebarWidth())) {
         char buf[32];
         int32_t wrapcols = editorSoftWrapCols();
         int32_t cursor_row, cursor_col;
@@ -2703,7 +2896,7 @@ static void editorRefreshScreen(void) {
         }
         snprintf(buf, sizeof(buf), "\x1b[%d;%dH",
             cursor_row + 1 + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0),
-            cursor_col + editorGutterWidth() + 1);
+            cursor_col + editorGutterWidth() + editorSidebarWidth() + 1);
         abAppend(&ab, buf, (int32_t)strlen(buf));
         abAppend(&ab, "\x1b[?25h", 6);
     }
@@ -3242,6 +3435,9 @@ static char *editorDecodeRegexReplacement(const char *raw, size_t *out_len) {
 
 /* The search engine owns query compilation and returns source coordinates;
  * only this adapter applies a result to the active session and cursor. */
+/**
+ * @brief Search from source-byte coordinates with the requested direction and wrapping.
+ */
 static uint8_t editorFindFrom(const char *query, int32_t from_y, int32_t from_x,
     int32_t dir, uint8_t wrap) {
     struct searchMatch match;
@@ -3261,6 +3457,9 @@ static uint8_t editorFindFrom(const char *query, int32_t from_y, int32_t from_x,
     return 1;
 }
 
+/**
+ * @brief Reset remembered search-match coordinates.
+ */
 static void editorClearSearchNavigation(void) {
     E.search.last_cy = -1;
     E.search.last_cx = -1;
@@ -3269,6 +3468,9 @@ static void editorClearSearchNavigation(void) {
     E.search.last_len = 0;
 }
 
+/**
+ * @brief Store current search-match coordinates for subsequent navigation.
+ */
 static void editorRememberSearchMatch(void) {
     E.search.last_cy = E.search.search_match_y;
     E.search.last_cx = E.search.search_match_x;
@@ -3421,9 +3623,20 @@ static void editorFindAndReplace(const char *query) {
      * once there's no room left alongside the replacement text being
      * typed -- same three-stage shrink as editorFind()'s search
      * prompt (long -> short -> editorDrawMessageBar()'s tail-scroll). */
-    char replace_prompt_long[112];
-    snprintf(replace_prompt_long, sizeof(replace_prompt_long), "Replace %s \"%.40s\" with: %%s",
-        E.search.regex_mode ? "[regex]" : "[literal]", query);
+    char escaped_query[81];
+    size_t source = 0, escaped = 0, query_bytes = strlen(query);
+    while (source < query_bytes) {
+        size_t step = utf8NextCharLen(query, source, query_bytes);
+        if (source + step > 40) break;
+        if (query[source] == '%') escaped_query[escaped++] = '%';
+        memcpy(escaped_query + escaped, query + source, step);
+        escaped += step;
+        source += step;
+    }
+    escaped_query[escaped] = '\0';
+    char replace_prompt_long[160];
+    snprintf(replace_prompt_long, sizeof(replace_prompt_long), "Replace %s \"%s\" with: %%s",
+        E.search.regex_mode ? "[regex]" : "[literal]", escaped_query);
     char replace_prompt_short[48];
     snprintf(replace_prompt_short, sizeof(replace_prompt_short), "Replace %s with: %%s",
         E.search.regex_mode ? "[regex]" : "[literal]");
@@ -3793,12 +4006,6 @@ static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected
  * @details Runs its own input loop until dismissal and adapts shortcut labels
  * to the current modifier mode.
  *
- * @note Full-screen settings overlay (F2). Edits a local copy of the live
- * settings so Esc can discard changes cleanly; Ctrl-S writes the copy to
- * ~/.tinyeditrc and makes it live. Reuses the same raw-mode input loop style
- * as the rest of the editor (editorReadKey + a per-frame abuf redraw) rather
- * than pulling in any new input machinery.
- *
  * @note Static keybinding reference shown by F1. One entry per line; NULL
  * marks a section header (rendered bold/inverse instead of key+desc). Kept as
  * a flat array rather than scattered doc-comments so this is the one place to
@@ -3912,7 +4119,9 @@ static void editorInfoAppendLine(struct abuf *ab, int32_t *rows_used, const char
     va_end(ap);
     if (len < 0) len = 0;
     if ((size_t)len >= sizeof(line)) len = (int32_t)sizeof(line) - 1;
-    abAppend(ab, line, len);
+    char *safe_line = editorDisplayText(line);
+    abAppend(ab, safe_line, (int32_t)strlen(safe_line));
+    free(safe_line);
     abAppend(ab, "\x1b[K\r\n", 5);
     (*rows_used)++;
 }
@@ -4698,6 +4907,9 @@ static void editorApplyAutoClose(int32_t c, uint8_t had_sel,
     editorInsertChar(c);
 }
 
+/**
+ * @brief Insert a code point with the configured matching-delimiter behavior.
+ */
 static void editorInsertCharAutoClose(int32_t c, uint8_t had_sel,
     int32_t sel_y0, int32_t sel_x0, int32_t sel_y1, int32_t sel_x1) {
     editorBeginEdit();
@@ -4717,6 +4929,7 @@ static int32_t editorMenuCommandKey(enum editorCommand command) {
         case CMD_SETTINGS: return F2_KEY;
         case CMD_QUIT: return CTRL_KEY('q');
         case CMD_OPEN: return CTRL_KEY('o');
+        case CMD_TOGGLE_TREE: return TREE_TOGGLE_KEY;
         case CMD_SAVE: return CTRL_KEY('s');
         case CMD_SAVE_AS: return F4_KEY;
         case CMD_CLOSE: return CTRL_KEY('w');
@@ -4765,12 +4978,220 @@ static void editorCancelMouseDrag(void) {
     E.document.mouse = (struct editorMouseState){0};
 }
 
+/* ---- filesystem sidebar ------------------------------------------------ */
+/**
+ * @brief Release all sidebar-owned entries and paths.
+ */
+static void editorFreeTree(void) {
+    treeClear(&T);
+}
+
+/**
+ * @brief Restore document shortcuts after leaving sidebar focus.
+ */
+static void editorTreeEditorHint(void) {
+    editorSetStatusMessage("");
+}
+
+/**
+ * @brief Hide the sidebar and return focus to the document.
+ */
+static void editorTreeClose(void) {
+    T.visible = 0;
+    T.focused = 0;
+    tree_click_pending = 0;
+    editorTreeEditorHint();
+}
+
+/**
+ * @brief Recognize a repeated entry click within the double-click interval.
+ */
+static uint8_t editorTreeDoubleClick(const struct timespec *now, int32_t index) {
+    double elapsed = difftime(now->tv_sec, tree_click_time.tv_sec) +
+        (double)(now->tv_nsec - tree_click_time.tv_nsec) / 1000000000.0;
+    uint8_t activate = tree_click_pending && tree_click_index == index && elapsed >= 0 && elapsed <= 0.5;
+    tree_click_time = *now;
+    tree_click_index = index;
+    tree_click_pending = !activate;
+    return activate;
+}
+
+/**
+ * @brief Replace the sidebar root from a borrowed path, reporting failure without losing the tree.
+ */
+static uint8_t editorTreeRoot(const char *path) {
+    if (treeSetRoot(&T, path)) { tree_click_pending = 0; editorTreeEditorHint(); return 1; }
+    editorSetStatusMessage("Can't read folder: %s", strerror(errno));
+    return 0;
+}
+
+/**
+ * @brief Return caller-owned parent-path text for the current root.
+ */
+static char *editorTreeParentPath(void) {
+    char *parent = teStrdup(T.entries[0].path);
+    char *slash = strrchr(parent, '/');
+    if (!slash) { free(parent); return teStrdup(".."); }
+    if (slash == parent) slash[1] = '\0';
+    else *slash = '\0';
+    return parent;
+}
+
+/**
+ * @brief Move the sidebar root to its parent directory.
+ */
+static void editorTreeUp(void) {
+    if (!T.count) return;
+    char *parent = editorTreeParentPath();
+    editorTreeRoot(parent);
+    free(parent);
+}
+
+/**
+ * @brief Move sidebar selection by file-entry count and keep it visible.
+ */
+static void editorTreeMove(int32_t delta) {
+    if (T.parent_selected) {
+        if (delta <= 0) return;
+        T.parent_selected = 0;
+        treeMove(&T, delta - 1, E.view.screenrows - 2);
+    } else if (delta < -T.selected) {
+        T.parent_selected = 1;
+        T.selected = 0;
+        T.scroll = 0;
+    } else treeMove(&T, delta, E.view.screenrows - 2);
+}
+
+/**
+ * @brief Expand a directory or open a file with unsaved-edit confirmation.
+ */
+static void editorTreeActivate(void) {
+    if (T.parent_selected) { editorTreeUp(); return; }
+    if (!T.count) return;
+    int32_t index = T.selected;
+    if (T.entries[index].directory) {
+        if (T.entries[index].expanded) treeCollapse(&T, index);
+        else if (!treeExpand(&T, index))
+            editorSetStatusMessage("Can't read folder: %s", strerror(errno));
+        return;
+    }
+    char *path = teStrdup(T.entries[index].path);
+    if (editorConfirmDocumentChange("opening another file")) {
+        if (editorOpen(path)) {
+            T.focused = 0;
+            editorOfferBackupRecovery();
+            editorSetStatusMessage("Opened %s", E.document.file.filename);
+        } else editorSetStatusMessage("Can't open file: %s",
+            errno == EILSEQ ? "binary files are not supported" : strerror(errno));
+    }
+    free(path);
+}
+
+/**
+ * @brief Handle a sidebar key; return whether it was consumed.
+ */
+static uint8_t editorTreeKey(int32_t c) {
+    tree_click_pending = 0;
+    if (c == CTRL_KEY('b')) {
+        if (editorSidebarWidth()) {
+            T.focused = !T.focused;
+            editorTreeEditorHint();
+        }
+        return 1;
+    }
+    if (c == CTRL_KEY('e') || c == TREE_TOGGLE_KEY) {
+        if (!T.count) {
+            size_t capacity = 128;
+            char *cwd = teMalloc(capacity);
+            while (!getcwd(cwd, capacity)) {
+                if (errno != ERANGE) { free(cwd); editorSetStatusMessage("Can't read current directory"); return 1; }
+                capacity = teSizeAdd(capacity, capacity);
+                cwd = teRealloc(cwd, capacity);
+            }
+            uint8_t success = editorTreeRoot(cwd);
+            free(cwd);
+            if (!success) return 1;
+        }
+        T.visible = !T.visible;
+        T.focused = T.visible;
+        if (T.visible && !editorSidebarWidth()) editorSetStatusMessage("Sidebar needs at least 40 columns");
+        else if (T.visible && T.focused) editorTreeEditorHint();
+        else if (!T.visible) editorTreeClose();
+        else editorTreeEditorHint();
+        return 1;
+    }
+    if (!editorSidebarWidth()) return 0;
+    if (!T.focused) return 0;
+    int32_t page = E.view.screenrows > 2 ? E.view.screenrows - 2 : 1;
+    switch (c) {
+        case '\x1b': T.focused = 0; editorTreeEditorHint(); return 1;
+        case ARROW_UP: editorTreeMove(-1); return 1;
+        case ARROW_DOWN: editorTreeMove(1); return 1;
+        case PAGE_UP: editorTreeMove(-page); return 1;
+        case PAGE_DOWN: editorTreeMove(page); return 1;
+        case HOME_KEY: T.parent_selected = 1; T.selected = 0; T.scroll = 0; return 1;
+        case END_KEY: T.parent_selected = 0; treeMove(&T, T.count - 1 - T.selected, E.view.screenrows - 2); return 1;
+        case '\r': editorTreeActivate(); return 1;
+        case ' ':
+            if (!T.parent_selected && T.count && T.entries[T.selected].directory)
+                editorTreeActivate();
+            return 1;
+        case ARROW_RIGHT:
+            if (!T.parent_selected && T.count && T.entries[T.selected].directory)
+                editorTreeRoot(T.entries[T.selected].path);
+            return 1;
+        case ARROW_LEFT:
+            if (T.parent_selected) return 1;
+            if (T.count && T.entries[T.selected].expanded) treeCollapse(&T, T.selected);
+            else if (T.selected > 0) {
+                int32_t depth = T.entries[T.selected].depth, parent = T.selected - 1;
+                while (parent > 0 && T.entries[parent].depth >= depth) parent--;
+                treeMove(&T, parent - T.selected, E.view.screenrows - 2);
+            }
+            return 1;
+        case 'r':
+            if (T.count) editorTreeRoot(T.entries[0].path);
+            return 1;
+        case 'g': {
+            T.focused = 0;
+            char *path = editorPrompt("Tree root: (Tab complete, Esc cancel) %s");
+            if (path) { editorTreeRoot(path); free(path); }
+            T.focused = 1;
+            return 1;
+        }
+        case PASTE_START_KEY: {
+            size_t length;
+            char *text = terminalReadPastedText(&length);
+            free(text);
+            return 1;
+        }
+        case CTRL_KEY('c'):
+            if (T.count) {
+                char *parent = T.parent_selected ? editorTreeParentPath() : NULL;
+                const char *path = parent ? parent : T.entries[T.selected].path;
+                clipboardCopy(path, strlen(path));
+                free(parent);
+            }
+            return 1;
+        case CTRL_KEY('s'): case CTRL_KEY('o'): case CTRL_KEY('w'):
+        case CTRL_KEY('q'): case CTRL_KEY('f'):
+        case F1_KEY: case F2_KEY: case F3_KEY: case F4_KEY: case SAVE_AS_KEY:
+            T.focused = 0;
+            return 0;
+        default: return 1;
+    }
+}
+
 /**
  * @brief Apply one decoded mouse event or return its accepted menu command.
  * @details Never reads the next event. Every report, including reports within
  * a burst, passes through the same menu/text routing and release handling.
  */
 static int32_t editorHandleMouseEvent(void) {
+    int32_t parent_row = 2 + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0);
+    if (mouseEventPress && (mouseEventRow < parent_row ||
+        mouseEventCol > editorSidebarWidth() || (mouseEventButton & ~28) != 0))
+        tree_click_pending = 0;
     if (!mouseEventPress) editorCancelMouseDrag();
     int32_t message_row = E.view.screenrows + (S.show_top_bar ? 1 : 0) +
         (S.show_menu ? 1 : 0) + 2;
@@ -4795,6 +5216,45 @@ static int32_t editorHandleMouseEvent(void) {
         else if (command != CMD_NONE) return editorMenuCommandKey(command);
         return 0;
     }
+    int32_t tree_row = mouseEventRow - 1 - (S.show_top_bar ? 1 : 0) - (S.show_menu ? 1 : 0);
+    if (editorSidebarWidth() && mouseEventCol <= editorSidebarWidth() &&
+        tree_row >= 0 && tree_row < E.view.screenrows) {
+        editorCancelMouseDrag();
+        int32_t button = mouseEventButton & ~28;
+        if (mouseEventPress && button == 0 && tree_row == 0 && mouseEventCol >= editorSidebarWidth() - 2) {
+            editorTreeClose();
+        } else if (mouseEventPress && button == 0 && tree_row == 1) {
+            T.focused = 1;
+            T.parent_selected = 1;
+            editorTreeEditorHint();
+            struct timespec now;
+            if (clock_gettime(CLOCK_MONOTONIC, &now) == 0 && editorTreeDoubleClick(&now, -1))
+                editorTreeUp();
+        } else if (button == 64 || button == 65) editorTreeMove(button == 64 ? -3 : 3);
+        else if (mouseEventPress && button == 0 && tree_row > 1) {
+            int32_t index = T.scroll + tree_row - 2;
+            if (index < T.count) {
+                T.focused = 1;
+                T.parent_selected = 0;
+                T.selected = index;
+                editorTreeEditorHint();
+                if (T.entries[index].directory) {
+                    struct timespec now;
+                    if (clock_gettime(CLOCK_MONOTONIC, &now) == 0 && editorTreeDoubleClick(&now, index))
+                        editorTreeRoot(T.entries[index].path);
+                    else editorTreeActivate();
+                } else {
+                    tree_click_pending = 0;
+                    editorTreeActivate();
+                }
+            }
+        }
+        return 0;
+    }
+    if (T.focused && editorSidebarWidth() && mouseEventPress && (mouseEventButton & ~28) == 0) {
+        T.focused = 0;
+        editorTreeEditorHint();
+    }
     uint8_t shift_held = (mouseEventButton & 4) != 0;
     int32_t mouse_button = mouseEventButton & ~28;
     if (mouse_button == 64 || mouse_button == 65) {
@@ -4812,7 +5272,7 @@ static int32_t editorHandleMouseEvent(void) {
         uint8_t in_text_area = mouseEventRow >= 1 + (S.show_top_bar ? 1 : 0) +
             (S.show_menu ? 1 : 0) && mouseEventRow <= 1 +
             (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0) + E.view.screenrows - 1 &&
-            mouseEventCol > editorGutterWidth();
+            mouseEventCol > editorGutterWidth() + editorSidebarWidth();
 
         if (mouseEventPress && mouse_button == 0) editorCancelMouseDrag();
         if (in_text_area && mouse_button == 0 && mouseEventPress) {
@@ -5301,8 +5761,10 @@ static void editorDispatchKey(int32_t c) {
             return;
         }
         c = editorMenuCommandKey(command);
+        if (command != CMD_TOGGLE_TREE) T.focused = 0;
         if (c == 0) return;
     }
+    if (editorTreeKey(c)) return;
     if (editorHandleNavigationKey(c)) return;
     if (editorHandleCommandKey(c)) return;
     editorHandleEditKey(c);
@@ -5411,7 +5873,8 @@ int main(int argc, char **argv) {
     editorChooseSlogan();
     if (S.mouse_enabled) terminalEnableMouseReporting();
     atexit(editorFreeUndoRedo);
-    if (argc >= 2 && !editorOpen(argv[1])) terminalDie("open file");
+    atexit(editorFreeTree);
+    if (argc >= 2 && !editorOpen(argv[1])) terminalDie(errno == EILSEQ ? "binary files are not supported" : "open file");
 
     /* Terminal.app on macOS sends the same byte sequence for a plain
      * arrow and Shift+Arrow, so text selection via Shift+Arrow silently

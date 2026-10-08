@@ -626,6 +626,9 @@ static int32_t matchKeyword(const char *const *list, const char *s, int32_t avai
 }
 
 /* Highlighting is optional: an OOM discards this cache, not source text. */
+/**
+ * @brief Ensure row-owned highlight capacity for render bytes.
+ */
 static uint8_t syntaxReserveHighlight(erow *row) {
     uint8_t *highlight = teTryRealloc(row->hl, (size_t)row->rsize);
     if (!highlight) {
@@ -988,7 +991,7 @@ static void syntaxHighlightFrontMatterLine(erow *row, const char *s, int32_t len
  * @brief Try to color an HTML tag embedded in Markdown prose.
  *
  * @details row->hl must be ready and i is a valid byte offset in s.
- * @return the exclusive end offset on a recognized same-line tag, or -1
+ * @return the exclusive end offset on a recognized same-line tag, or i unchanged
  * without consuming text.
  *
  * @note An HTML tag embedded in Markdown, inline (<em>) or block (<div ...>).
@@ -1055,7 +1058,7 @@ static int32_t syntaxTryHighlightMarkdownTag(erow *row, const char *s, int32_t l
  * @brief Try to color a Markdown link or image with distinct label and URL colors.
  *
  * @details row->hl must be ready and i is a valid byte offset in s.
- * @return the exclusive end offset on success, or -1 when no complete link is
+ * @return the exclusive end offset on success, or i unchanged when no complete link is
  * recognized.
  *
  * @note A Markdown link "[text](url)" or image "![alt](url)": brackets,
@@ -1129,6 +1132,9 @@ static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t 
 
 /* Only standalone dollar delimiters open a block: an unmatched currency
  * symbol in prose must not turn the following document into mathematics. */
+/**
+ * @brief Recognize a Markdown math fence at the supplied byte position.
+ */
 static uint8_t syntaxMarkdownMathFence(const char *s, int32_t len) {
     int32_t i = 0;
     while (i < len && (s[i] == ' ' || s[i] == '\t')) i++;

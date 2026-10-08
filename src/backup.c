@@ -156,20 +156,30 @@ char *backupRead(const char *filename, size_t *outlen) {
     int fd = open(path, O_RDONLY);
     if (fd == -1) return NULL;
 
-    /* First line is the original path, kept for identification but not
-     * part of the recovered content. Avoid a fixed-size line buffer:
-     * the path is metadata and may be longer than our UI buffers. */
+    /* Match the entire known path instead of treating its first newline as
+     * a delimiter: POSIX filenames may themselves contain newlines. */
+    char *expected = absolutePathOf(filename);
+    if (!expected) { close(fd); return NULL; }
+    size_t header_length = strlen(expected);
     uint8_t byte;
     ssize_t nread;
-    do {
-        nread = read(fd, &byte, 1);
-    } while (nread == 1 && byte != '\n');
-    if (nread != 1) { close(fd); return NULL; }
+    uint8_t header_ok = 1;
+    for (size_t i = 0; i <= header_length; i++) {
+        do { nread = read(fd, &byte, 1); } while (nread < 0 && errno == EINTR);
+        if (nread != 1 || byte != (i == header_length ? '\n' : (uint8_t)expected[i])) {
+            header_ok = 0;
+            break;
+        }
+    }
+    free(expected);
+    if (!header_ok) { close(fd); return NULL; }
 
     size_t cap = 4096, len = 0;
     char *buf = teMalloc(cap);
 
-    while ((nread = read(fd, buf + len, cap - len)) > 0) {
+    while (1) {
+        do { nread = read(fd, buf + len, cap - len); } while (nread < 0 && errno == EINTR);
+        if (nread <= 0) break;
         len += (size_t)nread;
         if (len == cap) {
             cap = teGrowCapacity(cap, teSizeAdd(len, 1), SIZE_MAX);
@@ -182,7 +192,7 @@ char *backupRead(const char *filename, size_t *outlen) {
         close(fd);
         return NULL;
     }
-    close(fd);
+    if (close(fd) != 0) { free(buf); return NULL; }
 
     buf[len] = '\0'; /* cap always left room for at least 1 byte */
     if (outlen) *outlen = len;

@@ -37,9 +37,12 @@ void *teTryMalloc(size_t size);
 void *teTryRealloc(void *ptr, size_t size);
 
 /* Size arithmetic follows the fatal helpers' terminal-cleanup contract. */
+/** @brief Add byte counts, exiting with cleanup on overflow. */
 size_t teSizeAdd(size_t left, size_t right);
+/** @brief Compute array allocation bytes, exiting with cleanup on overflow. */
 size_t teArrayBytes(size_t count, size_t element_size);
 /* Grow to at least needed without exceeding limit or overflowing. */
+/** @brief Grow byte capacity to needed within limit, exiting if impossible. */
 size_t teGrowCapacity(size_t capacity, size_t needed, size_t limit);
 
 #endif /* __TE_ALLOC_H */

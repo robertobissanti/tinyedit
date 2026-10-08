@@ -10,12 +10,18 @@
 
 /* ---- query lifetime -------------------------------------------------- */
 
+/**
+ * @brief Release cached joined document bytes while retaining the compiled query.
+ */
 void searchInvalidateText(struct searchQuery *query) {
     free(query->text);
     query->text = NULL;
     query->text_len = 0;
 }
 
+/**
+ * @brief Release owned pattern, compiled regex and joined text; query must be initialized.
+ */
 void searchQueryFree(struct searchQuery *query) {
     if (query->compiled) regfree(&query->regex);
     free(query->pattern);
@@ -23,6 +29,9 @@ void searchQueryFree(struct searchQuery *query) {
     memset(query, 0, sizeof(*query));
 }
 
+/**
+ * @brief Decode search escapes into caller-owned text.
+ */
 static char *searchDecodePattern(const char *raw) {
     size_t len = strlen(raw);
     char *decoded = teMalloc(len + 1);
@@ -51,6 +60,9 @@ static char *searchDecodePattern(const char *raw) {
     return decoded;
 }
 
+/**
+ * @brief Cache a copied pattern and optional compiled regex; return zero for invalid expressions.
+ */
 uint8_t searchQueryPrepare(struct searchQuery *query, const char *pattern, uint8_t regex_mode) {
     if (query->pattern && query->regex_mode == regex_mode && strcmp(query->pattern, pattern) == 0)
         return query->valid;
@@ -71,6 +83,9 @@ uint8_t searchQueryPrepare(struct searchQuery *query, const char *pattern, uint8
 
 /* ---- document coordinates ------------------------------------------- */
 
+/**
+ * @brief Prepare query-owned joined document bytes for cross-row matching.
+ */
 static char *searchDocumentText(const struct editorBuffer *buffer, size_t *out_len) {
     size_t total = 0;
     for (int32_t y = 0; y < buffer->row_count; y++) {
@@ -95,6 +110,9 @@ static char *searchDocumentText(const struct editorBuffer *buffer, size_t *out_l
     return text;
 }
 
+/**
+ * @brief Convert source row and byte coordinates to a joined-text byte offset.
+ */
 static size_t searchOffsetForPosition(const struct editorBuffer *buffer, int32_t y, int32_t x) {
     size_t offset = 0;
     for (int32_t row = 0; row < y; row++)
@@ -124,6 +142,9 @@ static void searchPositionForOffset(const struct editorBuffer *buffer, size_t of
 
 /* ---- matching ------------------------------------------------------- */
 
+/**
+ * @brief Find the last non-overlapping regex match within byte bounds.
+ */
 static uint8_t searchRegexLast(const regex_t *re, const char *text,
     size_t len, size_t limit, size_t *out_start, size_t *out_len) {
     uint8_t found = 0;
@@ -146,6 +167,9 @@ static uint8_t searchRegexLast(const regex_t *re, const char *text,
     return found;
 }
 
+/**
+ * @brief Find a match using source-byte coordinates; output changes only on success.
+ */
 uint8_t searchFind(struct searchQuery *query, const struct editorBuffer *buffer,
     int32_t from_y, int32_t from_x, int32_t dir, uint8_t wrap, struct searchMatch *result) {
     if (!query->valid || !query->pattern || !*query->pattern || buffer->row_count == 0) return 0;

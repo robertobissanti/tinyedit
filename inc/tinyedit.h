@@ -27,7 +27,7 @@
 
 /* ---- config -------------------------------------------------------- */
 
-#define TE_VERSION "0.3.6"
+#define TE_VERSION "0.3.7"
 #define ABUF_INIT {NULL, 0, 0}
 #define INVISIBLE_SPACE_GLYPH '.'
 #define INVISIBLE_TAB_GLYPH '>'
@@ -105,7 +105,8 @@ enum editorKey {
      * mouseEventButton/mouseEventCol/mouseEventRow/mouseEventPress
      * globals (see tinyedit.c), to be read immediately (before the
      * next editorReadKey() call, which may overwrite them). */
-    MOUSE_EVENT_KEY
+    MOUSE_EVENT_KEY,
+    TREE_TOGGLE_KEY
 };
 
 enum undoEditType { EDIT_NONE, EDIT_INSERT, EDIT_DELETE, EDIT_OTHER };
@@ -122,7 +123,7 @@ typedef struct erow {
     int32_t grapheme_count;
     char *chars;
     char *render;
-    /* One enum syntaxHighlight byte per render[] column, recomputed by
+    /* One enum syntaxHighlight byte per render[] byte, recomputed by
      * syntaxHighlightRow() (see syntax.h) whenever the row's text
      * changes. NULL/rsize-0 rows (or when S.syntax_highlight is off)
      * leave this NULL -- editorDrawRowSegment() falls back to the

@@ -87,6 +87,12 @@ uint8_t fileioLoadStream(FILE *stream, struct editorDocument *candidate) {
             }
             break;
         }
+        /* NUL bytes identify non-text input without rejecting malformed UTF-8. */
+        if (memchr(line, '\0', (size_t)len)) {
+            errno = EILSEQ;
+            ok = 0;
+            break;
+        }
         if (!fileioAppendLine(candidate, line, (size_t)len)) {
             ok = 0;
             break;
@@ -110,19 +116,25 @@ uint8_t fileioLoadDocument(const char *filename, struct editorDocument *candidat
     candidate->file.detected_line_ending = LINE_ENDING_LF;
     candidate->file.final_newline = 1;
     if (filename[0] == '\0') { errno = EINVAL; return 0; }
-    FILE *stream = fopen(filename, "rb");
-    if (!stream) {
+    int fd = open(filename, O_RDONLY | O_NONBLOCK);
+    if (fd == -1) {
         if (errno != ENOENT) return 0;
         candidate->file.filename = teStrdup(filename);
         return 1;
     }
-    struct stat st;
-    uint8_t ok = fstat(fileno(stream), &st) == 0;
-    if (ok && S_ISDIR(st.st_mode)) {
-        errno = EISDIR;
-        ok = 0;
+    struct stat st = {0};
+    int stat_result = fstat(fd, &st);
+    if (stat_result != 0 || !S_ISREG(st.st_mode)) {
+        int saved_errno = errno;
+        if (stat_result == 0) saved_errno = S_ISDIR(st.st_mode) ? EISDIR : EINVAL;
+        close(fd);
+        errno = saved_errno;
+        return 0;
     }
-    if (ok) ok = fileioLoadStream(stream, candidate);
+    FILE *stream = fdopen(fd, "rb");
+    if (!stream) { int saved_errno = errno; close(fd); errno = saved_errno; return 0; }
+    uint8_t ok = 1;
+    ok = fileioLoadStream(stream, candidate);
     int saved_errno = errno;
     if (fclose(stream) != 0 && ok) {
         saved_errno = errno;

@@ -601,6 +601,7 @@ int32_t terminalReadKey(
                         if (csi_term < 0x40 || csi_term > 0x7e)
                             editorDrainUnknownCsiSequence(16);
                     }
+
                 } else if (seq[1] == '2' && seq[2] == '1') {
                     uint8_t term;
                     if (read(STDIN_FILENO, &term, 1) != 1) return '\x1b';
@@ -642,6 +643,10 @@ int32_t terminalReadKey(
                         uint8_t b;
                         if (read(STDIN_FILENO, &b, 1) != 1) { ok = 0; break; }
                         if (b >= '0' && b <= '9') {
+                            if (fields[field_idx] > (INT32_MAX - (b - '0')) / 10) {
+                                ok = 0;
+                                break;
+                            }
                             fields[field_idx] = fields[field_idx] * 10 + (b - '0');
                         } else if (b == ';') {
                             field_idx++;
@@ -780,6 +785,10 @@ int32_t terminalReadKey(
                         uint8_t b;
                         if (read(STDIN_FILENO, &b, 1) != 1) { ok = 0; break; }
                         if (b >= '0' && b <= '9') {
+                            if (fields[field_idx] > (INT32_MAX - (b - '0')) / 10) {
+                                ok = 0;
+                                break;
+                            }
                             fields[field_idx] = fields[field_idx] * 10 + (b - '0');
                         } else if (b == ';') {
                             field_idx++;
@@ -792,7 +801,7 @@ int32_t terminalReadKey(
                             break;
                         }
                     }
-                    if (ok && term && field_idx == 2) {
+                    if (ok && term && field_idx == 2 && fields[1] > 0 && fields[2] > 0) {
                         mouseEventButton = fields[0];
                         mouseEventCol = fields[1];
                         mouseEventRow = fields[2];

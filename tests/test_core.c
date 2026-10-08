@@ -127,6 +127,202 @@ static void testPathCompletion(void) {
     rmdir(directory);
 }
 
+static void testFilesystemTree(void) {
+    char root[] = "/tmp/tinyedit-tree-XXXXXX";
+    check(mkdtemp(root) != NULL, "tree fixture");
+    char folder[256], nested[256], file[256], link[256];
+    snprintf(folder, sizeof(folder), "%s/folder", root);
+    snprintf(nested, sizeof(nested), "%s/folder/nested", root);
+    snprintf(file, sizeof(file), "%s/folder/nested/é long filename.md", root);
+    snprintf(link, sizeof(link), "%s/link", root);
+    check(mkdir(folder, 0700) == 0 && mkdir(nested, 0700) == 0, "tree nested directories");
+    int fd = open(file, O_CREAT | O_WRONLY, 0600);
+    check(fd >= 0, "tree file");
+    close(fd);
+    check(symlink(root, link) == 0, "tree symlink cycle fixture");
+    struct editorTree tree = {0};
+    check(treeSetRoot(&tree, root) && tree.count == 3, "root expands only first level");
+    check(tree.entries[1].directory && tree.entries[2].symlink && !tree.entries[2].directory,
+        "directories sorted first and symlink cycle stays leaf");
+    check(treeExpand(&tree, 1) && tree.count == 4, "lazy expansion");
+    check(treeExpand(&tree, 2) && tree.count == 5 && tree.entries[3].depth == 3,
+        "nested depth preserved");
+    tree.selected = 3;
+    treeMove(&tree, INT32_MAX, 2);
+    check(tree.selected == 4 && tree.scroll == 3, "tree selection and scroll bounded");
+    treeMove(&tree, INT32_MIN, 2);
+    check(tree.selected == 0 && tree.scroll == 0, "tree movement avoids overflow");
+    tree.selected = 3;
+    treeCollapse(&tree, 1);
+    check(tree.count == 3 && tree.selected == 1 && !tree.entries[1].expanded,
+        "collapse frees descendants and restores selection");
+    check(!treeSetRoot(&tree, file) && tree.count == 3, "invalid root preserves existing tree");
+    tree.visible = 1;
+    check(treeWidth(&tree, 39) == 0 && treeWidth(&tree, 80) <= 40,
+        "sidebar preserves at least half the terminal");
+    treeClear(&tree);
+
+    check(treeSetRoot(&T, root), "application tree root");
+    E.view.screencols = 100;
+    E.view.screenrows = 20;
+    settingsDefaults(&S);
+    M.open = 0;
+    editorTreeKey(CTRL_KEY('e'));
+    check(T.visible && T.focused, "Ctrl-E opens and focuses tree");
+    editorTreeKey(CTRL_KEY('b'));
+    check(T.visible && !T.focused, "Ctrl-B returns to document without closing sidebar");
+    int32_t full_width = E.view.screencols - editorGutterWidth();
+    check(editorTextCols() == full_width - editorSidebarWidth(), "document layout reserves sidebar columns");
+    editorResetDocument();
+    editorInsertChar('a');
+    editorInsertChar('b');
+    int32_t cy, cx;
+    editorMouseToCursor(editorSidebarWidth() + editorGutterWidth() + 2,
+        1 + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0), &cy, &cx);
+    check(cy == 0 && cx == 1, "mouse maps document after sidebar offset");
+    editorTreeKey(CTRL_KEY('b'));
+    editorDispatchKey('x');
+    check(E.document.buffer.rows[0].size == 2, "tree typing cannot modify document");
+    editorTreeKey('\x1b');
+    check(T.visible && !T.focused, "Esc leaves tree visible");
+    editorTreeKey(CTRL_KEY('e'));
+    check(!T.visible && !T.focused, "Ctrl-E closes sidebar from document");
+    editorTreeKey(CTRL_KEY('e'));
+    mouseEventRow = 1 + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0);
+    mouseEventCol = editorSidebarWidth() - 1;
+    mouseEventPress = 1;
+    mouseEventButton = 0;
+    editorHandleMouseEvent();
+    check(!T.visible, "header close control hides sidebar");
+    struct abuf hints = ABUF_INIT;
+    editorDrawMessageBar(&hints);
+    abAppend(&hints, "\0", 1);
+    check(strstr(hints.b, "Tree:") == NULL && strstr(hints.b, "show tree") != NULL,
+        "closing sidebar restores document hints");
+    abFree(&hints);
+    hints = (struct abuf)ABUF_INIT;
+    T.visible = T.focused = 1;
+    editorSetStatusMessage("Temporary message");
+    E.ui.statusmsg_time = time(NULL) - 6;
+    editorDrawMessageBar(&hints);
+    abAppend(&hints, "\0", 1);
+    check(strstr(hints.b, "Tree:") != NULL && strstr(hints.b, "Temporary message") == NULL,
+        "expired notification restores tree hints");
+    abFree(&hints);
+    hints = (struct abuf)ABUF_INIT;
+    T.focused = 0;
+    editorDrawMessageBar(&hints);
+    abAppend(&hints, "\0", 1);
+    check(strstr(hints.b, "tree focus") != NULL && strstr(hints.b, "Tree:") == NULL,
+        "default hints follow current focus");
+    abFree(&hints);
+    hints = (struct abuf)ABUF_INIT;
+    struct timespec first = {100, 900000000}, second = {101, 100000000};
+    tree_click_pending = 0;
+    check(!editorTreeDoubleClick(&first, -1), "parent requires second click");
+    check(editorTreeDoubleClick(&second, -1), "double click crosses second boundary");
+    check(!editorTreeDoubleClick(&second, -1), "third click starts a new pair");
+    second.tv_sec = 102;
+    check(!editorTreeDoubleClick(&second, -1), "slow second click does not activate parent");
+    tree_click_pending = 0;
+    check(treeSetRoot(&T, nested), "set nested root for parent navigation");
+    T.visible = 1;
+    mouseEventRow = 2 + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0);
+    mouseEventCol = 2;
+    tree_click_pending = 0;
+    editorHandleMouseEvent();
+    check(strcmp(strrchr(T.entries[0].path, '/') + 1, "nested") == 0,
+        "single mouse click cannot change root");
+    T.parent_selected = 0;
+    T.selected = 0;
+    editorTreeKey(ARROW_LEFT);
+    check(strcmp(strrchr(T.entries[0].path, '/') + 1, "nested") == 0,
+        "Left on root never changes directory");
+    editorTreeKey(ARROW_UP);
+    check(T.parent_selected, "Up on root selects parent entry");
+    struct abuf parent_frame = ABUF_INIT;
+    editorDrawSidebar(&parent_frame);
+    abAppend(&parent_frame, "\0", 1);
+    check(strstr(parent_frame.b, "\x1b[7m\x1b[36m.. (up a dir)") != NULL,
+        "parent entry is visibly selected");
+    abFree(&parent_frame);
+    editorTreeKey(ARROW_DOWN);
+    check(!T.parent_selected && T.selected == 0, "Down from parent selects root");
+    editorTreeKey(ARROW_UP);
+    editorTreeKey('\r');
+    check(strcmp(strrchr(T.entries[0].path, '/') + 1, "folder") == 0, "Enter on parent changes directory");
+    T.selected = 1;
+    editorTreeKey(ARROW_RIGHT);
+    check(strcmp(strrchr(T.entries[0].path, '/') + 1, "nested") == 0,
+        "Right on a directory makes it the tree root");
+    check(treeSetRoot(&T, folder), "restore root for directory click");
+    T.focused = 1;
+    T.selected = 1;
+    editorTreeKey(' ');
+    check(T.entries[1].expanded && T.count == 3, "Space expands selected branch");
+    editorTreeKey(' ');
+    check(!T.entries[1].expanded && T.count == 2, "Space collapses selected branch");
+    T.parent_selected = 1;
+    editorTreeKey(' ');
+    check(strcmp(strrchr(T.entries[0].path, '/') + 1, "folder") == 0,
+        "Space on parent entry does not change root");
+    T.parent_selected = 0;
+    tree_click_pending = 0;
+    mouseEventRow = 4 + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0);
+    mouseEventCol = 3;
+    editorHandleMouseEvent();
+    check(T.selected == 1 && T.entries[1].expanded && T.count == 3 &&
+        strcmp(strrchr(T.entries[0].path, '/') + 1, "folder") == 0,
+        "single triangle click expands directory without changing root");
+    tree_click_pending = 0;
+    mouseEventCol = 8;
+    editorHandleMouseEvent();
+    check(!T.entries[1].expanded && T.count == 2,
+        "single name click collapses directory");
+    check(clock_gettime(CLOCK_MONOTONIC, &tree_click_time) == 0, "double click clock");
+    editorHandleMouseEvent();
+    check(strcmp(strrchr(T.entries[0].path, '/') + 1, "nested") == 0,
+        "double directory click changes root");
+    tree_click_pending = 0;
+    second.tv_sec = 101;
+    check(!editorTreeDoubleClick(&first, 1) && !editorTreeDoubleClick(&second, 2),
+        "clicking different directories is not a double click");
+    treeClear(&T);
+    T.count = T.capacity = 100;
+    T.entries = teMalloc(teArrayBytes((size_t)T.count, sizeof(*T.entries)));
+    for (int32_t i = 0; i < T.count; i++)
+        T.entries[i] = (struct treeEntry){teStrdup("entry"), 0, 0, 0, 0};
+    T.visible = T.focused = 1;
+    editorTreeKey(HOME_KEY);
+    check(T.parent_selected && T.scroll == 0, "Home selects first tree entry including parent");
+    editorTreeKey(PAGE_DOWN);
+    check(!T.parent_selected && T.selected == 17, "Page Down moves by 18 available tree rows");
+    editorTreeKey(PAGE_UP);
+    check(T.parent_selected && T.scroll == 0, "Page Up returns to parent entry");
+    editorTreeKey(END_KEY);
+    check(T.selected == 99 && T.scroll == 82, "End reveals last entry in a large tree");
+    editorTreeKey(PAGE_DOWN);
+    check(T.selected == 99, "Page Down stops at end");
+    editorTreeKey(PAGE_UP);
+    check(T.selected == 81 && T.scroll == 81, "Page Up reveals preceding page");
+    editorTreeKey(HOME_KEY);
+    editorTreeKey(PAGE_UP);
+    check(T.parent_selected && T.scroll == 0, "Page Up stops at beginning");
+    treeClear(&T);
+    editorResetDocument();
+    unlink(file); unlink(link); rmdir(nested); rmdir(folder); rmdir(root);
+
+    struct abuf ab = ABUF_INIT;
+    const char *name = "é界 this filename is deliberately long.tex";
+    int32_t columns = editorTreeLabel(&ab, name, 16);
+    check(columns <= 16 && utf8StrWidth(ab.b, (size_t)ab.len) == (size_t)columns,
+        "tree abbreviation respects display columns");
+    abAppend(&ab, "\0", 1);
+    check(strstr(ab.b, "…") != NULL && memcmp(ab.b + ab.len - 5, ".tex", 4) == 0,
+        "tree abbreviation preserves extension");
+    abFree(&ab);
+}
+
 static void testUndoModified(void) {
     editorResetDocument();
     settingsDefaults(&S);
@@ -802,6 +998,24 @@ static void testHeadingReverse(void) {
     check(strstr(ab.b, ending) != NULL, "heading paints text columns and preserves gutter");
     check(!drawing_heading, "heading rendering state restored");
     abFree(&ab);
+    S.markdown_text_styles = 1;
+    for (uint8_t reverse = 0; reverse < 2; reverse++) {
+        S.markdown_heading_reverse = reverse;
+        ab = (struct abuf)ABUF_INIT;
+        editorBeginHeadingRow(&ab, 0);
+        editorDrawRowSegment(&ab, 0, 0, E.document.buffer.rows[0].rsize,
+            1, 0, 2, 0, (int32_t)strlen("# Héading"), 0, -1, -1, -1, -1);
+        editorDrawHighlightedTerminator(&ab);
+        editorEndHeadingRow(&ab);
+        abAppend(&ab, "", 1);
+        char selected[128];
+        snprintf(selected, sizeof(selected), "%s\x1b[7mHéading", ansiColorCode(S.color_selection));
+        check(strstr(ab.b, selected) != NULL, "selection retains its color across styled UTF-8 heading");
+        snprintf(selected, sizeof(selected), "%s\x1b[7m ", ansiColorCode(S.color_selection));
+        check(strstr(ab.b, selected) != NULL, "heading end-of-line selection uses selection background");
+        check(!drawing_heading && !drawing_heading_bold, "selection restores heading render state");
+        abFree(&ab);
+    }
     S.markdown_heading_reverse = 0;
     ab = (struct abuf)ABUF_INIT;
     editorDrawRows(&ab);
@@ -870,6 +1084,17 @@ static void testMarkdownStyles(void) {
     abAppend(&ab, "", 1);
     check(strstr(ab.b, "\x1b[1m") != NULL, "Markdown strong uses bold");
     check(strstr(ab.b, "\x1b[3m") != NULL, "Markdown emphasis uses italic");
+    abFree(&ab);
+    const char *selected_text = "**TODO.md si trova in `local/TODO.md`**, relativo é";
+    editorInsertRow(2, selected_text, strlen(selected_text));
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRowSegment(&ab, 2, 0, E.document.buffer.rows[2].rsize,
+        1, 2, 0, 2, E.document.buffer.rows[2].size, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    char selected[256];
+    snprintf(selected, sizeof(selected), "%s\x1b[7m%s", ansiColorCode(S.color_selection), selected_text);
+    check(strstr(ab.b, selected) != NULL,
+        "selection remains continuous across Markdown bold, inline code and UTF-8");
     abFree(&ab);
     ab = (struct abuf)ABUF_INIT;
     editorDrawRowSegment(&ab, 1, 0, E.document.buffer.rows[1].rsize,
@@ -989,12 +1214,57 @@ static void testReplaceAllHistoryNotice(void) {
     editorResetDocument();
 }
 
+static void testAuditRegressions(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    E.view.screencols = 100;
+    E.view.screenrows = 20;
+    int input[2];
+    check(pipe(input) == 0, "audit input pipe");
+    check(write(input[1], "\x1b", 1) == 1, "cancel replacement");
+    close(input[1]);
+    int saved_input = dup(STDIN_FILENO), saved_output = dup(STDOUT_FILENO);
+    int sink = open("/dev/null", O_WRONLY);
+    check(dup2(input[0], STDIN_FILENO) >= 0 && dup2(sink, STDOUT_FILENO) >= 0,
+        "redirect audit UI");
+    close(input[0]); close(sink);
+    editorFindAndReplace("%n%s%%é");
+    check(dup2(saved_input, STDIN_FILENO) >= 0 && dup2(saved_output, STDOUT_FILENO) >= 0,
+        "restore audit UI");
+    close(saved_input); close(saved_output);
+    E.document.file.filename = teStrdup("name\x1b[2J.txt");
+    struct abuf frame = ABUF_INIT;
+    editorDrawTopBar(&frame);
+    check(memmem(frame.b, (size_t)frame.len, "name\x1b[2J", 8) == NULL,
+        "filename controls cannot clear screen");
+    abFree(&frame);
+    S.show_menu = 0; E.view.screencols = 1;
+    strcpy(E.ui.statusmsg, "é"); E.ui.statusmsg_sticky = 1;
+    editorDrawMessageBar(&frame);
+    check(frame.len == 5 && memcmp(frame.b + 3, "é", 2) == 0,
+        "message clipping uses complete UTF-8 grapheme");
+    abFree(&frame);
+    const char *sequences[] = {"\x1b[<999999999999;1;1M", "\x1b[999999999999;6u", "\x1b[<0;0;1M"};
+    for (size_t i = 0; i < sizeof(sequences) / sizeof(sequences[0]); i++) {
+        check(pipe(input) == 0, "decoder pipe");
+        size_t bytes = strlen(sequences[i]);
+        check(write(input[1], sequences[i], bytes) == (ssize_t)bytes, "queue invalid CSI");
+        close(input[1]); saved_input = dup(STDIN_FILENO);
+        check(dup2(input[0], STDIN_FILENO) >= 0, "redirect decoder"); close(input[0]);
+        check(terminalReadKey(0) != MOUSE_EVENT_KEY, "reject overflow or zero mouse coordinate");
+        check(dup2(saved_input, STDIN_FILENO) >= 0, "restore decoder"); close(saved_input);
+    }
+    editorResetDocument();
+}
+
 int main(void) {
     settingsDefaults(&S);
     E.search.search_match_y = -1;
     E.search.search_match_end_y = -1;
+    testAuditRegressions();
     testPromptGrowth();
     testPathCompletion();
+    testFilesystemTree();
     testReplaceAllHistoryNotice();
     testUndoModified();
     testHistoryMemoryRecovery();

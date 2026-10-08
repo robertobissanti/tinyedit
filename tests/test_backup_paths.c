@@ -41,6 +41,16 @@ int main(void) {
     check(path != NULL && resolutions == 2 && strstr(path, "/new.md") != NULL,
         "missing file resolves existing parent");
     free(path);
+    check(setenv("HOME", directory, 1) == 0, "isolated backup home");
+    snprintf(target, sizeof(target), "%s/a\nb.txt", directory);
+    check(backupWrite(target, "ORIGINAL", 8), "write newline filename backup");
+    size_t recovered_length = 0;
+    char *recovered = backupRead(target, &recovered_length);
+    check(recovered && recovered_length == 8 && memcmp(recovered, "ORIGINAL", 8) == 0,
+        "path header cannot leak into recovered document");
+    free(recovered); backupRemove(target);
+    snprintf(target, sizeof(target), "%s/.tinyedit/backup", directory); rmdir(target);
+    snprintf(target, sizeof(target), "%s/.tinyedit", directory); rmdir(target);
     check(rmdir(directory) == 0, "remove path fixture");
     puts("backup path tests: ok");
     return 0;
