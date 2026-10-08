@@ -41,6 +41,11 @@
 
 /* ---- types ------------------------------------------------------------ */
 
+struct editorPathCompletion {
+    char **paths;
+    size_t count, capacity, next;
+};
+
 enum editorKey {
     BACKSPACE = 127,
     ARROW_LEFT = 1000,

@@ -204,6 +204,13 @@ save leaves the current document untouched. If the path entered for `Ctrl-O`
 does not exist, tinyedit opens an empty buffer under that name and creates the
 file when it is first saved.
 
+In the Open, Save as, and first-save prompts, press **Tab** to complete file
+and folder names. Repeated Tab presses cycle matching names alphabetically;
+folders get a trailing `/`. Typing or deleting starts a new completion.
+Relative paths, absolute paths, `~/`, spaces, and UTF-8 names are supported.
+Hidden names are offered when the last component starts with `.`. You can
+still type a new filename when saving.
+
 ### File information
 
 ![tinyedit file information screen](imgs/file-info-screen.png)

@@ -52,6 +52,7 @@
 #include "utf8.h"
 
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -920,6 +921,78 @@ static void editorPromptAppend(char **buf, size_t *bufsize, size_t *buflen,
     (*buf)[*buflen] = '\0';
 }
 
+static void editorPathCompletionClear(struct editorPathCompletion *completion) {
+    for (size_t i = 0; i < completion->count; i++) free(completion->paths[i]);
+    free(completion->paths);
+    memset(completion, 0, sizeof(*completion));
+}
+
+static int editorPathCompare(const void *left, const void *right) {
+    return strcmp(*(const char *const *)left, *(const char *const *)right);
+}
+
+static void editorPathComplete(struct editorPathCompletion *completion,
+    char **buf, size_t *capacity, size_t *length) {
+    if (!strcmp(*buf, "~")) {
+        editorPromptAppend(buf, capacity, length, "/", 1);
+        return;
+    }
+    if (!completion->count) {
+        const char *slash = strrchr(*buf, '/');
+        size_t prefix_len = slash ? (size_t)(slash - *buf) + 1 : 0;
+        const char *prefix = *buf + prefix_len;
+        char *directory = teMalloc(teSizeAdd(prefix_len, 2));
+        if (prefix_len) {
+            memcpy(directory, *buf, prefix_len);
+            directory[prefix_len] = '\0';
+        } else strcpy(directory, ".");
+        char *expanded = fileioExpandHomePath(directory);
+        free(directory);
+        if (!expanded) return;
+        DIR *dir = opendir(expanded);
+        if (!dir) { free(expanded); return; }
+        struct dirent *entry;
+        while ((entry = readdir(dir))) {
+            const char *name = entry->d_name;
+            if (!strcmp(name, ".") || !strcmp(name, "..")) continue;
+            if (name[0] == '.' && prefix[0] != '.') continue;
+            if (strncmp(name, prefix, strlen(prefix))) continue;
+            size_t name_len = strlen(name);
+            size_t dir_len = strlen(expanded);
+            char *lookup = teMalloc(teSizeAdd(teSizeAdd(dir_len, name_len), 2));
+            memcpy(lookup, expanded, dir_len);
+            lookup[dir_len] = '/';
+            memcpy(lookup + dir_len + 1, name, name_len + 1);
+            struct stat st;
+            uint8_t is_dir = stat(lookup, &st) == 0 && S_ISDIR(st.st_mode);
+            free(lookup);
+            char *candidate = teMalloc(teSizeAdd(teSizeAdd(prefix_len, name_len), 2));
+            memcpy(candidate, *buf, prefix_len);
+            memcpy(candidate + prefix_len, name, name_len);
+            size_t end = prefix_len + name_len;
+            if (is_dir) candidate[end++] = '/';
+            candidate[end] = '\0';
+            if (completion->count == completion->capacity) {
+                completion->capacity = teGrowCapacity(completion->capacity,
+                    teSizeAdd(completion->count, 1), SIZE_MAX / sizeof(*completion->paths));
+                completion->paths = teRealloc(completion->paths,
+                    teArrayBytes(completion->capacity, sizeof(*completion->paths)));
+            }
+            completion->paths[completion->count++] = candidate;
+        }
+        closedir(dir);
+        free(expanded);
+        if (!completion->count) return;
+        qsort(completion->paths, completion->count, sizeof(*completion->paths), editorPathCompare);
+    }
+    const char *candidate = completion->paths[completion->next];
+    *length = 0;
+    editorPromptAppend(buf, capacity, length, candidate, strlen(candidate));
+    completion->next = (completion->next + 1) % completion->count;
+    /* A unique directory can immediately be completed one level deeper. */
+    if (completion->count == 1) editorPathCompletionClear(completion);
+}
+
 /**
  * @brief Run an editable prompt with optional live search feedback.
  *
@@ -933,16 +1006,18 @@ static void editorPromptAppend(char **buf, size_t *bufsize, size_t *buflen,
  * redraw.
  * @param callback Optional callback invoked after handled input, including
  * acceptance and cancellation.
+ * @param complete_paths Enable filesystem completion with Tab.
  * @return owned text on acceptance or NULL on cancellation.
  *
 
  */
 static char *editorPromptCB(const char *prompt, const char *short_prompt,
-    const char *(*status_fn)(void), void (*callback)(char *, int32_t)) {
+    const char *(*status_fn)(void), void (*callback)(char *, int32_t), uint8_t complete_paths) {
     size_t bufsize = 128;
     char *buf = teMalloc(bufsize);
     size_t buflen = 0;
     buf[0] = '\0';
+    struct editorPathCompletion completion = {0};
 
     while (1) {
         char *display = editorPromptDisplayText(buf, buflen);
@@ -972,13 +1047,25 @@ static char *editorPromptCB(const char *prompt, const char *short_prompt,
             if (plen > limit) active_prompt = short_prompt;
         }
         if (status_fn) editorSetStatusMessage(active_prompt, status_fn(), display);
-        else editorSetStatusMessage(active_prompt, display);
+        else if (complete_paths) {
+            size_t display_len = strlen(display), start = 0;
+            const size_t available = sizeof(E.ui.statusmsg) - sizeof("Path: ");
+            while (display_len - start > available)
+                start += utf8NextCharLen(display, start, display_len);
+            editorSetStatusMessage(start ? "Path: %s" : active_prompt, display + start);
+        } else editorSetStatusMessage(active_prompt, display);
         free(display);
         editorRefreshScreen();
 
         int32_t c = editorReadKey();
-        if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE) {
-            if (buflen != 0) buf[--buflen] = '\0';
+        if (c != '\t') editorPathCompletionClear(&completion);
+        if (c == '\t' && complete_paths) {
+            editorPathComplete(&completion, &buf, &bufsize, &buflen);
+        } else if (c == DEL_KEY || c == CTRL_KEY('h') || c == BACKSPACE) {
+            if (buflen != 0) {
+                buflen -= utf8PrevCharLen(buf, buflen);
+                buf[buflen] = '\0';
+            }
         } else if (c == CTRL_KEY('c')) {
             clipboardCopy(buf, buflen);
             editorSetStatusMessage("Prompt copied");
@@ -1029,7 +1116,7 @@ static char *editorPromptCB(const char *prompt, const char *short_prompt,
  * @return a NUL-terminated allocation to free, or NULL when the user cancels.
  */
 static char *editorPrompt(const char *prompt) {
-    return editorPromptCB(prompt, NULL, NULL, NULL);
+    return editorPromptCB(prompt, "Path: %s", NULL, NULL, 1);
 }
 
 /**
@@ -1347,7 +1434,7 @@ static enum fileSaveResult editorSaveToPath(const char *filename) {
 static void editorSaveInternal(uint8_t force_prompt) {
     char *name = NULL;
     if (E.document.file.filename == NULL || force_prompt) {
-        name = editorPrompt("Save as: %s (Esc to cancel)");
+        name = editorPrompt("Save as: (Tab complete, Esc cancel) %s");
         if (!name) {
             editorSetStatusMessage("Save aborted.");
             return;
@@ -1534,7 +1621,7 @@ static void editorCloseFile(void) {
 static void editorOpenFile(void) {
     if (!editorConfirmDocumentChange("opening another file")) return;
 
-    char *name = editorPrompt("Open file: %s (Esc to cancel)");
+    char *name = editorPrompt("Open file: (Tab complete, Esc cancel) %s");
     if (!name) {
         editorSetStatusMessage("Open cancelled.");
         return;
@@ -3301,7 +3388,7 @@ static void editorFind(void) {
     snprintf(short_prompt, sizeof(short_prompt), "Find %%s: %%s");
     char *query = editorPromptCB(
         long_prompt, short_prompt,
-        editorFindModeIndicator, editorFindCallback);
+        editorFindModeIndicator, editorFindCallback, 0);
 
     if (E.search.switch_to_replace && query) {
         editorFindAndReplace(query);
@@ -3341,7 +3428,7 @@ static void editorFindAndReplace(const char *query) {
     snprintf(replace_prompt_short, sizeof(replace_prompt_short), "Replace %s with: %%s",
         E.search.regex_mode ? "[regex]" : "[literal]");
     E.search.switch_to_replace = 0;
-    char *replacement_input = editorPromptCB(replace_prompt_long, replace_prompt_short, NULL, NULL);
+    char *replacement_input = editorPromptCB(replace_prompt_long, replace_prompt_short, NULL, NULL, 0);
     if (!replacement_input) return;
 
     size_t rlen;

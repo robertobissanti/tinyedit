@@ -73,6 +73,60 @@ static void testPromptGrowth(void) {
     free(text);
 }
 
+static void testPathCompletion(void) {
+    char directory[] = "/tmp/tinyedit-completion-XXXXXX";
+    check(mkdtemp(directory) != NULL, "completion fixture directory");
+    const char *names[] = {"é one.txt", "é two.txt", ".hidden", "folder"};
+    char path[256];
+    for (size_t i = 0; i < 4; i++) {
+        snprintf(path, sizeof(path), "%s/%s", directory, names[i]);
+        if (i == 3) check(mkdir(path, 0700) == 0, "completion folder");
+        else {
+            int fd = open(path, O_CREAT | O_WRONLY, 0600);
+            check(fd >= 0, "completion file");
+            close(fd);
+        }
+    }
+    struct editorPathCompletion completion = {0};
+    size_t capacity = 1, length = 0;
+    char *buf = teMalloc(capacity);
+    snprintf(path, sizeof(path), "%s/é", directory);
+    editorPromptAppend(&buf, &capacity, &length, path, strlen(path));
+    editorPathComplete(&completion, &buf, &capacity, &length);
+    check(strstr(buf, "é one.txt") != NULL && completion.count == 2,
+        "UTF-8 prefix completes first sorted match with spaces");
+    editorPathComplete(&completion, &buf, &capacity, &length);
+    check(strstr(buf, "é two.txt") != NULL, "Tab cycles alternatives");
+    editorPathComplete(&completion, &buf, &capacity, &length);
+    check(strstr(buf, "é one.txt") != NULL, "Tab wraps alternatives");
+    editorPathCompletionClear(&completion);
+    length = 0;
+    snprintf(path, sizeof(path), "%s/fo", directory);
+    editorPromptAppend(&buf, &capacity, &length, path, strlen(path));
+    editorPathComplete(&completion, &buf, &capacity, &length);
+    check(strstr(buf, "/folder/") != NULL && !completion.count,
+        "unique directory adds slash and resets completion");
+    editorPathComplete(&completion, &buf, &capacity, &length);
+    check(strstr(buf, "/folder/") != NULL, "empty directory leaves input intact");
+    length = 0;
+    snprintf(path, sizeof(path), "%s/", directory);
+    editorPromptAppend(&buf, &capacity, &length, path, strlen(path));
+    editorPathComplete(&completion, &buf, &capacity, &length);
+    check(completion.count == 3, "hidden files excluded without explicit dot");
+    editorPathCompletionClear(&completion);
+    length = 0;
+    snprintf(path, sizeof(path), "%s/.", directory);
+    editorPromptAppend(&buf, &capacity, &length, path, strlen(path));
+    editorPathComplete(&completion, &buf, &capacity, &length);
+    check(strstr(buf, "/.hidden") != NULL, "explicit dot completes hidden file");
+    free(buf);
+    for (size_t i = 0; i < 4; i++) {
+        snprintf(path, sizeof(path), "%s/%s", directory, names[i]);
+        if (i == 3) rmdir(path); else unlink(path);
+    }
+    rmdir(directory);
+}
+
 static void testUndoModified(void) {
     editorResetDocument();
     settingsDefaults(&S);
@@ -940,6 +994,7 @@ int main(void) {
     E.search.search_match_y = -1;
     E.search.search_match_end_y = -1;
     testPromptGrowth();
+    testPathCompletion();
     testReplaceAllHistoryNotice();
     testUndoModified();
     testHistoryMemoryRecovery();

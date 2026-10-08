@@ -75,6 +75,31 @@ def finish(process, master, expect_exit=False):
         os.close(master)
 
 
+def test_path_completion(home):
+    folder = pathlib.Path(home) / "completion é space"
+    folder.mkdir()
+    existing = folder / "sample.txt"
+    existing.write_text("completion content\n")
+    for key in (b"\x0f", b"\x13", b"\x1bOS"):
+        process, master = spawn_editor([], home)
+        try:
+            read_available(master)
+            os.write(master, key)
+            read_available(master, 0.2)
+            os.write(master, (str(folder) + "/sam").encode() + b"\t")
+            output = read_until(master, b"sample.txt")
+            assert b"sample.txt" in output, "completed path visible in file prompt"
+            os.write(master, b"\r")
+            if key == b"\x0f":
+                assert b"completion content" in read_until(master, b"completion content")
+            else:
+                read_available(master, 0.2)
+                assert existing.read_bytes() == b"", "save accepts completed path"
+                existing.write_text("completion content\n")
+        finally:
+            finish(process, master)
+
+
 def test_f3(sequence, label, home):
     process, master = spawn_editor([], home)
     read_available(master)
@@ -1447,6 +1472,7 @@ def main():
         test_long_prompt_inputs(home)
         test_empty_page_navigation(home)
         test_f3(b"\x1bOR", "SS3", home)
+        test_path_completion(home)
         test_f3(b"\x1b[13~", "CSI", home)
         test_kitty_f1_f2(home)
         test_ghostty_ctrl_i_is_drained(home)

@@ -78,11 +78,6 @@ momento buono non convincono più.
   utile anche con un solo documento, ma aprire più file senza perdere il
   precedente ne aumenterebbe l'utilità. La barra deve lasciare spazio
   sufficiente al testo nei terminali stretti.
-- **Completamento dei percorsi con Tab nei prompt Open e Save as** —
-  completare nomi di cartelle e file a partire dal percorso digitato,
-  mostrando o facendo scorrere le alternative quando ce n'è più di una.
-  Riutilizzare lo stesso comportamento anche nel prompt del primo
-  salvataggio di un buffer senza nome.
 - **Mouse support opzionale** — possibile solo
   come opzione esplicita via config, mai default, perché disattiva la
   selezione nativa del terminale.
