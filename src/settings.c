@@ -155,6 +155,10 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, color_syntax_keyword), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_syntax_string", "Syntax: string color", SETTING_ENUM,
       offsetof(struct editorSettings, color_syntax_string), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_syntax_json_key", "Syntax: JSON key color", SETTING_ENUM,
+      offsetof(struct editorSettings, color_syntax_json_key), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_syntax_bracket", "Syntax: bracket color (all files)", SETTING_ENUM,
+      offsetof(struct editorSettings, color_syntax_bracket), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_syntax_comment", "Syntax: comment color", SETTING_ENUM,
       offsetof(struct editorSettings, color_syntax_comment), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_syntax_number", "Syntax: number color", SETTING_ENUM,
@@ -271,6 +275,8 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_syntax_normal = COLOR_TERMINAL_DEFAULT;
     out->color_syntax_keyword = COLOR_BLUE_LIGHT;
     out->color_syntax_string = COLOR_GREEN_LIGHT;
+    out->color_syntax_json_key = COLOR_CYAN_LIGHT;
+    out->color_syntax_bracket = COLOR_YELLOW_LIGHT;
     out->color_syntax_comment = COLOR_GRAY_DIM;
     out->color_syntax_number = COLOR_MAGENTA_LIGHT;
     out->color_syntax_preprocessor = COLOR_YELLOW_LIGHT;

@@ -179,6 +179,8 @@ struct editorSettings {
     int32_t color_syntax_normal;
     int32_t color_syntax_keyword;
     int32_t color_syntax_string;
+    int32_t color_syntax_json_key;
+    int32_t color_syntax_bracket;
     int32_t color_syntax_comment;
     int32_t color_syntax_number;
     int32_t color_syntax_preprocessor;

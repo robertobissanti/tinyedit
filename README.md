@@ -88,7 +88,7 @@ for real editing rather than just demonstrating how a terminal works.
 | Editing | Familiar cursor movement, word jumps, selection, cut/copy/paste, automatic indentation, block indent/outdent with Tab, configurable pair and XML/HTML tag closing, matching-bracket highlighting, and an undo history of up to 2,000 steps (200 by default). |
 | Files | Open or switch files without restarting tinyedit, start a named file before it exists, save atomically, and recover unsaved work from automatic backups after a crash. |
 | Search | Incremental literal or POSIX regular-expression search, match navigation, and interactive search and replace. |
-| Syntax highlighting | Built-in support for C/C++, Python, Shell, JavaScript/TypeScript, Markdown, HTML/XML, and CSS, including function names. Simple C-like languages and HTML-based templates (Nunjucks, Jinja, Liquid, Twig) can be added with a user configuration file; ready-made ones ship in `syntax-configs/`. |
+| Syntax highlighting | Built-in support for C/C++, Python, Shell, JavaScript/TypeScript, Markdown, HTML/XML, CSS, and JSON, including function names. Simple C-like languages and HTML-based templates (Nunjucks, Jinja, Liquid, Twig) can be added with a user configuration file; ready-made ones ship in `syntax-configs/`. |
 | UTF-8 | Cursor movement, deletion, display width, wrapping, and character counts understand combining marks, CJK text, and multi-code-point emoji. |
 | Long lines | Lines wrap at the terminal edge, preferably at word boundaries. Navigation follows the visible wrapped rows, without imposing a fixed line-length limit. |
 | Clipboard | Uses the native macOS clipboard or the available Wayland/X11 clipboard tool directly, without sending commands through a shell. |
@@ -517,6 +517,19 @@ an opener at all.
 
 *Editing this README demonstrates Markdown highlighting, line numbers, word
 wrapping, and the persistent top and status bars.*
+
+JSON object keys have their own color (`color_syntax_json_key`, cyan by
+default); string values use `color_syntax_string`. A quoted string followed
+by a colon on the same logical line is recognized as a key, including escaped
+quotes and Unicode text. JSON highlighting is built in; existing `json.conf`
+definitions remain compatible.
+
+The **Syntax: bracket color (all files)** option in `F2`
+(`color_syntax_bracket`, yellow by default) colors `()`, `[]`, and `{}`,
+including in unnamed files and files without a recognized syntax. It also
+works with syntax highlighting disabled. With syntax highlighting enabled,
+strings, comments, and other classified spans keep their own colors.
+Selection, search matches, and matching-bracket highlighting take priority.
 
 ### Extending syntax highlighting
 

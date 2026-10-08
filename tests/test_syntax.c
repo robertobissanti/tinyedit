@@ -335,6 +335,32 @@ int main(void) {
         freeRow(&row);
     }
 
+    initRow(&row, "{\"titolo\": \"Il mio primo libro\", \"attivo\": true, \"n\": 42}");
+    highlight(&row, "book.JSON", 0, 0);
+    expectClass(&row, 1, HL_JSON_KEY, "JSON key quote");
+    expectClass(&row, 2, HL_JSON_KEY, "JSON key text");
+    expectClass(&row, 9, HL_NORMAL, "JSON colon stays punctuation");
+    expectClass(&row, 12, HL_STRING, "JSON string value");
+    expectClass(&row, 45, HL_KEYWORD, "JSON boolean value");
+    freeRow(&row);
+    initRow(&row, "{\"é\\\"界\"  : [\"value: []\", \"second\"]}");
+    highlight(&row, "book.json", 0, 0);
+    for (int32_t b = 1; b < 10; b++)
+        expectClass(&row, b, HL_JSON_KEY, "JSON UTF-8 escaped key");
+    int32_t value = (int32_t)(strstr(row.render, "value") - row.render);
+    expectClass(&row, value, HL_STRING, "JSON array string value");
+    expectClass(&row, row.rsize - 3, HL_STRING, "JSON second array value");
+    freeRow(&row);
+    initRow(&row, "\"unterminated\\\"");
+    highlight(&row, "book.json", 0, 0);
+    expectClass(&row, 0, HL_STRING, "JSON unfinished string");
+    freeRow(&row);
+    struct editorSettings colors;
+    settingsDefaults(&colors);
+    colors.color_syntax_json_key = COLOR_RED_DARK;
+    if (strcmp(syntaxColorFor(HL_JSON_KEY, &colors), ansiColorCode(COLOR_RED_DARK))) failures++;
+    if (!syntaxHasBuiltinExtension("JSON")) failures++;
+
     if (failures) return 1;
     puts("syntax tests: ok");
     return 0;

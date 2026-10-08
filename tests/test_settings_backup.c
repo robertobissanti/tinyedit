@@ -48,6 +48,7 @@ int main(void) {
     fputs("undo_memory_mb = 32\n", fp);
     fputs("auto_indent = false\n", fp);
     fputs("color_gutter = cyan-dark\n", fp);
+    fputs("color_syntax_json_key = red-dark\ncolor_syntax_bracket = magenta-light\n", fp);
     if (fclose(fp) != 0) fail("close test config");
 
     struct editorSettings settings;
@@ -59,9 +60,13 @@ int main(void) {
     if (settings.auto_indent != 0) fail("valid bool parse");
     if (settings.color_gutter != COLOR_CYAN_DARK) fail("valid enum parse");
     if (settings.undo_memory_mb != 32) fail("undo memory budget parse");
+    if (settings.color_syntax_json_key != COLOR_RED_DARK ||
+        settings.color_syntax_bracket != COLOR_MAGENTA_LIGHT) fail("new color parsing");
     if (!settingsSave(&settings)) fail("settingsSave");
     settingsLoad(&settings);
     if (settings.undo_memory_mb != 32) fail("undo memory budget persistence");
+    if (settings.color_syntax_json_key != COLOR_RED_DARK ||
+        settings.color_syntax_bracket != COLOR_MAGENTA_LIGHT) fail("new color persistence");
 
     char filename[1024];
     snprintf(filename, sizeof(filename), "%s/document.txt", home);

@@ -758,6 +758,51 @@ static void testHeadingReverse(void) {
     settingsDefaults(&S);
 }
 
+static void testBracketColors(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    S.color_syntax_bracket = COLOR_RED_DARK;
+    const char *names[] = {"plain.txt", "code.c", NULL};
+    for (size_t k = 0; k < sizeof(names) / sizeof(names[0]); k++) {
+        editorResetDocument();
+        if (names[k]) E.document.file.filename = teStrdup(names[k]);
+        editorInsertRow(0, "é()[]{}", strlen("é()[]{}"));
+        struct abuf ab = ABUF_INIT;
+        editorDrawRowSegment(&ab, 0, 0, E.document.buffer.rows[0].rsize,
+            0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+        abAppend(&ab, "", 1);
+        check(strstr(ab.b, "\x1b[31m(") != NULL && strstr(ab.b, "\x1b[31m}") != NULL,
+            "configured brackets in known, unknown and unnamed files");
+        abFree(&ab);
+    }
+    editorResetDocument();
+    E.document.file.filename = teStrdup("code.c");
+    editorInsertRow(0, "\"()\" /* [] */ {}", strlen("\"()\" /* [] */ {}"));
+    struct abuf ab = ABUF_INIT;
+    editorDrawRowSegment(&ab, 0, 0, E.document.buffer.rows[0].rsize,
+        0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    check(strstr(ab.b, "\x1b[31m(") == NULL && strstr(ab.b, "\x1b[31m[") == NULL &&
+        strstr(ab.b, "\x1b[31m{") != NULL, "strings and comments preserve their colors");
+    abFree(&ab);
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRowSegment(&ab, 0, 0, E.document.buffer.rows[0].rsize,
+        1, 0, 14, 0, 16, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    check(strstr(ab.b, "\x1b[31m{") == NULL, "selection overrides bracket color");
+    abFree(&ab);
+    S.syntax_highlight = 0;
+    editorRehighlightFrom(0, 1);
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRowSegment(&ab, 0, 0, E.document.buffer.rows[0].rsize,
+        0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    check(strstr(ab.b, "\x1b[31m(") != NULL, "bracket color independent of syntax toggle");
+    abFree(&ab);
+    editorResetDocument();
+    settingsDefaults(&S);
+}
+
 static void testMarkdownStyles(void) {
     editorResetDocument();
     settingsDefaults(&S);
@@ -916,6 +961,7 @@ int main(void) {
     testSharedAutoClose();
     testEditBatches();
     testSearchSession();
+    testBracketColors();
     testMarkdownStyles();
     testHeadingReverse();
     testRedrawCaches();

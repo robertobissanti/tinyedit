@@ -1998,11 +1998,16 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
          * selection/search, and not already an invisible glyph -- a
          * glyph substituted for a space/tab has no syntax meaning of
          * its own). row->hl is NULL whenever highlighting isn't active
-         * for this row (see editorUpdateRow()), so this is a no-op in
-         * that case without an extra flag check. */
+         * for this row (see editorUpdateRow()); plain brackets still use
+         * their configured color independently of language detection. */
         const char *syn_color = NULL;
         if (!should_highlight && !is_invisible_glyph) {
-            if (row->hl && rendercol < row->rsize) {
+            uint8_t plain_bracket = decoded.valid &&
+                decoded.codepoint > 0 && decoded.codepoint < 128 && strchr("()[]{}", (char)decoded.codepoint) &&
+                (!row->hl || (rendercol < row->rsize && row->hl[rendercol] == HL_NORMAL));
+            if (plain_bracket) {
+                syn_color = ansiColorCode(S.color_syntax_bracket);
+            } else if (row->hl && rendercol < row->rsize) {
                 syn_color = syntaxColorFor((enum syntaxHighlight)row->hl[rendercol], &S);
             } else if (S.color_syntax_normal != COLOR_TERMINAL_DEFAULT) {
                 /* An unknown extension (and syntax highlighting turned
@@ -3460,6 +3465,8 @@ static uint8_t editorSettingsIsSyntaxColor(const struct settingDescriptor *d) {
 static const char *editorSettingsSyntaxColorSample(const struct settingDescriptor *d) {
     if (strcmp(d->key, "color_syntax_normal") == 0) return "text";
     if (strcmp(d->key, "color_syntax_keyword") == 0) return "printf";
+    if (strcmp(d->key, "color_syntax_json_key") == 0) return "\"title\":";
+    if (strcmp(d->key, "color_syntax_bracket") == 0) return "() [] {}";
     if (strcmp(d->key, "color_syntax_string") == 0) return "\"hello\"";
     if (strcmp(d->key, "color_syntax_comment") == 0) return "// note";
     if (strcmp(d->key, "color_syntax_number") == 0) return "42";

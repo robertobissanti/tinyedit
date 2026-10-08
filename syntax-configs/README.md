@@ -33,7 +33,7 @@ it wins.
 | --- | --- | --- |
 | `latex.conf` | LaTeX | `.tex` `.latex` `.sty` `.cls` |
 | `matlab.conf` | Matlab / Octave | `.m` `.mat` |
-| `json.conf` | JSON | `.json` |
+| `json.conf` | JSON (also built in; keys and string values use separate colors) | `.json` |
 | `nunjucks.conf` | Nunjucks (Eleventy) | `.njk` `.nunjucks` |
 | `jinja.conf` | Jinja2 (Flask, Ansible) | `.jinja` `.jinja2` `.j2` |
 | `liquid.conf` | Liquid (Shopify, Jekyll) | `.liquid` |

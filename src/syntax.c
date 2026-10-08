@@ -118,8 +118,14 @@ static const struct syntaxLang jsLang = {
     jsExtensions, jsKeywords, "\"'`", "//", "/*", "*/", 0, NULL, 0, 1, NULL, BASE_TOKENIZER_GENERIC, NULL
 };
 
+static const char *const jsonExtensions[] = { "json", NULL };
+static const char *const jsonKeywords[] = { "true", "false", "null", NULL };
+static const struct syntaxLang jsonLang = {
+    jsonExtensions, jsonKeywords, "\"", NULL, NULL, NULL, 0, NULL, 0, 0, NULL, BASE_TOKENIZER_GENERIC, NULL
+};
+
 static const struct syntaxLang *const syntaxLangTable[] = {
-    &cLang, &cppLang, &pyLang, &shLang, &jsLang,
+    &cLang, &cppLang, &pyLang, &shLang, &jsLang, &jsonLang,
 };
 static const int32_t syntaxLangTableCount =
     (int32_t)(sizeof(syntaxLangTable) / sizeof(syntaxLangTable[0]));
@@ -641,7 +647,7 @@ static uint8_t syntaxReserveHighlight(erow *row) {
  * writes outgoing comment and math state from the supplied previous-row flags.
  */
 static void syntaxHighlightRowGeneric(erow *row, const struct syntaxLang *lang,
-    uint8_t prev_open_comment, uint8_t prev_open_math) {
+    uint8_t prev_open_comment, uint8_t prev_open_math, uint8_t json_keys) {
     if (!syntaxReserveHighlight(row)) return;
     memset(row->hl, HL_NORMAL, (size_t)row->rsize);
 
@@ -702,7 +708,14 @@ static void syntaxHighlightRowGeneric(erow *row, const struct syntaxLang *lang,
         }
 
         if (lang->quote_chars && strchr(lang->quote_chars, s[i])) {
+            int32_t start = i;
             i = syntaxHighlightQuoted(row, s, len, i, 1);
+            if (json_keys && s[start] == '"') {
+                int32_t next = i;
+                while (next < len && (s[next] == ' ' || s[next] == '\t' || s[next] == '\r')) next++;
+                if (next < len && s[next] == ':')
+                    memset(row->hl + start, HL_JSON_KEY, (size_t)(i - start));
+            }
             continue;
         }
 
@@ -1726,7 +1739,8 @@ void syntaxHighlightRow(erow *row, const char *filename,
         return;
     }
 
-    syntaxHighlightRowGeneric(row, lang, prev_open_comment, prev_open_math);
+    syntaxHighlightRowGeneric(row, lang, prev_open_comment, prev_open_math,
+        ext && syntaxExtensionEquals(ext, "json"));
 }
 
 /**
@@ -1752,6 +1766,7 @@ const char *syntaxColorFor(enum syntaxHighlight hl, const struct editorSettings 
         case HL_COMMENT:      return ansiColorCode(s->color_syntax_comment);
         case HL_EMPHASIS:
         case HL_KEYWORD:      return ansiColorCode(s->color_syntax_keyword);
+        case HL_JSON_KEY:     return ansiColorCode(s->color_syntax_json_key);
         case HL_STRING:       return ansiColorCode(s->color_syntax_string);
         case HL_NUMBER:       return ansiColorCode(s->color_syntax_number);
         case HL_PREPROCESSOR: return ansiColorCode(s->color_syntax_preprocessor);
