@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Other minor fixing
+
+- Update the README contents, give the sidebar its own feature row, and link
+  every feature area to the relevant README section.
+
 ## 0.3.7 — 2026-10-08
 
 ### New features

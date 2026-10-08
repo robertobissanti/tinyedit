@@ -39,6 +39,7 @@ selection, and optional mouse support for clicking and scrolling.
   - [Keyboard shortcuts](#keyboard-shortcuts)
   - [Experimental macOS Command keys in Ghostty](#experimental-macos-command-keys-in-ghostty)
   - [Opening and closing files](#opening-and-closing-files)
+  - [File tree sidebar](#file-tree-sidebar)
   - [File information](#file-information)
   - [Fast terminal paste](#fast-terminal-paste)
   - [Mouse support](#mouse-support)
@@ -57,6 +58,7 @@ selection, and optional mouse support for clicking and scrolling.
   - [Find and replace](#find-and-replace)
 - [Backup and crash recovery](#backup-and-crash-recovery)
 - [Code layout](#code-layout)
+  - [Function documentation](#function-documentation)
 - [Project status](#project-status)
 - [Author and license](#author-and-license)
 
@@ -85,19 +87,20 @@ for real editing rather than just demonstrating how a terminal works.
 
 | Area | What you get |
 |---|---|
-| Editing | Familiar cursor movement, word jumps, selection, cut/copy/paste, automatic indentation, block indent/outdent with Tab, configurable pair and XML/HTML tag closing, matching-bracket highlighting, and an undo history of up to 2,000 steps (200 by default). |
-| Files | Open or switch files without restarting tinyedit, complete file paths with Tab, browse a persistent file tree, start a named file before it exists, save atomically, and recover unsaved work from automatic backups after a crash. |
-| Search | Incremental literal or POSIX regular-expression search, match navigation, and interactive search and replace. |
-| Syntax highlighting | Built-in support for C/C++, Python, Shell, JavaScript/TypeScript, Markdown, HTML/XML, CSS, and JSON, including function names. Simple C-like languages and HTML-based templates (Nunjucks, Jinja, Liquid, Twig) can be added with a user configuration file; ready-made ones ship in `syntax-configs/`. |
-| UTF-8 | Cursor movement, deletion, display width, wrapping, and character counts understand combining marks, CJK text, and multi-code-point emoji. |
-| Long lines | Lines wrap at the terminal edge, preferably at word boundaries. Navigation follows the visible wrapped rows, without imposing a fixed line-length limit. |
-| Clipboard | Uses the native macOS clipboard or the available Wayland/X11 clipboard tool directly, without sending commands through a shell. |
-| Terminal input | Fast bracketed paste, optional mouse selection and scrolling, and key-sequence handling for common macOS and Linux terminals. |
+| [Editing](#keyboard-shortcuts) | Familiar cursor movement, word jumps, selection, cut/copy/paste, automatic indentation, block indent/outdent with Tab, configurable pair and XML/HTML tag closing, matching-bracket highlighting, and an undo history of up to 2,000 steps (200 by default). |
+| [Files](#opening-and-closing-files) | Open or switch files without restarting tinyedit, complete file paths with Tab, start a named file before it exists, save atomically, and recover unsaved work from automatic backups after a crash. |
+| [Sidebar](#file-tree-sidebar) | Browse a persistent filesystem tree with keyboard or mouse, expand folders lazily, change its root, and open files with protection for unsaved edits. |
+| [Search](#find-and-replace) | Incremental literal or POSIX regular-expression search, match navigation, and interactive search and replace. |
+| [Syntax highlighting](#syntax-highlighting) | Built-in support for C/C++, Python, Shell, JavaScript/TypeScript, Markdown, HTML/XML, CSS, and JSON, including function names. Simple C-like languages and HTML-based templates (Nunjucks, Jinja, Liquid, Twig) can be added with a user configuration file; ready-made ones ship in `syntax-configs/`. |
+| [UTF-8](#utf-8-text) | Cursor movement, deletion, display width, wrapping, and character counts understand combining marks, CJK text, and multi-code-point emoji. |
+| [Long lines](#soft-wrapping-and-navigation) | Lines wrap at the terminal edge, preferably at word boundaries. Navigation follows the visible wrapped rows, without imposing a fixed line-length limit. |
+| [Clipboard](#keyboard-shortcuts) | Uses the native macOS clipboard or the available Wayland/X11 clipboard tool directly, without sending commands through a shell. |
+| [Terminal input](#fast-terminal-paste) | Fast bracketed paste, optional mouse selection and scrolling, and key-sequence handling for common macOS and Linux terminals. |
 | [Menus](#menus) | A persistent menu bar with TinyEdit, File, Edit, View, and Help menus; keyboard and optional mouse navigation; shortcuts beside commands; and checked View settings. |
-| Interface | Optional line numbers and top bar, visible whitespace, file statistics, in-editor help, and a settings panel. |
-| Configuration | Settings live in `~/.tinyeditrc`; colors, tabs, wrapping, mouse behavior, interface elements, and editing assists can all be changed from `F2`. |
-| Portability | One C99 binary and no third-party runtime libraries. The supported targets are POSIX systems such as macOS and Linux. |
-| Testing | Syntax, settings, backup, terminal-input, key-binding, and very-long-line behavior are covered by `make test`; sample files are included for hands-on checks. |
+| [Interface](#top-and-status-bars) | Optional line numbers and top bar, visible whitespace, file statistics, in-editor help, and a settings panel. |
+| [Configuration](#settings-and-appearance) | Settings live in `~/.tinyeditrc`; colors, tabs, wrapping, mouse behavior, interface elements, and editing assists can all be changed from `F2`. |
+| [Portability](#build) | One C99 binary and no third-party runtime libraries. The supported targets are POSIX systems such as macOS and Linux. |
+| [Testing](#code-layout) | Syntax, settings, backup, terminal-input, key-binding, and very-long-line behavior are covered by `make test`; sample files are included for hands-on checks. |
 
 Settings can be changed from the built-in `F2` panel or by editing
 `~/.tinyeditrc`, which tinyedit creates automatically on first launch.
