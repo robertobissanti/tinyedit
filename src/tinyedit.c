@@ -1240,8 +1240,10 @@ static void editorLoadLines(const char *data, size_t len) {
  */
 static void editorResolveFiletype(void) {
     if (!E.document.file.filename) return;
-    const char *dot = strrchr(E.document.file.filename, '.');
-    if (!dot || dot[1] == '\0' || dot == E.document.file.filename) return;
+    const char *basename = strrchr(E.document.file.filename, '/');
+    basename = basename ? basename + 1 : E.document.file.filename;
+    const char *dot = strrchr(basename, '.');
+    if (!dot || dot[1] == '\0') return;
     const char *ext = dot + 1;
 
     if (filetypeForExtension(ext)) return;
@@ -1268,8 +1270,10 @@ static void editorResolveFiletype(void) {
  */
 static void editorWarnMissingHighlightConfig(void) {
     if (!E.document.file.filename) return;
-    const char *dot = strrchr(E.document.file.filename, '.');
-    if (!dot || dot[1] == '\0' || dot == E.document.file.filename) return;
+    const char *basename = strrchr(E.document.file.filename, '/');
+    basename = basename ? basename + 1 : E.document.file.filename;
+    const char *dot = strrchr(basename, '.');
+    if (!dot || dot[1] == '\0') return;
     const char *ext = dot + 1;
 
     const char *name = filetypeForExtension(ext);
@@ -2544,11 +2548,11 @@ static int32_t editorCountChars(void) {
  */
 static const char *editorFiletypeLabel(void) {
     if (!E.document.file.filename) return NULL;
-    const char *dot = strrchr(E.document.file.filename, '.');
-    /* No dot, or a dot with nothing after it (e.g. "Makefile",
-     * "foo."): no extension to look up. A leading dot with no other
-     * dot (e.g. ".gitignore") also has no meaningful extension. */
-    if (!dot || dot[1] == '\0' || dot == E.document.file.filename) return NULL;
+    const char *basename = strrchr(E.document.file.filename, '/');
+    basename = basename ? basename + 1 : E.document.file.filename;
+    const char *dot = strrchr(basename, '.');
+    /* Startup dotfiles use the suffix after their leading dot, like other names. */
+    if (!dot || dot[1] == '\0') return NULL;
     return filetypeForExtension(dot + 1);
 }
 

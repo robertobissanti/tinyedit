@@ -37,6 +37,10 @@
 
 ### Important fixes
 
+- Recognize startup dotfiles such as `.vimrc` and `.zshrc` when opened by a
+  relative name, consistently with absolute paths. Dots in parent directories
+  no longer count as a file extension.
+
 - Keep the Settings draft open and live settings unchanged when saving fails,
   allowing retry or discard instead of applying an unsaved configuration.
 

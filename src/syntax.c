@@ -188,8 +188,10 @@ static uint8_t syntaxIsAsciiLetter(unsigned char byte) {
  */
 static const struct syntaxLang *syntaxLangForFilename(const char *filename) {
     if (!filename) return NULL;
-    const char *dot = strrchr(filename, '.');
-    if (!dot || dot == filename) return NULL;
+    const char *basename = strrchr(filename, '/');
+    basename = basename ? basename + 1 : filename;
+    const char *dot = strrchr(basename, '.');
+    if (!dot || !dot[1]) return NULL;
     const char *ext = dot + 1;
 
     if (!userLangsLoaded) syntaxLoadUserLangs();
@@ -1699,8 +1701,10 @@ void syntaxHighlightRow(erow *row, const char *filename,
         return;
     }
 
-    const char *dot = strrchr(filename, '.');
-    const char *ext = (dot && dot != filename) ? dot + 1 : NULL;
+    const char *basename = strrchr(filename, '/');
+    basename = basename ? basename + 1 : filename;
+    const char *dot = strrchr(basename, '.');
+    const char *ext = (dot && dot[1]) ? dot + 1 : NULL;
 
     /* Resolved before the dedicated tokenizers below so a user .conf
      * can claim an extension they'd otherwise take (and so a language

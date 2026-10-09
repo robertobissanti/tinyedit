@@ -88,7 +88,8 @@ indentation-sensitive blocks, nested sub-languages — still needs a
 dedicated tokenizer in `syntax.c`, the way Markdown and CSS are
 handled.
 
-`vimrc.conf` recognizes `.vimrc` as extension `vimrc` (no leading dot in
+`vimrc.conf` recognizes `.vimrc`, `./.vimrc` and absolute paths equally,
+using extension `vimrc` (no leading dot in
 configuration). Its generic tokenizer treats double quotes as comments and
 single quotes as strings; context-dependent double-quoted Vimscript strings,
 command abbreviations and full Vim9 syntax are not parsed.

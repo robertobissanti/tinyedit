@@ -1637,14 +1637,15 @@ def test_vimrc_syntax_config(home):
     (case_home / ".tinyeditrc").write_text("color_mode = rgb\nrgb_syntax_keyword = #010203\n")
     target = case_home / ".vimrc"
     target.write_text('set number\n" comment\n')
-    process, master = spawn_editor([str(target)], case_home)
-    try:
-        output = read_available(master)
-        assert b"Vim" in output
-        assert b"\x1b[38;2;1;2;3ms" in output, "Vim command not highlighted"
-        assert b'\x1b[38;2;64;64;64m"' in output, "Vim comment not highlighted"
-    finally:
-        finish(process, master)
+    for argument in (str(target), ".vimrc", "./.vimrc"):
+        process, master = spawn_editor([argument], case_home, cwd=case_home)
+        try:
+            output = read_available(master)
+            assert b"Vim" in output, argument
+            assert b"\x1b[38;2;1;2;3ms" in output, "Vim command not highlighted: " + argument
+            assert b'\x1b[38;2;64;64;64m"' in output, "Vim comment not highlighted: " + argument
+        finally:
+            finish(process, master)
 
 
 def test_color_scheme_selection(home):
