@@ -13,7 +13,7 @@ static const enum editorCommand app_items[] = {
     CMD_INFO, CMD_SETTINGS, CMD_NONE, CMD_QUIT
 };
 static const enum editorCommand file_items[] = {
-    CMD_OPEN, CMD_SAVE, CMD_SAVE_AS, CMD_NONE, CMD_CLOSE
+    CMD_NEW, CMD_OPEN, CMD_SAVE, CMD_SAVE_AS, CMD_NONE, CMD_CLOSE
 };
 static const enum editorCommand edit_items[] = {
     CMD_UNDO, CMD_REDO, CMD_NONE, CMD_CUT, CMD_COPY, CMD_PASTE,

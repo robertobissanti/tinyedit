@@ -202,13 +202,14 @@ text from another application to diagnose Wayland access. Terminal-native paste
 | `Ctrl-E` | Show or hide the file tree. Opening focuses the tree. |
 | `Ctrl-B` | Switch focus between the visible file tree and document. |
 | `Ctrl-O` | Open another file by entering its path; offers to save the current file first. A missing path becomes a new file on first save. |
+| `Ctrl-N` | New empty unnamed document; offers to save the current document first. |
 | `Ctrl-W` | Close the current file without quitting tinyedit; offers to save first and leaves an empty buffer. |
 | `Ctrl-Q` | Quit (if there are unsaved changes, asks y/n/Esc: save-and-quit / quit without saving / cancel) |
 
 ### Experimental macOS Command keys in Ghostty
 
 In Ghostty, tinyedit can optionally accept macOS Command shortcuts, including
-`Cmd-S`, `Cmd-Z`, `Cmd-C`, `Cmd-X`, `Cmd-F`, and `Cmd-Q`, through the Kitty
+`Cmd-N`, `Cmd-S`, `Cmd-Z`, `Cmd-C`, `Cmd-X`, `Cmd-F`, and `Cmd-Q`, through the Kitty
 keyboard protocol. Enable **macOS Command keys (Ghostty, experimental)** in
 `F2`, or set `mac_command_keys = true` in `~/.tinyeditrc`, then reload
 Ghostty with `Cmd-Shift-,`.
@@ -223,6 +224,13 @@ leak into the shell. Remove any older manual `super+...` keybind bridges from
 your Ghostty configuration to avoid conflicts.
 
 ### Opening and closing files
+
+File → New (`Ctrl-N`) starts an empty unnamed document after the shared
+save/discard/cancel check. Cancel or save failure keeps the current document,
+selection and view. Success clears history, search and backup state, preserves
+the sidebar tree and returns focus to the document. It is inactive in prompts
+and Settings. Cmd-N uses the existing opt-in experimental Ghostty Command-key
+mode. Real-terminal verification of the new bindings is still required.
 
 tinyedit keeps one active document at a time, but changing files does not
 require restarting the program. `Ctrl-W` closes the current document and

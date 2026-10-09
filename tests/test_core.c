@@ -750,6 +750,41 @@ static void runInputBurst(const char *bytes, size_t len, int32_t turns) {
     close(descriptors[1]);
 }
 
+static void testNewDocument(void) {
+    settingsDefaults(&S);
+    editorResetDocument();
+    E.view.screencols = 80; E.view.screenrows = 20;
+    editorInsertRow(0, "keep", 4);
+    E.document.file.filename = teStrdup("/nonexistent-tinyedit-directory/file.txt");
+    E.document.file.dirty = 1;
+    E.document.selection.active = 1;
+    E.document.selection.anchor_x = 1;
+    E.document.cursor.cx = 3;
+    E.view.rowoff = 2;
+    int32_t count = E.document.history.undo_count;
+    int saved_output = dup(STDOUT_FILENO), sink = open("/dev/null", O_WRONLY);
+    check(saved_output >= 0 && sink >= 0 && dup2(sink, STDOUT_FILENO) >= 0, "New output sink");
+    close(sink);
+    runInputBurst("\x0e" "x", 2, 1);
+    check(E.document.buffer.row_count == 1 && E.document.selection.active &&
+        E.document.cursor.cx == 3 && E.view.rowoff == 2 && E.document.history.undo_count == count,
+        "cancel New preserves document, selection, cursor, view and history");
+    runInputBurst("\x0e" "y", 2, 1);
+    check(E.document.file.dirty && E.document.selection.active && E.document.file.filename &&
+        memcmp(E.document.buffer.rows[0].chars, "keep", 4) == 0, "failed save aborts New");
+    T.visible = 1; T.focused = 1;
+    E.search.search_match_y = 0; E.document.file.last_backup_time = 123;
+    runInputBurst("\x0e" "n", 2, 1);
+    check(!E.document.buffer.row_count && !E.document.file.filename && !E.document.file.dirty &&
+        !E.document.selection.active && !E.document.history.undo_count && !E.document.history.redo_count &&
+        E.search.search_match_y == -1 && !E.document.file.last_backup_time &&
+        !E.document.cursor.cx && !E.document.cursor.cy && !E.view.rowoff && T.visible && !T.focused,
+        "discard New resets document state and focuses document while keeping sidebar");
+    T.visible = 0;
+    check(editorMenuCommandKey(CMD_NEW) == CTRL_KEY('n'), "New menu dispatch");
+    check(dup2(saved_output, STDOUT_FILENO) >= 0, "restore New output"); close(saved_output);
+}
+
 static void testMouseDispatch(void) {
     settingsDefaults(&S);
     S.show_menu = S.show_top_bar = S.show_line_numbers = 0;
@@ -1394,6 +1429,7 @@ int main(void) {
     testEmptyPages();
     testUnicodeTabs();
     testDocumentTransactions();
+    testNewDocument();
     testMouseDispatch();
     testSharedAutoClose();
     testEditBatches();

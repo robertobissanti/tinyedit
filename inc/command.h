@@ -12,6 +12,7 @@ enum editorCommand {
     CMD_INFO,
     CMD_SETTINGS,
     CMD_QUIT,
+    CMD_NEW,
     CMD_OPEN,
     CMD_SAVE,
     CMD_SAVE_AS,

@@ -4,6 +4,12 @@
 
 ### New features
 
+- Create an empty unnamed document with File → New or Ctrl-N, with the shared
+  save/discard/cancel protection and preserved sidebar tree. Cmd-N is available
+  in the opt-in experimental Ghostty Command-key mode; real-terminal validation
+  of the new shortcuts remains required.
+
+
 - Show the source build identifier with --version, in the startup splash and F3;
   distinguish Git commits, local changes and source archives, with a packaging override.
 

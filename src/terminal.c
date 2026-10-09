@@ -33,6 +33,7 @@ static uint8_t kitty_keyboard_enabled = 0;
 static uint8_t kitty_keyboard_cleanup_registered = 0;
 static uint8_t ghostty_bindings_cleanup_registered = 0;
 static const char *const managed_lines[] = {
+    "keybind = cmd+n=unbind\n",
     "keybind = cmd+w=unbind\n",
     "keybind = cmd+f=unbind\n",
     "keybind = cmd+z=unbind\n",
@@ -497,6 +498,7 @@ static void editorDrainUnknownCsiSequence(int32_t max) {
  */
 static int32_t terminalCsiUSuperShortcut(int32_t codepoint) {
     switch (codepoint) {
+        case 110: return CTRL_KEY('n'); /* Cmd-N */
         case 115: return CTRL_KEY('s'); /* Cmd-S */
         case 102: return CTRL_KEY('f'); /* Cmd-F */
         case 122: return CTRL_KEY('z'); /* Cmd-Z */

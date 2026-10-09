@@ -6,6 +6,7 @@ static const struct commandDescriptor command_descriptors[] = {
     { CMD_INFO, "Info", "F3", NULL },
     { CMD_SETTINGS, "Settings", "F2", NULL },
     { CMD_QUIT, "Quit", "^Q", NULL },
+    { CMD_NEW, "New", "^N", NULL },
     { CMD_OPEN, "Open...", "^O", NULL },
     { CMD_SAVE, "Save", "^S", NULL },
     { CMD_SAVE_AS, "Save as...", "F4", NULL },

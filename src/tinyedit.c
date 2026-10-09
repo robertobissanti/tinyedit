@@ -176,6 +176,7 @@ static const struct helpEntry helpEntries[] = {
     { "Ctrl-E", "Show/hide file tree; Ctrl-B switches focus, Esc returns to editor" },
     { "F4 (or Ctrl-Shift-S, terminal permitting)", "Save as (always prompts for a filename)" },
     { "Ctrl-O", "Open another file (offers to save current file first)" },
+    { "Ctrl-N", "New empty unnamed document (offers to save first)" },
     { "Ctrl-W", "Close current file without quitting" },
     { "Ctrl-Q", "Quit (offers to save first if unsaved)" },
     { "F2", "Settings panel (Ctrl-D inside it resets to defaults)" },
@@ -1641,9 +1642,21 @@ static void editorResetDocument(void) {
  * @details Leaves the editor running with a fresh unnamed buffer; cancellation
  * keeps the current document.
  */
-static void editorCloseFile(void) {
-    if (!editorConfirmDocumentChange("closing")) return;
+static void editorEmptyDocument(uint8_t creating) {
+    int32_t rowoff = E.view.rowoff, coloff = E.view.coloff;
+    if (!editorConfirmDocumentChange(creating ? "creating a new document" : "closing")) {
+        if (creating) {
+            E.view.rowoff = rowoff; E.view.coloff = coloff;
+            E.view.free_scroll = 1;
+        }
+        return;
+    }
     editorResetDocument();
+    if (creating) {
+        T.focused = 0;
+        editorSetStatusMessageSticky("New document. %s-S save | F1 help", editorPrimaryModifier());
+        return;
+    }
     editorSetStatusMessageSticky("File closed. %s-O open | %s-Q quit | F1 help",
         editorPrimaryModifier(), editorPrimaryModifier());
 }
@@ -4931,6 +4944,7 @@ static int32_t editorMenuCommandKey(enum editorCommand command) {
         case CMD_INFO: return F3_KEY;
         case CMD_SETTINGS: return F2_KEY;
         case CMD_QUIT: return CTRL_KEY('q');
+        case CMD_NEW: return CTRL_KEY('n');
         case CMD_OPEN: return CTRL_KEY('o');
         case CMD_TOGGLE_TREE: return TREE_TOGGLE_KEY;
         case CMD_SAVE: return CTRL_KEY('s');
@@ -5176,6 +5190,8 @@ static uint8_t editorTreeKey(int32_t c) {
                 free(parent);
             }
             return 1;
+        case CTRL_KEY('n'):
+            return 0;
         case CTRL_KEY('s'): case CTRL_KEY('o'): case CTRL_KEY('w'):
         case CTRL_KEY('q'): case CTRL_KEY('f'):
         case F1_KEY: case F2_KEY: case F3_KEY: case F4_KEY: case SAVE_AS_KEY:
@@ -5502,9 +5518,13 @@ static uint8_t editorHandleCommandKey(int32_t c) {
             editorQuit();
             return 1;
 
+        case CTRL_KEY('n'):
+            editorEmptyDocument(1);
+            break;
+
         case CTRL_KEY('w'):
             E.document.selection.active = 0;
-            editorCloseFile();
+            editorEmptyDocument(0);
             break;
 
         case CTRL_KEY('o'):
