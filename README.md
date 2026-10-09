@@ -566,6 +566,10 @@ background at all on a terminal whose own background is already dark.
 The editor resets its visual terminal state on exit, so a selected
 background does not remain active in the shell.
 
+`cursor_blink = true` enables cursor blinking for either shape (default: false).
+Toggle **Cursor blinking** in F2 or the View menu; the terminal must support
+DECSCUSR blinking styles. Exit restores the terminal cursor default.
+
 `cursor_style` selects `block` (the default) or `bar` (I-beam). It uses
 the standard DECSCUSR terminal escape sequence; terminals without that
 extension keep their normal cursor shape.

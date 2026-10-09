@@ -1715,6 +1715,35 @@ def test_color_scheme_selection(home):
         finish(process, master)
 
 
+def test_cursor_blink(home):
+    case_home = pathlib.Path(home) / "cursor-blink"
+    case_home.mkdir()
+    config = case_home / ".tinyeditrc"
+    for style, blink, code in (("block", False, 2), ("block", True, 1),
+                              ("bar", False, 6), ("bar", True, 5)):
+        config.write_text(f"cursor_style = {style}\ncursor_blink = {str(blink).lower()}\n")
+        process, master = spawn_editor([], case_home)
+        try:
+            assert f"\x1b[{code} q".encode() in read_available(master)
+        finally:
+            finish(process, master)
+    config.write_text("cursor_style = bar\n")
+    process, master = spawn_editor([], case_home)
+    try:
+        assert b"\x1b[6 q" in read_available(master), "legacy config keeps steady cursor"
+        navigation, _ = setting_navigation("cursor_blink")
+        os.write(master, b"\x1bOQ" + navigation + b"\r\x1bOQ")
+        assert b"\x1b[5 q" in read_available(master)
+        assert "cursor_blink = true" in config.read_text()
+        os.write(master, b"\x1b[21~" + b"\x1b[C" * 3)
+        assert b"[x] Cursor blinking" in read_available(master)
+        os.write(master, b"\x1b[B" * 6 + b"\r")
+        assert b"\x1b[6 q" in read_available(master)
+        assert "cursor_blink = false" in config.read_text(), "View toggle not saved"
+    finally:
+        finish(process, master)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="tinyedit-tests-") as tmp:
         home = pathlib.Path(tmp)
@@ -1766,6 +1795,7 @@ def main():
         test_xml_tag_autoclose(home)
         test_color_scheme_selection(home)
         test_vimrc_syntax_config(home)
+        test_cursor_blink(home)
         test_bash_syntax_config(home)
         test_build_displays(home)
         test_rgb_settings_mouse(home)

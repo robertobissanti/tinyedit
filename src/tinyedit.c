@@ -182,6 +182,7 @@ static const struct helpEntry helpEntries[] = {
     { "Ctrl-W", "Close current file without quitting" },
     { "Ctrl-Q", "Quit (offers to save first if unsaved)" },
     { "F2", "Settings; Colors and schemes, Esc goes back, Ctrl-S/F2 saves" },
+    { "Cursor blinking", "Toggle in F2 or View; applies to block and bar cursors" },
     { "Ctrl-D (Settings)", "Reset all draft settings; Esc at root offers save/discard/cancel" },
     { "F1", "This help screen" },
     { "F3", "Info screen: version, author, current file stats" },
@@ -2885,7 +2886,10 @@ static void editorRefreshScreen(void) {
     struct abuf ab = ABUF_INIT;
 
     abAppend(&ab, "\x1b[?25l", 6);
-    abAppend(&ab, S.cursor_style == CURSOR_BAR ? "\x1b[6 q" : "\x1b[2 q", 5);
+    const char *cursor_code = S.cursor_style == CURSOR_BAR
+        ? (S.cursor_blink ? "\x1b[5 q" : "\x1b[6 q")
+        : (S.cursor_blink ? "\x1b[1 q" : "\x1b[2 q");
+    abAppend(&ab, cursor_code, 5);
     /* Set before the clear (not after) so the cells \x1b[2J erases
      * pick up this background too, not just the rows/gutter text
      * drawn below -- \x1b[2J fills erased cells with whatever SGR

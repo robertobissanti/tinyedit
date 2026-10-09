@@ -50,6 +50,13 @@ int main(void) {
     menu.open = 1;
     check(menuHandleMouse(&menu, 1, 13, 1, 12, 1, 0) == CMD_NONE,
         "mouse rejects offscreen title");
+    struct editorSettings settings;
+    settingsDefaults(&settings);
+    check(!commandIsChecked(CMD_TOGGLE_CURSOR_BLINK, &settings), "cursor blink defaults off");
+    check(commandToggleSetting(CMD_TOGGLE_CURSOR_BLINK, &settings), "toggle cursor blink");
+    check(commandIsChecked(CMD_TOGGLE_CURSOR_BLINK, &settings), "cursor blink checkmark on");
+    menu.open = 1; menu.selected_menu = 3; menu.selected_item = 6;
+    check(menuHandleKey(&menu, '\r') == CMD_TOGGLE_CURSOR_BLINK, "View accepts cursor blink");
     puts("menu tests: ok");
     return 0;
 }

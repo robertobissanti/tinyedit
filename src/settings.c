@@ -136,6 +136,8 @@ const struct settingDescriptor settingDescriptors[] = {
     { "mac_command_keys", "macOS Command keys (Ghostty, experimental)", SETTING_BOOL,
       offsetof(struct editorSettings, mac_command_keys), 0, 0, NULL, 0 },
 #endif
+    { "cursor_blink", "Cursor blinking", SETTING_BOOL,
+      offsetof(struct editorSettings, cursor_blink), 0, 0, NULL, 0 },
     { "cursor_style", "Cursor shape", SETTING_ENUM,
       offsetof(struct editorSettings, cursor_style), 0, 0, cursorStyleNames, 2 },
     { "line_ending", "Line endings on save", SETTING_ENUM,
@@ -342,6 +344,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->mac_command_keys = 0;
 #endif
     out->cursor_style = CURSOR_BLOCK;
+    out->cursor_blink = 0;
     out->line_ending = LINE_ENDING_AUTO;
 }
 

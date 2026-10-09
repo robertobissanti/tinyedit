@@ -22,7 +22,7 @@ static const enum editorCommand edit_items[] = {
 static const enum editorCommand view_items[] = {
     CMD_TOGGLE_LINE_NUMBERS, CMD_TOGGLE_TOP_BAR, CMD_TOGGLE_MENU,
     CMD_TOGGLE_INVISIBLES, CMD_TOGGLE_SYNTAX_HIGHLIGHT,
-    CMD_TOGGLE_AUTO_INDENT, CMD_NONE, CMD_TOGGLE_TREE
+    CMD_TOGGLE_AUTO_INDENT, CMD_TOGGLE_CURSOR_BLINK, CMD_NONE, CMD_TOGGLE_TREE
 };
 static const enum editorCommand help_items[] = { CMD_HELP };
 

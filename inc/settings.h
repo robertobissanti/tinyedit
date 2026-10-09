@@ -245,6 +245,7 @@ struct editorSettings {
 #endif
     /* CURSOR_BLOCK or CURSOR_BAR (I-beam). */
     int32_t cursor_style;
+    int32_t cursor_blink;
     /* Preserve detected style, or force LF/CRLF when saving. */
     int32_t line_ending;
 };

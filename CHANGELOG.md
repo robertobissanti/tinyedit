@@ -4,6 +4,9 @@
 
 ### New features
 
+- Toggle cursor blinking for block and bar shapes from F2 or the View menu;
+  save the choice as `cursor_blink`, off by default.
+
 - Include the personal `zshrc.conf` example and synchronize the installed
   color scheme files, including the customized One Dark palette. The Zsh
   example is retained verbatim and is not loadable by the current syntax format.
