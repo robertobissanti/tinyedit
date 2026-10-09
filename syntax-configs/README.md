@@ -32,6 +32,7 @@ it wins.
 | File | Languages | Extensions |
 | --- | --- | --- |
 | `bash.conf` | Bash (overrides built-in Shell; generic tokenizer) | `.sh` `.bash`, Bash/Zsh startup dotfiles |
+| `vimrc.conf` | Basic Vimscript (generic tokenizer) | `.vim` `.vimrc` `.gvimrc` |
 | `latex.conf` | LaTeX | `.tex` `.latex` `.sty` `.cls` |
 | `matlab.conf` | Matlab / Octave | `.m` `.mat` |
 | `json.conf` | JSON (also built in; keys and string values use separate colors) | `.json` |
@@ -86,3 +87,8 @@ and look at it. A language needing structure neither base provides —
 indentation-sensitive blocks, nested sub-languages — still needs a
 dedicated tokenizer in `syntax.c`, the way Markdown and CSS are
 handled.
+
+`vimrc.conf` recognizes `.vimrc` as extension `vimrc` (no leading dot in
+configuration). Its generic tokenizer treats double quotes as comments and
+single quotes as strings; context-dependent double-quoted Vimscript strings,
+command abbreviations and full Vim9 syntax are not parsed.

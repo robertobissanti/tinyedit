@@ -1629,6 +1629,24 @@ def test_bash_syntax_config(home):
             finish(process, master)
 
 
+def test_vimrc_syntax_config(home):
+    case_home = pathlib.Path(home) / "vimrc-syntax"
+    directory = case_home / ".tinyedit" / "syntax"
+    directory.mkdir(parents=True)
+    (directory / "vimrc.conf").write_bytes((ROOT / "syntax-configs" / "vimrc.conf").read_bytes())
+    (case_home / ".tinyeditrc").write_text("color_mode = rgb\nrgb_syntax_keyword = #010203\n")
+    target = case_home / ".vimrc"
+    target.write_text('set number\n" comment\n')
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        output = read_available(master)
+        assert b"Vim" in output
+        assert b"\x1b[38;2;1;2;3ms" in output, "Vim command not highlighted"
+        assert b'\x1b[38;2;64;64;64m"' in output, "Vim comment not highlighted"
+    finally:
+        finish(process, master)
+
+
 def test_color_scheme_selection(home):
     case_home = pathlib.Path(home) / "scheme-selection"
     directory = case_home / ".tinyedit" / "color-scheme"
@@ -1726,6 +1744,7 @@ def main():
         test_no_save_prompt_when_undone(home)
         test_xml_tag_autoclose(home)
         test_color_scheme_selection(home)
+        test_vimrc_syntax_config(home)
         test_bash_syntax_config(home)
         test_build_displays(home)
         test_rgb_settings_mouse(home)

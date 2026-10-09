@@ -4,6 +4,9 @@
 
 ### New features
 
+- Add an installable basic Vimscript definition for `.vim`, `.vimrc` and
+  `.gvimrc`, with commands, single-quoted strings and comments.
+
 - Select complete ANSI/RGB presets from `~/.tinyedit/color-scheme/` in F2 Colors,
   preview and confirm them in the shared draft, then save to update configuration.
   Invalid presets leave settings intact; terminal output preference is preserved.
