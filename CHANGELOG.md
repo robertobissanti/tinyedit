@@ -63,6 +63,10 @@
 
 ### Other minor fixing
 
+- Split the full user, configuration, syntax and development guides into
+  `docs/`, keeping a shorter README with quick reference and documentation links.
+  Add C99, supported-platform and runtime-dependency badges.
+
 - Refresh the README feature overview, Settings and color scheme walkthrough
   with new screenshots, retaining the previous Settings image. Document cursor
   blinking, mode-specific presets and startup-dotfile syntax support.

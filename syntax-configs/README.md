@@ -63,8 +63,8 @@ recorded there.
 
 ## Writing your own
 
-The format and every available key are documented in the main
-[`README.md`](../README.md), under "Extending syntax highlighting".
+The format and every available key are documented in the
+[syntax highlighting guide](../docs/syntax-highlighting.md#extending-syntax-highlighting).
 
 Three things are worth knowing before you start, because none of them
 fails loudly — the file loads fine and the highlighting is just wrong:

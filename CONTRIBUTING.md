@@ -12,8 +12,9 @@ handling, and no third-party runtime dependencies.
 
 Please read these documents before proposing or implementing a change:
 
-- [`README.md`](README.md) explains the editor, build process, behavior, and
-  source layout.
+- [`README.md`](README.md) introduces the editor and build process.
+- [`docs/`](docs/README.md) contains detailed behavior, configuration and
+  source-layout guides.
 - [`IDEAS.md`](IDEAS.md) collects possible future features that have not been
   prioritized.
 
@@ -345,7 +346,8 @@ repeat the check in a real terminal.
 Update user-facing documentation in the same pull request as the behavior it
 describes. Depending on the change, this may include:
 
-- shortcuts, settings, features, or code layout in `README.md`;
+- the feature overview in `README.md` and detailed shortcuts, settings, syntax
+  behavior or code layout in the relevant `docs/` guide;
 - planned work and design decisions in the related issue or pull request;
 - non-prioritized future directions in `IDEAS.md`;
 - sample syntax configurations and `syntax-configs/README.md`;
