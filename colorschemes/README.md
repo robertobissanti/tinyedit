@@ -5,6 +5,11 @@ Complete RGB presets and separate ANSI adaptations, adapted to tinyedit's color 
 - `one-dark.conf`: [Vim One](https://github.com/rakr/vim-one), `background=dark`.
 - `catppuccin-mocha.conf`: [Catppuccin Mocha](https://github.com/catppuccin/catppuccin).
 
+One Dark includes the personal Vim Markdown overrides: blue headings
+(`#61AFEF`), orange-red bold (`#DE4000`), orange math (`#D19A66`) and no
+heading-only background. Heading text shares tinyedit's preprocessor color,
+so preprocessors also use blue. These overrides differ from stock Vim One.
+
 These palettes do not add Vim's syntax parsers or duplicate every Vim
 highlight group. One uses its own status-line colors, not an Airline theme.
 

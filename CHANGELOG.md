@@ -47,6 +47,10 @@
 
 ### Important fixes
 
+- Match One Dark RGB Markdown to the personal Vim One colors: blue headings,
+  orange-red bold, orange math and no separate heading background. Heading
+  and preprocessor text share the blue role.
+
 - Use a light gray selection in One Dark ANSI so selected text remains readable.
 
 - Recognize startup dotfiles such as `.vimrc` and `.zshrc` when opened by a

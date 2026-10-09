@@ -69,7 +69,8 @@ Complete presets are included in [`colorschemes/`](../colorschemes/README.md):
 
 RGB presets use explicit colors; ANSI presets are approximations whose actual
 shades depend on the terminal palette. One Dark includes the customized
-Markdown heading background shipped with tinyedit; it does not reproduce an
+Markdown colors (blue headings, orange-red bold and orange math), with no
+heading-only background; it does not reproduce an
 Airline theme or every Vim highlight group.
 
 ```sh
@@ -90,8 +91,8 @@ preference and non-color settings are preserved when applying a scheme.
 
 ![One Dark colorscheme editing Markdown](../imgs/color-scheme-one-dark.png)
 
-*One Dark with syntax colors, interface colors and a separate Markdown heading
-background.*
+*One Dark interface and syntax example. This screenshot predates the Vim
+Markdown correction: headings now use blue text without a separate background.*
 
 ![Catppuccin Mocha colorscheme editing C](../imgs/color-scheme-catppuccin-mocha.png)
 
