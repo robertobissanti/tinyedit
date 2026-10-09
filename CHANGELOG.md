@@ -4,6 +4,10 @@
 
 ### New features
 
+- Include the personal `zshrc.conf` example and synchronize the installed
+  color scheme files, including the customized One Dark palette. The Zsh
+  example is retained verbatim and is not loadable by the current syntax format.
+
 - Place Color Scheme below Mode and show only valid presets matching ANSI or
   RGB. Include separate ANSI adaptations of One Dark and Catppuccin Mocha.
 
@@ -39,6 +43,8 @@
   distinguish Git commits, local changes and source archives, with a packaging override.
 
 ### Important fixes
+
+- Use a light gray selection in One Dark ANSI so selected text remains readable.
 
 - Recognize startup dotfiles such as `.vimrc` and `.zshrc` when opened by a
   relative name, consistently with absolute paths. Dots in parent directories

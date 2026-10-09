@@ -93,3 +93,8 @@ using extension `vimrc` (no leading dot in
 configuration). Its generic tokenizer treats double quotes as comments and
 single quotes as strings; context-dependent double-quoted Vimscript strings,
 command abbreviations and full Vim9 syntax are not parsed.
+
+`zshrc.conf` is a verbatim personal example, retained for reference. It is
+currently ignored: extension values omit the leading dot, `base_tokenizer = bash`
+is unsupported, and a generic definition requires `keywords`. Use `bash.conf`
+for working shell highlighting, including `.zshrc`.
