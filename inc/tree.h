@@ -14,12 +14,12 @@ struct editorTree {
     uint8_t visible, focused, parent_selected;
 };
 /* Tree owns paths and entries. Borrowed entry pointers are invalidated by
- * expansion, collapse, root replacement or clear. Symlinks are leaves. */
+ * expansion, collapse, root replacement or clear. Directory symlinks expand on demand. */
 /** @brief Release owned paths and entries; invalidate all borrowed entry pointers. */
 void treeClear(struct editorTree *tree);
 /** @brief Replace the tree with a copied root path; return zero preserving the tree on failure. */
 uint8_t treeSetRoot(struct editorTree *tree, const char *path);
-/** @brief Lazily add directory children; return zero on filesystem failure. Symlinks remain leaves. */
+/** @brief Lazily add directory children; return zero on filesystem failure. Directory symlinks expand on demand. */
 uint8_t treeExpand(struct editorTree *tree, int32_t index);
 /** @brief Remove owned descendant entries at a file-entry index. */
 void treeCollapse(struct editorTree *tree, int32_t index);

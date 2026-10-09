@@ -142,8 +142,11 @@ static void testFilesystemTree(void) {
     check(symlink(root, link) == 0, "tree symlink cycle fixture");
     struct editorTree tree = {0};
     check(treeSetRoot(&tree, root) && tree.count == 3, "root expands only first level");
-    check(tree.entries[1].directory && tree.entries[2].symlink && !tree.entries[2].directory,
-        "directories sorted first and symlink cycle stays leaf");
+    check(tree.entries[1].directory && tree.entries[2].symlink && tree.entries[2].directory,
+        "directory symlinks classified as folders");
+    check(treeExpand(&tree, 2) && tree.count == 5 && tree.entries[2].expanded,
+        "cyclic directory symlink expands only one level on request");
+    treeCollapse(&tree, 2);
     check(treeExpand(&tree, 1) && tree.count == 4, "lazy expansion");
     check(treeExpand(&tree, 2) && tree.count == 5 && tree.entries[3].depth == 3,
         "nested depth preserved");
@@ -287,6 +290,42 @@ static void testFilesystemTree(void) {
     second.tv_sec = 101;
     check(!editorTreeDoubleClick(&first, 1) && !editorTreeDoubleClick(&second, 2),
         "clicking different directories is not a double click");
+    check(treeSetRoot(&T, root), "restore root for symlink navigation");
+    T.visible = T.focused = 1;
+    struct abuf link_frame = ABUF_INIT;
+    editorDrawSidebar(&link_frame);
+    abAppend(&link_frame, "\0", 1);
+    check(strstr(link_frame.b, "\x1b[35m▸ link") != NULL,
+        "directory symlink retains link color and displays expansion triangle");
+    abFree(&link_frame);
+    T.selected = 2;
+    editorTreeKey(ARROW_RIGHT);
+    check(T.selected == 0 && T.count == 3, "Right enters cyclic directory symlink safely");
+    mouseEventRow = 5 + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0);
+    tree_click_pending = 0;
+    editorHandleMouseEvent();
+    check(T.selected == 2 && T.entries[2].expanded && T.count == 5,
+        "single directory symlink click expands one level");
+    check(clock_gettime(CLOCK_MONOTONIC, &tree_click_time) == 0, "symlink double click clock");
+    editorHandleMouseEvent();
+    check(T.selected == 0 && T.count == 3 && E.document.buffer.rows[0].size == 2,
+        "double click enters directory symlink and preserves dirty document");
+    check(unlink(link) == 0 && symlink("folder/nested", link) == 0,
+        "relative directory symlink fixture");
+    check(treeSetRoot(&T, root), "reload relative symlink");
+    T.selected = 2;
+    editorTreeKey('\r');
+    check(T.entries[2].expanded && T.count == 4,
+        "Enter expands directory symlink");
+    editorTreeKey(ARROW_RIGHT);
+    check(strcmp(strrchr(T.entries[0].path, '/') + 1, "nested") == 0 && T.count == 2,
+        "relative symlink enters target and lists children");
+    check(unlink(link) == 0 && symlink(file, link) == 0, "file symlink fixture");
+    check(treeSetRoot(&T, root) && T.entries[2].symlink && !T.entries[2].directory,
+        "file symlink remains a file");
+    check(unlink(link) == 0 && symlink("missing", link) == 0, "broken symlink fixture");
+    check(treeSetRoot(&T, root) && T.entries[2].symlink && !T.entries[2].directory,
+        "broken symlink remains visible without failing directory listing");
     treeClear(&T);
     T.count = T.capacity = 100;
     T.entries = teMalloc(teArrayBytes((size_t)T.count, sizeof(*T.entries)));

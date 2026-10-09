@@ -2806,8 +2806,8 @@ static void editorDrawSidebar(struct abuf *ab) {
             int32_t depth = entry->depth > shift ? entry->depth - shift : 0;
             int32_t indent = depth > (width - 4) / 2 ? width - 4 : depth * 2;
             for (; columns < indent; columns++) abAppend(ab, " ", 1);
-            if (entry->directory) abAppend(ab, index == 0 ? "\x1b[35m" : "\x1b[36m", 5);
-            else if (entry->symlink) abAppend(ab, "\x1b[35m", 5);
+            if (entry->symlink) abAppend(ab, "\x1b[35m", 5);
+            else if (entry->directory) abAppend(ab, index == 0 ? "\x1b[35m" : "\x1b[36m", 5);
             const char *marker = entry->directory ? (entry->expanded ? "▾ " : "▸ ") : "  ";
             abAppend(ab, marker, (int32_t)strlen(marker));
             columns += 2;

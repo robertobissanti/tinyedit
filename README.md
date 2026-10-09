@@ -242,7 +242,10 @@ folders or selects their tree parent without changing the root. `Ctrl-C` copies 
 
 Close the sidebar with `Ctrl-E` from either pane, the `×` in its header when mouse
 support is enabled, or **View → Show/hide file tree**. Folders are sorted before
-files. Expansion is lazy, and symlinks are displayed as leaves to avoid cycles.
+files. Expansion loads one level at a time on request. Symlinks to directories use
+the same triangle, expansion and navigation as folders, while keeping the
+distinct symlink color.
+Double-click or Right on a directory symlink makes its target the new root.
 The sidebar grows up to half the terminal width, shifts deep indentation left,
 and abbreviates long names in the middle while retaining their extensions.
 The top bar shows the selected path while the tree has focus, within the available

@@ -42,7 +42,7 @@ static int treeCompare(const void *a, const void *b) {
 
 /* ---- expansion ---------------------------------------------------------- */
 /**
- * @brief Lazily add directory children; return zero on filesystem failure. Symlinks remain leaves.
+ * @brief Lazily add directory children; return zero on filesystem failure. Directory symlinks expand on demand.
  */
 uint8_t treeExpand(struct editorTree *tree, int32_t index) {
     if (index < 0 || index >= tree->count) return 0;
@@ -64,9 +64,12 @@ uint8_t treeExpand(struct editorTree *tree, int32_t index) {
         memcpy(path + len + 1, entry->d_name, name_len + 1);
         struct stat st;
         if (lstat(path, &st) != 0) { free(path); errno = 0; continue; }
+        uint8_t symlink = S_ISLNK(st.st_mode);
+        uint8_t directory = S_ISDIR(st.st_mode);
+        if (symlink && stat(path, &st) == 0) directory = S_ISDIR(st.st_mode);
         treeReserve(&children, children.count + 1);
         children.entries[children.count++] = (struct treeEntry){path,
-            tree->entries[index].depth + 1, S_ISDIR(st.st_mode), 0, S_ISLNK(st.st_mode)};
+            tree->entries[index].depth + 1, directory, 0, symlink};
         errno = 0;
     }
     int saved = errno;

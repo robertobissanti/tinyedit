@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Important fixes
+
+- Navigate into directory symlinks from the sidebar with double-click or Right,
+  instead of failing with “Can't open file: Is a directory”. Linked directories
+  have the same triangle and on-demand expansion as ordinary folders, while
+  retaining their distinct symlink color.
+
 ### Other minor fixing
 
 - Update the README contents, give the sidebar its own feature row, and link
