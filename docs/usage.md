@@ -66,7 +66,7 @@ text from another application to diagnose Wayland access. Terminal-native paste
 | `F2` | Settings panel (Up/Down to navigate, Enter/Space to edit, Left/Right to cycle options, `Ctrl-D` resets defaults, `Ctrl-S` saves and exits, Esc exits with a confirmation prompt if there are unsaved changes) |
 | `F10` | Open or close the menu; use arrows to navigate, Enter to choose, or Esc to dismiss |
 | `Ctrl-S` | Save (asks for a filename if none is set) |
-| `F4` (or `Ctrl-Shift-S` where the terminal sends it) | Save as: always asks for a filename, even when one is already set |
+| `F4` (or `Ctrl-Shift-S` where the terminal sends it) | Save as: always asks for a filename; replacing another existing file requires confirmation |
 | `Ctrl-E` | Show or hide the file tree. Opening focuses the tree. |
 | `Ctrl-B` | Switch focus between the visible file tree and document. |
 | `Ctrl-O` | Open another file by entering its path; offers to save the current file first. A missing path becomes a new file on first save. |
@@ -114,6 +114,11 @@ the same save/discard/cancel check used by `Ctrl-Q`; cancelling or failing to
 save leaves the current document untouched. If the path entered for `Ctrl-O`
 does not exist, tinyedit opens an empty buffer under that name and creates the
 file when it is first saved.
+
+Save as asks before replacing an existing file other than the current document.
+Press `y` or `Y` to replace it; any other key cancels and preserves the destination
+and the current document name. Saving to the file already open, including another
+path to the same device and inode, does not ask for overwrite confirmation.
 
 In the Open, Save as, and first-save prompts, press **Tab** to complete file
 and folder names. Repeated Tab presses cycle matching names alphabetically;

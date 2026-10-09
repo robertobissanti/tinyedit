@@ -67,5 +67,5 @@ with tempfile.TemporaryDirectory(prefix="tinyedit-build-") as directory:
         raise AssertionError("invalid override accepted")
 
 version = subprocess.check_output([str(ROOT / "bin/tinyedit"), "--version"], stdin=subprocess.DEVNULL)
-assert version.startswith(b"tinyedit 0.3.7 Build ") and b"\x1b" not in version
+assert version.startswith(b"tinyedit 0.3.8 Build ") and b"\x1b" not in version
 print("build identity tests passed")

@@ -205,7 +205,10 @@ or, equivalently, from the repository root:
 make install-syntax
 ```
 
-That target never overwrites a file you already have (it prints
+To install both syntax definitions and color schemes, run `make install-resources`
+as your normal user. It preserves existing files in both resource directories.
+
+That syntax target never overwrites a file you already have (it prints
 `skip` for those); use `make install-syntax-force` to replace them with
 the shipped versions. Syntax installation is separate from the default build
 step so compiling the editor never touches your home directory or modifies

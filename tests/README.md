@@ -80,7 +80,9 @@ al confronto dei costi del journal, non alla previsione della latenza UI.
 `test_memory_contracts.c` verifica somme/prodotti e crescita ai limiti di
 SIZE_MAX, rifiuto prima dell'allocazione mediante processi figli, clipboard
 interna vuota, NUL finale e copie indipendenti con byte malformati/NUL interni.
-Non accede alla clipboard di sistema e non provoca esaurimento reale di RAM.
+Il test EINTR usa un comando clipboard fittizio per interrompere una lettura e
+verificare che il paste riprenda senza perdere dati. Non accede alla clipboard
+di sistema e non provoca esaurimento reale di RAM.
 
 ## Colors, Settings, build identity and New
 
@@ -119,3 +121,22 @@ Alt+Enter decoding, local navigation, cancellation and failed saves, and literal
 browser arguments using a fake launcher. `test_docs.py` verifies installation
 in a temporary path containing spaces and checks guide resources without
 modifying the user's active syntax definitions.
+
+## Integrity regressions
+
+Core tests reject unbound control keys as document input and prevent stored
+controls from reaching terminal output, including controls following a ZWJ
+inside a grapheme. They also check recovery-screen sanitization, a FIFO replacing
+the current on-disk file without blocking comparison, Save as refusal/acceptance
+and same-file exemption, and clamping oversized numeric input in F2.
+
+PTY tests verify that ignoring F5-style CSI input leaves the following keystroke
+available, and that startup errors remain visible after leaving the alternate
+screen. These tests exercise supplied byte sequences, not physical key bindings
+in a real terminal.
+
+Resource installation tests in `test_docs.py` cover `install-colorschemes`,
+preservation of existing presets and forced replacement.
+An injected copy failure on an intermediate preset must make installation fail
+even when later copies could succeed. Temporary directories and a fake copy
+command isolate these checks from the user's installed resources.

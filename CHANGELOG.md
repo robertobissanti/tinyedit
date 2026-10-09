@@ -4,6 +4,14 @@
 
 ### New features
 
+### Important fixes
+
+### Other minor fixing
+
+## 0.3.8 — 2026-10-09
+
+### New features
+
 - Start an empty unnamed document with `tinyedit folder` instead of rejecting
   the directory. Show it as the sidebar root, keep focus in the document,
   and resolve relative Open/Save paths from that folder.
@@ -119,6 +127,9 @@
 
 ### Other minor fixing
 
+- Explain Save as overwrite confirmation in the user guide and F1 help,
+  settings saves through resolvable symlinks, combined resource installation,
+  and the integrity and installer regression coverage.
 - Record the future ideas for unified fatal-error handling and a general CSI key
   parser in `IDEAS.md`.
 - Add `make install-colorschemes` (never overwrites; `-force` variant),

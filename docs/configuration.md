@@ -14,7 +14,8 @@ Line numbers (gutter), tab width, interface colors, soft-wrap, the top bar,
 cursor shape and blinking, auto-indent, auto-close pairs, tabs-as-spaces,
 and invisible characters are configurable from the `F2` panel and saved to
 `~/.tinyeditrc`. See the file itself, created automatically on first launch,
-for configuration details.
+for configuration details. If `~/.tinyeditrc` is a resolvable symbolic link,
+saving settings updates its target and preserves the link itself.
 Inside `F2`, `Ctrl-D` resets every setting back to its
 default (still needs `Ctrl-S` to actually take effect). Upgrading
 tinyedit never requires touching an existing `~/.tinyeditrc`: keys

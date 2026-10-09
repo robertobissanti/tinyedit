@@ -185,6 +185,7 @@ static const struct helpEntry helpEntries[] = {
     { "Ctrl-S", "Save" },
     { "Ctrl-E", "Show/hide file tree; Ctrl-B switches focus, Esc returns to editor" },
     { "F4 (or Ctrl-Shift-S, terminal permitting)", "Save as (always prompts for a filename)" },
+    { "Save as: existing other file", "y/Y replaces; other keys cancel" },
     { "Ctrl-O", "Open another file (offers to save current file first)" },
     { "Ctrl-N", "New empty unnamed document (offers to save first)" },
     { "Ctrl-W", "Close current file without quitting" },
