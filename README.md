@@ -251,8 +251,8 @@ and the parent entry, preprocessor for symlinks and the root, and normal text
 for files, even when syntax highlighting is disabled.
 The sidebar grows up to half the terminal width, shifts deep indentation left,
 and abbreviates long names in the middle while retaining their extensions.
-The top bar shows the selected path while the tree has focus, within the available
-screen width. Below 40 terminal columns the sidebar is temporarily hidden.
+The top bar keeps showing the current document name and modified indicator
+while navigating the tree. Below 40 terminal columns the sidebar is temporarily hidden.
 
 PNG and other binary files containing NUL bytes are rejected on opening,
 leaving the current document intact. Malformed UTF-8 text remains editable.

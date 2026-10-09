@@ -493,6 +493,31 @@ static void testTopBar(void) {
     check(strstr(ab.b, "       abc.md       ") != NULL && strstr(ab.b, "/tmp/") == NULL,
         "top bar omits absolute directory and centers basename");
     abFree(&ab);
+    T.entries = teMalloc(sizeof(*T.entries));
+    T.entries[0] = (struct treeEntry){teStrdup("/a/very/long/sidebar/path/selected-folder"), 0, 1, 0, 0};
+    T.count = T.capacity = 1;
+    T.visible = T.focused = 1;
+    E.view.screencols = 80;
+    E.document.file.dirty = 1;
+    for (uint8_t parent = 0; parent < 2; parent++) {
+        T.parent_selected = parent;
+        ab = (struct abuf)ABUF_INIT;
+        editorDrawTopBar(&ab);
+        abAppend(&ab, "", 1);
+        check(strstr(ab.b, "abc.md (modified)") != NULL &&
+            strstr(ab.b, "sidebar") == NULL && strstr(ab.b, "up a dir") == NULL,
+            "sidebar focus preserves document title and modified indicator");
+        abFree(&ab);
+    }
+    E.document.file.filename = NULL;
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawTopBar(&ab);
+    abAppend(&ab, "", 1);
+    check(strstr(ab.b, "[No Name] (modified)") != NULL,
+        "sidebar focus preserves unnamed document title");
+    abFree(&ab);
+    E.document.file.dirty = 0;
+    treeClear(&T);
     E.document.file.filename = NULL;
     S.show_top_bar = 0;
     E.view.screencols = 80;

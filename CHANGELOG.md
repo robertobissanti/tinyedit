@@ -11,6 +11,9 @@
 
 ### Other minor fixing
 
+- Keep the current document name and modified indicator in the top bar while
+  browsing the sidebar, instead of replacing them with the selected path.
+
 - Reuse configured syntax colors in the sidebar instead of fixed ANSI colors:
   keyword for folders, preprocessor for links and the root, normal text for files.
 

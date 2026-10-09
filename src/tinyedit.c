@@ -2574,16 +2574,15 @@ static void editorDrawTopBar(struct abuf *ab) {
     if (bar_bg[0]) abAppend(ab, bar_bg, (int32_t)strlen(bar_bg));
     abAppend(ab, bar_fg, (int32_t)strlen(bar_fg));
 
-    uint8_t tree_title = T.focused && editorSidebarWidth() && T.count;
-    const char *name = tree_title ? (T.parent_selected ? ".. (up a dir)" : T.entries[T.selected].path) : E.document.file.filename;
-    if (name && !tree_title) {
+    const char *name = E.document.file.filename;
+    if (name) {
         const char *slash = strrchr(name, '/');
         if (slash) name = slash + 1;
     }
     char *safe_name = editorDisplayText(name ? name : "[No Name]");
     const char *parts[] = {
         safe_name,
-        !tree_title && E.document.file.dirty ? " (modified)" : ""
+        E.document.file.dirty ? " (modified)" : ""
     };
     int32_t title_width = 0;
     for (size_t part = 0; part < sizeof(parts) / sizeof(parts[0]); part++) {
