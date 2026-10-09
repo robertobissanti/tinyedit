@@ -119,9 +119,9 @@ const struct settingDescriptor settingDescriptors[] = {
     { "rgb_syntax_comment", "Syntax: comment color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_comment), 0, 0, NULL, 0 },
     { "rgb_syntax_number", "Syntax: number color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_number), 0, 0, NULL, 0 },
     { "rgb_syntax_preprocessor", "Syntax: preprocessor color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_preprocessor), 0, 0, NULL, 0 },
+    { "rgb_syntax_function", "Syntax: function name color (C/C++)", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_function), 0, 0, NULL, 0 },
     { "rgb_syntax_emphasis_strong", "Markdown: bold text color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_emphasis_strong), 0, 0, NULL, 0 },
     { "rgb_syntax_math", "Markdown: LaTeX math color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_math), 0, 0, NULL, 0 },
-    { "rgb_syntax_function", "Syntax: function name color (C/C++)", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_function), 0, 0, NULL, 0 },
     { "rgb_background", "Editor background color (off=terminal default)", SETTING_RGB, offsetof(struct editorSettings, rgb_color_background), 0, 0, NULL, 0 },
 
     { "show_line_numbers", "Show line numbers", SETTING_BOOL,

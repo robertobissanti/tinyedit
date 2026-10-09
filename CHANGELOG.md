@@ -30,6 +30,9 @@
 
 ### Other minor fixing
 
+- Keep color setting names and order identical in ANSI and RGB mode, including
+  function names and Markdown highlighting.
+
 - Clear residual search mode and navigation state when resetting a document
   through New, Close or Open.
 

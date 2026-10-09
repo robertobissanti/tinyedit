@@ -837,6 +837,19 @@ static void testColorSettings(void) {
     check(editorSettingsVisibleCount(&edited) > 10 && editorSettingsDescriptorAt(&edited, 0) == -4,
         "Colors contains Back, mode and two groups");
     int32_t ansi_count = editorSettingsVisibleCount(&edited);
+    for (int32_t row = 0; row < ansi_count; row++) {
+        edited.color_mode = COLOR_MODE_ANSI;
+        int32_t ansi_idx = editorSettingsDescriptorAt(&edited, row);
+        edited.color_mode = COLOR_MODE_RGB;
+        /* RGB output is the sole extra row, directly after Mode. */
+        int32_t rgb_idx = editorSettingsDescriptorAt(&edited, row + (row > 1));
+        if (ansi_idx < 0) check(rgb_idx == ansi_idx, "same color group positions in both modes");
+        else {
+            check(rgb_idx >= 0, "matching color setting exists in RGB");
+            check(strcmp(settingDescriptors[ansi_idx].label, settingDescriptors[rgb_idx].label) == 0,
+                "ANSI and RGB have identical color labels and order");
+        }
+    }
     edited.color_mode = COLOR_MODE_RGB;
     check(editorSettingsVisibleCount(&edited) == ansi_count + 1, "RGB adds output choice");
     settings_page = SETTINGS_COLORS;
