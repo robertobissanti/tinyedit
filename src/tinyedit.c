@@ -1781,7 +1781,10 @@ static void abAppendReset(struct abuf *ab) {
     if (drawing_heading) {
         const char *fg = ansiColorCode(settingsColor(&S, color_syntax_preprocessor));
         abAppend(ab, fg, (int32_t)strlen(fg));
-        abAppend(ab, "\x1b[7m", 4);
+        if (S.color_mode == COLOR_MODE_RGB) {
+            const char *heading_bg = ansiBgColorCode(settingsResolveColor(&S, 0, S.rgb_markdown_heading_background));
+            abAppend(ab, heading_bg, (int32_t)strlen(heading_bg));
+        } else abAppend(ab, "\x1b[7m", 4);
     }
     if (drawing_heading_bold) abAppend(ab, "\x1b[1m", 4);
 }
@@ -2366,7 +2369,8 @@ static void editorDrawSplashRow(struct abuf *ab, int32_t y, int32_t textcols) {
 static void editorBeginHeadingRow(struct abuf *ab, int32_t filerow) {
     uint8_t heading = filerow < E.document.buffer.row_count &&
         E.document.buffer.rows[filerow].hl_heading;
-    drawing_heading = heading && S.markdown_heading_reverse;
+    drawing_heading = heading && (S.color_mode == COLOR_MODE_RGB ?
+        S.rgb_markdown_heading_background != RGB_TERMINAL_DEFAULT : S.markdown_heading_reverse);
     drawing_heading_bold = heading && S.markdown_text_styles;
     if (drawing_heading || drawing_heading_bold) abAppendReset(ab);
     if (drawing_heading) {
@@ -3834,7 +3838,7 @@ static uint8_t editorSettingsOnPage(const struct editorSettings *edited,
     uint8_t mode = strcmp(d->key, "color_mode") == 0 || strcmp(d->key, "rgb_output") == 0;
     uint8_t heading_reverse = strcmp(d->key, "markdown_heading_reverse") == 0;
     if (settings_page == SETTINGS_MAIN) return !color && !mode && !heading_reverse;
-    if (heading_reverse) return 1;
+    if (heading_reverse) return edited->color_mode == COLOR_MODE_ANSI;
     if (mode) return strcmp(d->key, "rgb_output") != 0 || edited->color_mode == COLOR_MODE_RGB;
     return color && (d->type == SETTING_RGB) == (edited->color_mode == COLOR_MODE_RGB);
 }
@@ -3860,13 +3864,15 @@ static int32_t editorSettingsDescriptorAt(const struct editorSettings *edited, i
         if (group && visible_idx-- == 0) return group == 1 ? -2 : -3;
         for (int32_t i = 0; i < settingDescriptorCount; i++) {
             const struct settingDescriptor *d = &settingDescriptors[i];
-            if (!editorSettingsOnPage(edited, d) || strcmp(d->key, "markdown_heading_reverse") == 0) continue;
+            if (!editorSettingsOnPage(edited, d) || (strcmp(d->key, "markdown_heading_reverse") == 0 ||
+                strcmp(d->key, "rgb_markdown_heading_background") == 0)) continue;
             int32_t category = !editorSettingsIsColor(d) ? 0 : editorSettingsIsSyntaxColor(d) ? 2 : 1;
             if (category == group && visible_idx-- == 0) return i;
         }
     }
     for (int32_t i = 0; i < settingDescriptorCount; i++)
-        if (strcmp(settingDescriptors[i].key, "markdown_heading_reverse") == 0) return i;
+        if (strcmp(settingDescriptors[i].key, edited->color_mode == COLOR_MODE_RGB ?
+            "rgb_markdown_heading_background" : "markdown_heading_reverse") == 0) return i;
     return -4;
 }
 
@@ -3993,6 +3999,10 @@ static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected
             editorSettingsPlainColorSample(d);
         if (!sample) sample = " sample ";
         if (background) { bg_value = value; fg_value = settingsColor(edited, color_syntax_normal); }
+        if (strcmp(d->key, "rgb_markdown_heading_background") == 0) {
+            bg_value = value; fg_value = settingsColor(edited, color_syntax_preprocessor);
+            sample = " # Heading ";
+        }
         if (bar) {
             bg_value = settingsColor(edited, color_statusbar);
             fg_value = settingsColor(edited, color_statusbar_text);

@@ -125,6 +125,7 @@ struct editorSettings {
     int32_t rgb_color_syntax_math;
     int32_t rgb_color_syntax_function;
     int32_t rgb_color_background;
+    int32_t rgb_markdown_heading_background;
 
     int32_t show_line_numbers;
     int32_t tab_stop;

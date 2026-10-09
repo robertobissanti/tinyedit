@@ -850,7 +850,9 @@ static void testColorSettings(void) {
         if (ansi_idx < 0) check(rgb_idx == ansi_idx, "same color group positions in both modes");
         else {
             check(rgb_idx >= 0, "matching color setting exists in RGB");
-            check(strcmp(settingDescriptors[ansi_idx].label, settingDescriptors[rgb_idx].label) == 0,
+            check((strcmp(settingDescriptors[ansi_idx].key, "markdown_heading_reverse") == 0 &&
+                strcmp(settingDescriptors[rgb_idx].key, "rgb_markdown_heading_background") == 0) ||
+                strcmp(settingDescriptors[ansi_idx].label, settingDescriptors[rgb_idx].label) == 0,
                 "ANSI and RGB have identical color labels and order");
         }
     }
@@ -1287,6 +1289,23 @@ static void testHeadingReverse(void) {
     check(strstr(ab.b, ending) != NULL, "heading paints text columns and preserves gutter");
     check(!drawing_heading, "heading rendering state restored");
     abFree(&ab);
+    S.color_mode = COLOR_MODE_RGB;
+    S.rgb_markdown_heading_background = 0x112233;
+    S.rgb_color_syntax_preprocessor = 0x445566;
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRows(&ab);
+    abAppend(&ab, "", 1);
+    check(strstr(ab.b, "\x1b[48;2;17;34;51m") != NULL, "RGB heading background emitted");
+    check(strstr(ab.b, "\x1b[38;2;68;85;102m") != NULL, "RGB heading foreground preserved");
+    check(strstr(ab.b, "\x1b[7m") == NULL, "RGB headings ignore legacy inversion");
+    abFree(&ab);
+    S.rgb_markdown_heading_background = RGB_TERMINAL_DEFAULT;
+    ab = (struct abuf)ABUF_INIT;
+    editorBeginHeadingRow(&ab, 0);
+    check(!drawing_heading, "terminal default disables heading background override");
+    editorEndHeadingRow(&ab);
+    abFree(&ab);
+    S.color_mode = COLOR_MODE_ANSI;
     S.markdown_text_styles = 1;
     for (uint8_t reverse = 0; reverse < 2; reverse++) {
         S.markdown_heading_reverse = reverse;

@@ -599,13 +599,20 @@ with bold/italic terminal attributes and headings in bold. Markup remains
 visible and editable; syntax highlighting must be enabled. The option is off
 by default and combines with heading reverse video.
 
-For Markdown ATX headings (`#` through `######`), enable **Reverse Markdown
+In ANSI mode, for Markdown ATX headings (`#` through `######`), enable **Reverse Markdown
 heading colors** in F2, or set `markdown_heading_reverse = true` in
 `~/.tinyeditrc`. This swaps the existing heading foreground and editor
 background using terminal reverse video, including right-hand padding,
 and wrapped continuations. Line numbers keep their normal style. Syntax highlighting must be enabled. Code fences,
 front matter, and math blocks retain their ordinary appearance. Set the option
 to `false` to disable it. Setext headings (`===` or `---`) are not covered.
+
+In RGB mode, Colors replaces the Markdown reverse-heading toggle with
+`rgb_markdown_heading_background = #RRGGBB`. The default `terminal-default`
+disables the heading-specific background and keeps the editor background.
+Heading text continues to use `rgb_syntax_preprocessor`; ANSI retains
+`markdown_heading_reverse`. Old configurations retain their ANSI behavior.
+
 
 Selection and search highlighting take precedence over Markdown heading
 reverse video and inline bold/italic styles, including selected newline cells.

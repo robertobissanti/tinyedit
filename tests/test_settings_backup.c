@@ -83,10 +83,12 @@ int main(void) {
     if (!fp) fail("open RGB config");
     fputs("color_mode = rgb\nrgb_output = truecolor\n  rgb_background = #123456 # comment\n"
         "rgb_syntax_keyword = #ABCDEF\nrgb_gutter = #bad\n"
+        "rgb_markdown_heading_background = #112233\n"
         "rgb_syntax_normal = terminal-default\ncolor_gutter = cyan\n", fp);
     if (fclose(fp)) fail("close RGB config");
     settingsLoad(&settings);
     if (settings.color_mode != COLOR_MODE_RGB || settings.rgb_color_background != 0x123456 ||
+        settings.rgb_markdown_heading_background != 0x112233 ||
         settings.rgb_color_syntax_keyword != 0xabcdef || settings.rgb_color_gutter != 0x808080 ||
         settings.rgb_color_syntax_normal != RGB_TERMINAL_DEFAULT || settings.color_gutter != COLOR_CYAN_LIGHT)
         fail("RGB configuration parsing, comments, invalid values and legacy names");

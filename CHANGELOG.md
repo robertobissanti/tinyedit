@@ -4,6 +4,9 @@
 
 ### New features
 
+- Configure a separate Markdown heading background in RGB mode, with preview
+  in Colors; ANSI retains heading inversion.
+
 - Add an installable Bash syntax definition for `.sh`, `.bash` and Bash/Zsh startup dotfiles with reserved
   words, builtin commands, strings, comments and function declarations.
 

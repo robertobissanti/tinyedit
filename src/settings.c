@@ -122,6 +122,8 @@ const struct settingDescriptor settingDescriptors[] = {
     { "rgb_syntax_function", "Syntax: function name color (C/C++)", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_function), 0, 0, NULL, 0 },
     { "rgb_syntax_emphasis_strong", "Markdown: bold text color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_emphasis_strong), 0, 0, NULL, 0 },
     { "rgb_syntax_math", "Markdown: LaTeX math color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_math), 0, 0, NULL, 0 },
+    { "rgb_markdown_heading_background", "Markdown: heading background color", SETTING_RGB,
+      offsetof(struct editorSettings, rgb_markdown_heading_background), 0, 0, NULL, 0 },
     { "rgb_background", "Editor background color (off=terminal default)", SETTING_RGB, offsetof(struct editorSettings, rgb_color_background), 0, 0, NULL, 0 },
 
     { "show_line_numbers", "Show line numbers", SETTING_BOOL,
@@ -304,6 +306,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_invisibles = COLOR_GRAY_LIGHT;
     out->syntax_highlight = 1;
     out->markdown_heading_reverse = 0;
+    out->rgb_markdown_heading_background = RGB_TERMINAL_DEFAULT;
     out->markdown_text_styles = 0;
     out->color_syntax_normal = COLOR_TERMINAL_DEFAULT;
     out->color_syntax_keyword = COLOR_BLUE_LIGHT;
