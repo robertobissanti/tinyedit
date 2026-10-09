@@ -16,6 +16,11 @@ extern uint8_t mouseEventPress;
 extern int32_t pending_key;
 
 /**
+ * @brief Write all output bytes, retrying interruptions and partial writes.
+ * @return 1 on success, 0 with errno on failure; safe for exit handlers.
+ */
+uint8_t terminalWrite(const char *data, size_t len);
+/**
  * @brief Report a fatal system error and exit through terminal cleanup.
  *
  * @details s is the operation label passed to perror(). Does not return; exit

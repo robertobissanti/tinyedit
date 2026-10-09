@@ -1385,7 +1385,7 @@ static void editorRecoveryScreen(void) {
     for (int32_t i = mid + 3; i < E.view.screenrows; i++) editorRecoveryScreenLine(&ab, bg, "");
 
     abAppend(&ab, "\x1b[?25h", 6);
-    write(STDOUT_FILENO, ab.b, (size_t)ab.len);
+    if (!terminalWrite(ab.b, (size_t)ab.len)) terminalDie("write");
     abFree(&ab);
 }
 
@@ -2904,7 +2904,7 @@ static void editorRefreshScreen(void) {
         abAppend(&ab, "\x1b[?25h", 6);
     }
 
-    write(STDOUT_FILENO, ab.b, (size_t)ab.len);
+    if (!terminalWrite(ab.b, (size_t)ab.len)) terminalDie("write");
     abFree(&ab);
 }
 
@@ -4085,7 +4085,7 @@ static void editorHelpScreen(void) {
             abAppend(&ab, "\x1b[K", 3);
 
         abAppend(&ab, "\x1b[H\x1b[?25h", 9);
-        write(STDOUT_FILENO, ab.b, (size_t)ab.len);
+        if (!terminalWrite(ab.b, (size_t)ab.len)) terminalDie("write");
         abFree(&ab);
 
         int32_t c = editorReadKey();
@@ -4218,7 +4218,7 @@ static void editorInfoScreen(void) {
         abAppend(&ab, "\x1b[K", 3);
 
     abAppend(&ab, "\x1b[H\x1b[?25h", 9);
-    write(STDOUT_FILENO, ab.b, (size_t)ab.len);
+    if (!terminalWrite(ab.b, (size_t)ab.len)) terminalDie("write");
     abFree(&ab);
 
     editorReadKey(); /* any key closes it */
@@ -4346,7 +4346,7 @@ static uint8_t editorSettingsEditInt(struct editorSettings *edited, int32_t curs
 
         struct abuf ab = ABUF_INIT;
         editorSettingsRender(&ab, edited, cursor, scroll, msg);
-        write(STDOUT_FILENO, ab.b, (size_t)ab.len);
+        if (!terminalWrite(ab.b, (size_t)ab.len)) terminalDie("write");
         abFree(&ab);
 
         int32_t c = editorReadKey();
@@ -4383,7 +4383,7 @@ static void editorSettingsSave(const struct editorSettings *edited) {
     S = *edited;
     if (previous.color_background != COLOR_TERMINAL_DEFAULT &&
         S.color_background == COLOR_TERMINAL_DEFAULT)
-        write(STDOUT_FILENO, "\x1b[49m", 5);
+        if (!terminalWrite("\x1b[49m", 5)) terminalDie("write");
     if (S.show_top_bar != previous.show_top_bar || S.show_menu != previous.show_menu)
         winsize_changed = 1;
     if (S.tab_stop != previous.tab_stop ||
@@ -4447,7 +4447,7 @@ static void editorSettingsScreen(void) {
 
         struct abuf ab = ABUF_INIT;
         editorSettingsRender(&ab, &edited, cursor, scroll, msg);
-        write(STDOUT_FILENO, ab.b, (size_t)ab.len);
+        if (!terminalWrite(ab.b, (size_t)ab.len)) terminalDie("write");
         abFree(&ab);
 
         msg[0] = '\0';
@@ -4517,7 +4517,7 @@ static void editorSettingsScreen(void) {
 
                 struct abuf ab2 = ABUF_INIT;
                 editorSettingsRender(&ab2, &edited, cursor, scroll, "Save changes before leaving? (y/n/Esc to cancel)");
-                write(STDOUT_FILENO, ab2.b, (size_t)ab2.len);
+                if (!terminalWrite(ab2.b, (size_t)ab2.len)) terminalDie("write");
                 abFree(&ab2);
 
                 int32_t confirm = editorReadKey();

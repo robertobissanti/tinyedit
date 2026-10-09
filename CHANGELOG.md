@@ -11,6 +11,11 @@
 
 ### Other minor fixing
 
+- Handle interrupted and partial terminal writes instead of ignoring their
+  results, resolving fortified Linux build warnings.
+- Document installation permissions, user-local installation, and the optional
+  Linux clipboard tools, including wl-clipboard for Arch Linux on Wayland.
+
 - Show the Ctrl-E shortcut beside “Show/hide file tree” in the View menu.
 
 - Reverse the top bar’s configured text and background colors to distinguish

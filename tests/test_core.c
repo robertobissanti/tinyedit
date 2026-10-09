@@ -451,6 +451,30 @@ static void testHistoryMemoryRecovery(void) {
     editorResetDocument();
 }
 
+static void testTerminalOutput(void) {
+    FILE *output = tmpfile();
+    check(output != NULL, "terminal output fixture");
+    int saved_stdout = dup(STDOUT_FILENO);
+    check(saved_stdout >= 0, "save terminal output descriptor");
+    check(dup2(fileno(output), STDOUT_FILENO) >= 0, "redirect terminal output");
+    uint8_t written = terminalWrite("hello\x1b[m", 8);
+    uint8_t empty = terminalWrite("", 0);
+    check(dup2(saved_stdout, STDOUT_FILENO) >= 0, "restore terminal output");
+    char bytes[8];
+    rewind(output);
+    check(written && empty && fread(bytes, 1, sizeof(bytes), output) == sizeof(bytes) &&
+        !memcmp(bytes, "hello\x1b[m", sizeof(bytes)), "terminal writes complete output");
+    fclose(output);
+    int readonly = open("/dev/null", O_RDONLY);
+    check(readonly >= 0 && dup2(readonly, STDOUT_FILENO) >= 0, "failing output fixture");
+    uint8_t failed = !terminalWrite("x", 1);
+    int saved_errno = errno;
+    check(dup2(saved_stdout, STDOUT_FILENO) >= 0, "restore output after error");
+    close(readonly);
+    close(saved_stdout);
+    check(failed && saved_errno == EBADF, "terminal output reports error without recursive exit");
+}
+
 static void testTopBar(void) {
     char filename[1024];
     memset(filename, 'a', sizeof(filename) - 1);
@@ -1352,6 +1376,7 @@ int main(void) {
     testReplaceAllHistoryNotice();
     testUndoModified();
     testHistoryMemoryRecovery();
+    testTerminalOutput();
     testTopBar();
     erow heading = {0};
     heading.render = "   ## Héading";

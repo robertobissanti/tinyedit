@@ -57,6 +57,24 @@ static const char paste_end_marker[] = "\x1b[201~";
 
 
 /**
+ * @brief Write all output bytes, retrying interruptions and partial writes.
+ * @return 1 on success, 0 with errno on failure; safe for exit handlers.
+ */
+uint8_t terminalWrite(const char *data, size_t len) {
+    while (len) {
+        ssize_t written = write(STDOUT_FILENO, data, len);
+        if (written < 0) {
+            if (errno == EINTR) continue;
+            return 0;
+        }
+        if (!written) { errno = EIO; return 0; }
+        data += written;
+        len -= (size_t)written;
+    }
+    return 1;
+}
+
+/**
  * @brief Report a fatal system error and exit through terminal cleanup.
  *
  * @details s is the operation label passed to perror(). Does not return; exit
@@ -87,7 +105,7 @@ void terminalDisableRawMode(void) {
 void terminalRestoreVisualState(void) {
     if (!alternate_screen_active) return;
     static const char restore[] = "\x1b[0m\x1b[?25h\x1b[0 q\x1b[?1049l";
-    write(STDOUT_FILENO, restore, sizeof(restore) - 1);
+    (void)terminalWrite(restore, sizeof(restore) - 1);
     alternate_screen_active = 0;
 }
 
@@ -100,8 +118,8 @@ void terminalRestoreVisualState(void) {
 void terminalEnterAlternateScreen(void) {
     if (alternate_screen_active) return;
     atexit(terminalRestoreVisualState);
-    write(STDOUT_FILENO, "\x1b[?1049h", 8);
     alternate_screen_active = 1;
+    if (!terminalWrite("\x1b[?1049h", 8)) terminalDie("write");
 }
 
 /**
@@ -148,7 +166,7 @@ void terminalEnableRawMode(void) {
  * tinyedit quits.
  */
 void terminalDisableBracketedPaste(void) {
-    write(STDOUT_FILENO, "\x1b[?2004l", 8);
+    (void)terminalWrite("\x1b[?2004l", 8);
 }
 
 /**
@@ -160,7 +178,7 @@ void terminalDisableBracketedPaste(void) {
  */
 void terminalEnableBracketedPaste(void) {
     atexit(terminalDisableBracketedPaste);
-    write(STDOUT_FILENO, "\x1b[?2004h", 8);
+    if (!terminalWrite("\x1b[?2004h", 8)) terminalDie("write");
 }
 
 #ifdef __APPLE__
@@ -177,7 +195,7 @@ void terminalEnableBracketedPaste(void) {
  */
 void terminalDisableKittyKeyboard(void) {
     if (!kitty_keyboard_enabled) return;
-    write(STDOUT_FILENO, "\x1b[<u", 4);
+    (void)terminalWrite("\x1b[<u", 4);
     kitty_keyboard_enabled = 0;
 }
 
@@ -193,7 +211,7 @@ void terminalEnableKittyKeyboard(void) {
         atexit(terminalDisableKittyKeyboard);
         kitty_keyboard_cleanup_registered = 1;
     }
-    write(STDOUT_FILENO, "\x1b[>1u", 5);
+    if (!terminalWrite("\x1b[>1u", 5)) terminalDie("write");
     kitty_keyboard_enabled = 1;
 }
 
@@ -385,7 +403,7 @@ uint8_t terminalInputReady(void) {
  * menu restores ?1002 behavior.
  */
 void terminalDisableMouseReporting(void) {
-    write(STDOUT_FILENO, "\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[>0s", 29);
+    (void)terminalWrite("\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[>0s", 29);
 }
 
 /**
@@ -396,7 +414,7 @@ void terminalDisableMouseReporting(void) {
  */
 void terminalEnableMouseReporting(void) {
     atexit(terminalDisableMouseReporting);
-    write(STDOUT_FILENO, "\x1b[>1s\x1b[?1002h\x1b[?1006h", 21);
+    if (!terminalWrite("\x1b[>1s\x1b[?1002h\x1b[?1006h", 21)) terminalDie("write");
 }
 
 /**
@@ -408,7 +426,7 @@ void terminalEnableMouseReporting(void) {
 void terminalSetMenuMouseMotion(uint8_t enabled) {
     /* 1003 replaces 1002 in some terminals; restore 1002 when the menu closes. */
     const char *sequence = enabled ? "\x1b[?1002l\x1b[?1003h" : "\x1b[?1003l\x1b[?1002h";
-    write(STDOUT_FILENO, sequence, 16);
+    if (!terminalWrite(sequence, 16)) terminalDie("write");
 }
 
 /**
@@ -924,7 +942,7 @@ char *terminalReadPastedText(size_t *outlen) {
 static int32_t getCursorPosition(int32_t *rows, int32_t *cols) {
     char buf[32];
     uint32_t i = 0;
-    if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1;
+    if (!terminalWrite("\x1b[6n", 4)) return -1;
     while (i < sizeof(buf) - 1) {
         if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
         if (buf[i] == 'R') break;
@@ -945,7 +963,7 @@ static int32_t getCursorPosition(int32_t *rows, int32_t *cols) {
 int32_t terminalGetWindowSize(int32_t *rows, int32_t *cols) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
-        if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return -1;
+        if (!terminalWrite("\x1b[999C\x1b[999B", 12)) return -1;
         return getCursorPosition(rows, cols);
     }
     *cols = ws.ws_col;

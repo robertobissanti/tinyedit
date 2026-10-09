@@ -145,8 +145,28 @@ configuration. To run `tinyedit` from any directory, install or symlink it
 into a location in your `PATH`, such as `/usr/local/bin`:
 
 ```sh
-make install PREFIX=/usr/local
+make
+sudo make install PREFIX=/usr/local
 ```
+
+For an installation without administrator privileges, use
+`make install PREFIX="$HOME/.local"` and add `~/.local/bin` to your `PATH`.
+A permission error for `/usr/local/bin` is an installation failure; the compiled
+binary remains available as `bin/tinyedit`.
+
+### System clipboard on Linux
+
+Ctrl-C/X/V use external clipboard tools when available: `wl-copy` and `wl-paste`
+on Wayland, or `xclip` on X11. On Arch Linux with KDE/Wayland, install
+`wl-clipboard` with `sudo pacman -S wl-clipboard`, then restart tinyedit.
+For X11, install `xclip` instead. These are optional runtime tools; compiling
+tinyedit does not require them.
+
+If no tool is available, or access to the display fails, tinyedit falls back
+to its internal clipboard, shared only within the current editor session.
+Check `command -v wl-copy wl-paste` and run `wl-paste --no-newline` after copying
+text from another application to diagnose Wayland access. Terminal-native paste
+(such as Ctrl-Shift-V in Konsole) uses bracketed paste and does not require these tools.
 
 ### Keyboard shortcuts
 
