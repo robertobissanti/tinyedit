@@ -105,3 +105,7 @@ passthrough and restoration of the terminal binding on exit. Check RGB output
 and manual fallback, Settings readability with equal foreground/background
 colors, mouse/back navigation, scroll and save/discard/cancel. This session's
 automatic PTY checks do not certify those terminal-specific behaviors.
+
+Color scheme tests cover complete RGB/ANSI presets, missing or invalid roles,
+duplicate/foreign keys, preservation of unrelated settings and output policy,
+and PTY preview/confirmation cancellation, draft discard and saving.

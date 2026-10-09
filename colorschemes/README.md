@@ -1,27 +1,44 @@
 # Colorschemes
 
-Complete RGB color presets for tinyedit. `one-dark.conf` adapts
-[rakr/vim-one](https://github.com/rakr/vim-one) with `background=dark`.
-It includes every configurable RGB color role, using One's status-line colors
-rather than a separate Airline theme. Syntax groups are adapted to tinyedit;
-this does not add Vim's syntax parsers or reproduce every Vim highlight group.
+Complete RGB presets adapted to tinyedit's color roles:
 
-## Apply
+- `one-dark.conf`: [Vim One](https://github.com/rakr/vim-one), `background=dark`.
+- `catppuccin-mocha.conf`: [Catppuccin Mocha](https://github.com/catppuccin/catppuccin).
 
-These files are configuration snippets, not automatically discovered themes.
-Copy the entries from `one-dark.conf` into `~/.tinyeditrc`, replacing matching
-entries and keeping unrelated settings, then restart tinyedit.
+These palettes do not add Vim's syntax parsers or duplicate every Vim
+highlight group. One uses its own status-line colors, not an Airline theme.
 
-Alternatively, append the preset (later entries take precedence):
+## Install and select
 
 ```sh
-cat colorschemes/one-dark.conf >> ~/.tinyeditrc
+mkdir -p ~/.tinyedit/color-scheme
+cp colorschemes/*.conf ~/.tinyedit/color-scheme/
 ```
 
-Repeated application this way adds duplicate entries; replacing matching
-entries is preferable for ongoing maintenance. F2 saves a normalized config.
+In **F2 → Colors → Color scheme...**, Up/Down or the mouse wheel selects a
+file and previews its colors. Click selects a file. Enter opens confirmation;
+Enter again applies it to the Settings draft. Esc cancels confirmation or
+returns to Colors. An invalid preset is reported and cannot be confirmed.
 
-True color output is selected explicitly. On a terminal without it, use
-`rgb_output = ansi-fallback`; the approximation depends on its ANSI palette.
-The preset preserves the independently saved ANSI colors and leaves Markdown
-bold/italic preferences unchanged. Settings labels retain terminal defaults.
+Confirming a preset does not write configuration immediately. Ctrl-S/F2 in
+Settings saves all draft changes to `~/.tinyeditrc`; discarding Settings keeps
+the previous colors. A failed save retains the draft for retry or discard.
+
+## File format
+
+Each `.conf` is a plain `key = value` file using the same color names and
+hex syntax as `~/.tinyeditrc`. Comments start with `#`; RGB hex values retain
+their leading `#`. `color_mode = ansi` or `color_mode = rgb` is required.
+
+An RGB preset must define every `SETTING_RGB` key, including
+`rgb_markdown_heading_background`. An ANSI preset must define every ANSI
+`color_*` role plus `markdown_heading_reverse`. Missing roles, duplicate keys,
+invalid values, unknown keys and non-color settings reject the entire file.
+The other palette is preserved unless its entries are explicitly included.
+
+For compatibility with standalone snippets, `rgb_output` is accepted and
+validated, but its value is not applied: terminal truecolor/fallback remains
+an independent user choice. Non-color settings and filetype overrides are
+preserved. Settings labels always use terminal defaults.
+
+You can also replace the corresponding entries in `~/.tinyeditrc` manually.

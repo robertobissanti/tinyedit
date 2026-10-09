@@ -387,8 +387,11 @@ including undo depth, wrapping, backup, colors, and mouse support.*
 ### Colors page and RGB
 
 Complete RGB presets are available in [`colorschemes/`](colorschemes/README.md),
-including [One Dark](colorschemes/one-dark.conf), adapted from Vim One. Copy its
-entries into `~/.tinyeditrc` and restart; presets are not loaded automatically.
+including One Dark and Catppuccin Mocha. Install the `.conf` files in
+`~/.tinyedit/color-scheme/`, then select **F2 → Colors → Color scheme...**.
+Preview and confirm a complete preset, then save Settings to update
+`~/.tinyeditrc`; cancelling or discarding keeps the previous colors.
+Terminal truecolor/fallback and non-color settings are preserved.
 
 F2 → Colors contains **Mode**, **RGB output** (in RGB mode), **Interface** and
 **Syntax highlighting** groups on the same page. Interface groups the

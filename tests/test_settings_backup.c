@@ -106,6 +106,46 @@ int main(void) {
     settings.color_mode = COLOR_MODE_ANSI;
     if (settingsColor(&settings, color_gutter) != COLOR_CYAN_LIGHT) fail("switch restores ANSI palette");
 
+    char scheme_error[128];
+    struct editorSettings scheme = settings, before_scheme = settings;
+    scheme.rgb_output = RGB_OUTPUT_ANSI_FALLBACK;
+    if (!settingsLoadColorScheme("colorschemes/one-dark.conf", &scheme, scheme_error, sizeof(scheme_error)))
+        fail("complete One scheme rejected");
+    if (scheme.rgb_color_background != 0x282c34 || scheme.color_mode != COLOR_MODE_RGB ||
+        scheme.tab_stop != before_scheme.tab_stop || scheme.rgb_output != RGB_OUTPUT_ANSI_FALLBACK ||
+        scheme.color_gutter != before_scheme.color_gutter) fail("scheme changed unrelated settings or ANSI palette");
+    if (!settingsLoadColorScheme("colorschemes/catppuccin-mocha.conf", &scheme, scheme_error, sizeof(scheme_error)) ||
+        scheme.rgb_color_background != 0x1e1e2e) fail("Mocha scheme rejected");
+    before_scheme = scheme;
+    const char *invalid_schemes[] = {
+        "color_mode = rgb\nrgb_background = #112233\n",
+        "color_mode = ansi\ncolor_gutter = nonsense\n",
+        "color_mode = rgb\ntab_stop = 8\n",
+        "color_mode = rgb\ncolor_mode = rgb\n",
+        "color_mode = rgb\nrgb_background = #gggggg\n"
+    };
+    for (size_t i = 0; i < sizeof(invalid_schemes) / sizeof(invalid_schemes[0]); i++) {
+        fp = fopen(config, "w");
+        if (!fp) fail("open invalid preset");
+        fputs(invalid_schemes[i], fp); fclose(fp);
+        if (settingsLoadColorScheme(config, &scheme, scheme_error, sizeof(scheme_error)) ||
+            memcmp(&scheme, &before_scheme, sizeof(scheme)) || !scheme_error[0])
+            fail("invalid preset modified draft");
+    }
+    fp = fopen(config, "w");
+    if (!fp) fail("open ANSI scheme");
+    fputs("color_mode = ansi\nmarkdown_heading_reverse = true\n", fp);
+    for (int32_t i = 0; i < settingDescriptorCount; i++) {
+        const struct settingDescriptor *d = &settingDescriptors[i];
+        if (d->type == SETTING_ENUM && !strncmp(d->key, "color_", 6) && strcmp(d->key, "color_mode"))
+            fprintf(fp, "%s = blue-light\n", d->key);
+    }
+    fclose(fp);
+    if (!settingsLoadColorScheme(config, &scheme, scheme_error, sizeof(scheme_error)) ||
+        scheme.color_mode != COLOR_MODE_ANSI || scheme.color_gutter != COLOR_BLUE_LIGHT ||
+        !scheme.markdown_heading_reverse || scheme.rgb_color_background != before_scheme.rgb_color_background)
+        fail("ANSI preset or independent palette preservation");
+
     char filename[1024];
     snprintf(filename, sizeof(filename), "%s/document.txt", home);
     fp = fopen(filename, "w");

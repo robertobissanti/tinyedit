@@ -564,6 +564,71 @@ void settingsLoad(struct editorSettings *out) {
     fclose(fp);
 }
 
+/** @brief Load a complete color preset atomically, preserving non-color settings. */
+uint8_t settingsLoadColorScheme(const char *path, struct editorSettings *draft,
+    char *error, size_t error_size) {
+    FILE *fp = fopen(path, "r");
+    if (!fp) { snprintf(error, error_size, "Cannot open color scheme"); return 0; }
+    struct editorSettings candidate = *draft;
+    uint8_t *seen = teMalloc((size_t)settingDescriptorCount);
+    memset(seen, 0, (size_t)settingDescriptorCount);
+    uint8_t valid = 1, has_mode = 0;
+    char line[512];
+    while (valid && fgets(line, sizeof(line), fp)) {
+        if (!strchr(line, '\n') && !feof(fp)) { valid = 0; break; }
+        trim(line);
+        if (!line[0] || line[0] == '#') continue;
+        char *eq = strchr(line, '=');
+        if (!eq) { valid = 0; break; }
+        *eq = '\0';
+        char *value = eq + 1;
+        trim(line); trim(value);
+        const struct settingDescriptor *d = settingsFind(line);
+        if (!d) { valid = 0; break; }
+        uint8_t mode = strcmp(line, "color_mode") == 0;
+        uint8_t output = strcmp(line, "rgb_output") == 0;
+        uint8_t color = d->type == SETTING_RGB ||
+            (strncmp(line, "color_", 6) == 0 && !mode) ||
+            strcmp(line, "markdown_heading_reverse") == 0;
+        if (!mode && !output && !color) { valid = 0; break; }
+        char *comment = strchr(value + (value[0] == '#' ? 1 : 0), '#');
+        if (comment) *comment = '\0';
+        trim(value);
+        int32_t parsed = 0;
+        if (d->type == SETTING_RGB) valid = settingsParseRgb(value, &parsed);
+        else if (d->type == SETTING_BOOL) {
+            if (!strcmp(value, "true") || !strcmp(value, "1")) parsed = 1;
+            else if (strcmp(value, "false") && strcmp(value, "0")) valid = 0;
+        } else {
+            parsed = enumIndexOf(d->enum_names, value);
+            if (parsed < 0 && d->enum_names == colorNames) parsed = settingColorFromLegacyName(value);
+            if (parsed < 0) valid = 0;
+        }
+        for (int32_t i = 0; i < settingDescriptorCount; i++) {
+            if (&settingDescriptors[i] != d) continue;
+            if (seen[i]) valid = 0;
+            seen[i] = 1;
+        }
+        if (valid && !output) *settingSlot(&candidate, d) = parsed;
+        if (mode) has_mode = 1;
+    }
+    if (ferror(fp)) valid = 0;
+    if (fclose(fp)) valid = 0;
+    if (!has_mode) valid = 0;
+    for (int32_t i = 0; valid && i < settingDescriptorCount; i++) {
+        const struct settingDescriptor *d = &settingDescriptors[i];
+        uint8_t required = candidate.color_mode == COLOR_MODE_RGB ? d->type == SETTING_RGB :
+            (d->type == SETTING_ENUM && d->enum_names == colorNames) ||
+            strcmp(d->key, "markdown_heading_reverse") == 0;
+        if (required && !seen[i]) valid = 0;
+    }
+    free(seen);
+    if (!valid) { snprintf(error, error_size, "Invalid or incomplete color scheme"); return 0; }
+    *draft = candidate;
+    if (error_size) error[0] = '\0';
+    return 1;
+}
+
 /**
  * @brief Persist settings and known filetype overrides through a temporary file.
  *

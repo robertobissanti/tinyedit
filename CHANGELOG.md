@@ -4,6 +4,11 @@
 
 ### New features
 
+- Select complete ANSI/RGB presets from `~/.tinyedit/color-scheme/` in F2 Colors,
+  preview and confirm them in the shared draft, then save to update configuration.
+  Invalid presets leave settings intact; terminal output preference is preserved.
+- Include Catppuccin Mocha alongside the One Dark preset.
+
 - Ship a complete One Dark RGB colorscheme adapted from Vim One, with
   instructions to apply it while preserving other editor settings.
 

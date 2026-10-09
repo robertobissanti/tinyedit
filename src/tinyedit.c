@@ -25,7 +25,7 @@
  *   menu.c         UTF-8 menu layout, viewport clipping and input navigation
  *   render.c       shared layout calculations for rows and wrapped text
  *   search.c       compiled queries, text search and source-coordinate results
- *   settings.c     persistent configuration, ANSI/RGB palettes and color escapes
+ *   settings.c     persistent configuration, color scheme loading and color escapes
  *   syntax.c       filetype detection and syntax highlighting
  *   terminal.c     raw terminal setup, input decoding, and terminal I/O
  *   tree.c         owned filesystem tree and lazy directory expansion
@@ -180,7 +180,7 @@ static const struct helpEntry helpEntries[] = {
     { "Ctrl-N", "New empty unnamed document (offers to save first)" },
     { "Ctrl-W", "Close current file without quitting" },
     { "Ctrl-Q", "Quit (offers to save first if unsaved)" },
-    { "F2", "Settings; Colors groups, Esc goes back, Ctrl-S/F2 saves" },
+    { "F2", "Settings; Colors and schemes, Esc goes back, Ctrl-S/F2 saves" },
     { "Ctrl-D (Settings)", "Reset all draft settings; Esc at root offers save/discard/cancel" },
     { "F1", "This help screen" },
     { "F3", "Info screen: version, author, current file stats" },
@@ -3845,7 +3845,7 @@ static uint8_t editorSettingsOnPage(const struct editorSettings *edited,
 
 /** @brief Count rows, including submenu links and Back, in the current page. */
 static int32_t editorSettingsVisibleCount(const struct editorSettings *edited) {
-    int32_t count = settings_page == SETTINGS_COLORS ? 3 : 1;
+    int32_t count = settings_page == SETTINGS_COLORS ? 4 : 1;
     for (int32_t i = 0; i < settingDescriptorCount; i++)
         if (editorSettingsOnPage(edited, &settingDescriptors[i])) count++;
     return count;
@@ -3860,6 +3860,7 @@ static int32_t editorSettingsDescriptorAt(const struct editorSettings *edited, i
         return -1;
     }
     if (visible_idx-- == 0) return -4;
+    if (visible_idx-- == 0) return -5;
     for (int32_t group = 0; group < 3; group++) {
         if (group && visible_idx-- == 0) return group == 1 ? -2 : -3;
         for (int32_t i = 0; i < settingDescriptorCount; i++) {
@@ -3946,7 +3947,7 @@ static void editorSettingsCycleEnum(const struct settingDescriptor *d, int32_t *
 static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected,
     const struct editorSettings *edited, char scroll_indicator, int32_t label_width) {
     if (idx < 0) {
-        const char *label = idx == -1 ? " Colors >" : idx == -2 ? " Interface" :
+        const char *label = idx == -5 ? " Color scheme..." : idx == -1 ? " Colors >" : idx == -2 ? " Interface" :
             idx == -3 ? " Syntax highlighting" : " Back";
         if (idx == -2 || idx == -3) abAppend(ab, "\x1b[1m", 4);
         else if (selected) abAppend(ab, "\x1b[7m", 4);
@@ -4378,6 +4379,101 @@ static void editorSettingsRender(struct abuf *ab, const struct editorSettings *e
     editorSettingsClip(ab);
 }
 
+/** @brief Choose and confirm a preset without committing the Settings draft. */
+static void editorSettingsChooseScheme(struct editorSettings *edited, char *msg, size_t msg_size) {
+    const char *home = getenv("HOME");
+    char directory[1024];
+    int32_t n = snprintf(directory, sizeof(directory), "%s/.tinyedit/color-scheme", home ? home : "");
+    if (!home || n < 0 || (size_t)n >= sizeof(directory)) {
+        snprintf(msg, msg_size, "Color scheme directory unavailable"); return;
+    }
+    DIR *dir = opendir(directory);
+    if (!dir) { snprintf(msg, msg_size, "No schemes in ~/.tinyedit/color-scheme/"); return; }
+    char **names = NULL;
+    int32_t count = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir))) {
+        size_t len = strlen(entry->d_name);
+        if (len < 6 || strcmp(entry->d_name + len - 5, ".conf")) continue;
+        uint8_t safe = 1;
+        for (size_t i = 0; i < len; i++)
+            if ((uint8_t)entry->d_name[i] < 32 || entry->d_name[i] == 127) safe = 0;
+        if (!safe || count == INT32_MAX) continue;
+        char filepath[2048];
+        struct stat st;
+        int32_t pathlen = snprintf(filepath, sizeof(filepath), "%s/%s", directory, entry->d_name);
+        if (pathlen < 0 || (size_t)pathlen >= sizeof(filepath) || stat(filepath, &st) || !S_ISREG(st.st_mode)) continue;
+        names = teRealloc(names, teArrayBytes((size_t)count + 1, sizeof(*names)));
+        int32_t at = count;
+        while (at > 0 && strcmp(names[at - 1], entry->d_name) > 0) {
+            names[at] = names[at - 1]; at--;
+        }
+        names[at] = teStrdup(entry->d_name); count++;
+    }
+    closedir(dir);
+    if (!count) { free(names); snprintf(msg, msg_size, "No .conf schemes in ~/.tinyedit/color-scheme/"); return; }
+    int32_t cursor = 0, scroll = 0;
+    uint8_t confirm = 0;
+    while (1) {
+        struct editorSettings candidate = *edited;
+        char path[2048], error[128];
+        n = snprintf(path, sizeof(path), "%s/%s", directory, names[cursor]);
+        uint8_t valid = n >= 0 && (size_t)n < sizeof(path) &&
+            settingsLoadColorScheme(path, &candidate, error, sizeof(error));
+        if (n < 0 || (size_t)n >= sizeof(path)) snprintf(error, sizeof(error), "Path too long");
+        int32_t height = E.view.screenrows + 2 + S.show_top_bar + S.show_menu;
+        int32_t visible = (height - 6) / 2;
+        if (visible < 1) visible = 1;
+        if (cursor < scroll) scroll = cursor;
+        if (cursor >= scroll + visible) scroll = cursor - visible + 1;
+        struct abuf ab = ABUF_INIT;
+        const char *title = "\x1b[m\x1b[?25l\x1b[HSettings > Colors > Color scheme\x1b[K\r\n\r\n";
+        abAppend(&ab, title, (int32_t)strlen(title));
+        int32_t rows = 2;
+        for (int32_t i = scroll; i < count && i < scroll + visible; i++) {
+            if (i == cursor) abAppend(&ab, "\x1b[7m", 4);
+            abAppend(&ab, " ", 1); abAppend(&ab, names[i], (int32_t)strlen(names[i]));
+            abAppend(&ab, "\x1b[m\x1b[K\r\n", 8); rows++;
+        }
+        const char *help = !valid ? error : confirm ?
+            "Enter confirms colors in draft; Esc returns to list" :
+            "Up/Down preview, Enter review confirmation, Esc back";
+        abAppend(&ab, help, (int32_t)strlen(help));
+        abAppend(&ab, "\x1b[K\r\n", 5); rows++;
+        if (valid) {
+            for (int32_t i = 0; i < settingDescriptorCount && rows < height - 1; i++) {
+                const struct settingDescriptor *d = &settingDescriptors[i];
+                if (!editorSettingsIsColor(d) || !editorSettingsOnPage(&candidate, d)) continue;
+                editorSettingsDrawRow(&ab, i, 0, &candidate, 0, editorSettingsLabelWidth(&candidate));
+                rows++;
+            }
+        }
+        for (; rows < height - 1; rows++) abAppend(&ab, "\x1b[K\r\n", 5);
+        abAppend(&ab, "\x1b[K", 3);
+        editorSettingsClip(&ab);
+        if (!terminalWrite(ab.b, (size_t)ab.len)) terminalDie("write");
+        abFree(&ab);
+        int32_t c = editorReadKey();
+        if (c == MOUSE_EVENT_KEY && S.mouse_enabled) {
+            if (mouseEventButton == 64) c = ARROW_UP;
+            else if (mouseEventButton == 65) c = ARROW_DOWN;
+            else if (mouseEventButton == 0 && mouseEventPress && mouseEventRow >= 3 &&
+                mouseEventRow < 3 + visible && scroll + mouseEventRow - 3 < count) {
+                cursor = scroll + mouseEventRow - 3; confirm = 0; continue;
+            } else continue;
+        }
+        if (c == '\x1b') { if (confirm) confirm = 0; else break; }
+        else if (c == ARROW_UP || c == ARROW_DOWN) {
+            cursor = (cursor + (c == ARROW_UP ? count - 1 : 1)) % count; confirm = 0;
+        } else if ((c == '\r' || c == ' ') && valid) {
+            if (!confirm) confirm = 1;
+            else { *edited = candidate; snprintf(msg, msg_size, "Scheme applied to draft; Ctrl-S/F2 saves"); break; }
+        }
+    }
+    for (int32_t i = 0; i < count; i++) free(names[i]);
+    free(names);
+}
+
 /**
  * @brief Read a numeric setting while keeping the panel visible.
  *
@@ -4561,6 +4657,10 @@ static void editorSettingsScreen(void) {
             } else continue;
         }
         int32_t idx = editorSettingsDescriptorAt(&edited, cursor);
+        if (idx == -5 && (c == '\r' || c == ' ' || c == ARROW_RIGHT)) {
+            editorSettingsChooseScheme(&edited, msg, sizeof(msg));
+            continue;
+        }
         if ((c == '\x1b' && settings_page != SETTINGS_MAIN) ||
             ((idx == -1 || idx == -4) && (c == '\r' || c == ' ' || c == ARROW_RIGHT))) {
             parent_cursor[settings_page] = cursor; parent_scroll[settings_page] = scroll;

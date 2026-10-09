@@ -941,11 +941,11 @@ def setting_navigation(key):
         return down * general.index(key), 0
     colors = down * len(general) + b"\r"
     if key == "color_mode":
-        return colors + down, 1
+        return colors + down * 2, 1
     palette = [k for k in keys if k.startswith("color_") and k != "color_mode"]
     palette.sort(key=lambda k: k.startswith("color_syntax_"))
     palette.append("markdown_heading_reverse")
-    return colors + down * (palette.index(key) + 2), 1
+    return colors + down * (palette.index(key) + 3), 1
 
 
 def edit_setting(master, key, keys, save):
@@ -1143,7 +1143,7 @@ def test_rgb_settings_mouse(home):
         assert b"\x1b[7m Settings " in output, "Back click does not return to root"
         os.write(master, b"\r")
         read_available(master)
-        os.write(master, b"\x1b[<0;3;6M\x1b[<0;3;6m")
+        os.write(master, b"\x1b[<0;3;7M\x1b[<0;3;7m")
         output = read_available(master)
         assert b"Settings > Colors" in output and b"Settings > Colors >" not in output, "heading must stay on Colors"
         assert b"Syntax highlighting" in output, "syntax group missing from shared page"
@@ -1629,6 +1629,51 @@ def test_bash_syntax_config(home):
             finish(process, master)
 
 
+def test_color_scheme_selection(home):
+    case_home = pathlib.Path(home) / "scheme-selection"
+    directory = case_home / ".tinyedit" / "color-scheme"
+    directory.mkdir(parents=True)
+    (directory / "one-dark.conf").write_bytes((ROOT / "colorschemes" / "one-dark.conf").read_bytes())
+    config = case_home / ".tinyeditrc"
+    config.write_text("tab_stop = 7\ncolor_mode = ansi\n", encoding="utf-8")
+    original = config.read_bytes()
+    process, master = spawn_editor([], case_home)
+    try:
+        read_available(master)
+        navigation, _ = setting_navigation("color_mode")
+        # Mode is directly below the scheme selector.
+        os.write(master, b"\x1bOQ" + navigation + b"\x1b[A\r")
+        output = read_available(master)
+        assert b"one-dark.conf" in output and b"preview" in output, "scheme list/preview missing"
+        os.write(master, b"\r")
+        assert b"Enter confirms" in read_available(master), "confirmation missing"
+        os.write(master, b"\x1b")
+        read_available(master)
+        os.write(master, b"\x1b")
+        read_available(master)
+        assert config.read_bytes() == original, "cancelled scheme wrote settings"
+        # Reopen, confirm, return to root and discard the entire draft.
+        os.write(master, b"\r\r\r")
+        assert b"Scheme applied to draft" in read_available(master)
+        os.write(master, b"\x1b")
+        read_available(master)
+        os.write(master, b"\x1b")
+        read_until(master, b"Save changes before leaving?")
+        os.write(master, b"n")
+        read_available(master)
+        assert config.read_bytes() == original, "discarded scheme wrote settings"
+        # Apply again, then save through the shared Settings action.
+        os.write(master, b"\x1bOQ" + navigation + b"\x1b[A\r\r\r")
+        read_available(master)
+        os.write(master, b"\x1bOQ")
+        read_available(master)
+        saved = config.read_text()
+        assert "rgb_background = #282C34" in saved and "tab_stop = 7" in saved
+        assert "color_mode = rgb" in saved
+    finally:
+        finish(process, master)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="tinyedit-tests-") as tmp:
         home = pathlib.Path(tmp)
@@ -1678,6 +1723,7 @@ def main():
         test_block_indent(home)
         test_no_save_prompt_when_undone(home)
         test_xml_tag_autoclose(home)
+        test_color_scheme_selection(home)
         test_bash_syntax_config(home)
         test_build_displays(home)
         test_rgb_settings_mouse(home)

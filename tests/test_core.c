@@ -846,7 +846,7 @@ static void testColorSettings(void) {
         int32_t ansi_idx = editorSettingsDescriptorAt(&edited, row);
         edited.color_mode = COLOR_MODE_RGB;
         /* RGB output is the sole extra row, directly after Mode. */
-        int32_t rgb_idx = editorSettingsDescriptorAt(&edited, row + (row > 1));
+        int32_t rgb_idx = editorSettingsDescriptorAt(&edited, row + (row > 2));
         if (ansi_idx < 0) check(rgb_idx == ansi_idx, "same color group positions in both modes");
         else {
             check(rgb_idx >= 0, "matching color setting exists in RGB");
@@ -867,7 +867,7 @@ static void testColorSettings(void) {
         if (idx == -2 || idx == -3) {
             headings++;
             check(editorSettingsMove(&edited, i - 1, 1) == i + 1, "navigation skips heading");
-        } else if (editorSettingsIsColor(&settingDescriptors[idx]))
+        } else if (idx >= 0 && editorSettingsIsColor(&settingDescriptors[idx]))
             check(settingDescriptors[idx].type == SETTING_RGB, "active RGB palette only");
     }
     check(headings == 2, "both color groups share one page");
@@ -892,7 +892,7 @@ static void testColorSettings(void) {
         memcpy(keys + length, "\x1b[B", 3); length += 3;
     }
     keys[length++] = '\r';
-    memcpy(keys + length, "\x1b[B\r", 4); length += 4; /* RGB */
+    memcpy(keys + length, "\x1b[B\x1b[B\r", 7); length += 7; /* RGB */
     memcpy(keys + length, cancel, sizeof(cancel)-1); length += sizeof(cancel)-1; /* Back */
     memcpy(keys + length, cancel, sizeof(cancel)-1); length += sizeof(cancel)-1; /* exit confirmation */
     memcpy(keys + length, cancel, sizeof(cancel)-1); length += sizeof(cancel)-1; /* cancel exit */

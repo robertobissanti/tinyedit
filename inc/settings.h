@@ -385,4 +385,8 @@ uint8_t settingColorIsDim(int32_t c);
  */
 const char *settingColorName(int32_t c);
 
+/* Applies a complete ANSI/RGB preset only on success; preserves RGB output. */
+uint8_t settingsLoadColorScheme(const char *path, struct editorSettings *draft,
+    char *error, size_t error_size);
+
 #endif /* __TE_SETTINGS_H */
