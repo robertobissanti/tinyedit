@@ -48,7 +48,8 @@
 ### Important fixes
 
 - Match One Dark RGB Markdown to the personal Vim One colors: blue headings,
-  orange-red bold, orange math and no separate heading background. Heading
+  orange-red bold and orange math, with a coordinated dark gray heading
+  background (`#2C323C`). Heading
   and preprocessor text share the blue role.
 
 - Use a light gray selection in One Dark ANSI so selected text remains readable.
