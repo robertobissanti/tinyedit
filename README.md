@@ -386,6 +386,10 @@ including undo depth, wrapping, backup, colors, and mouse support.*
 
 ### Colors page and RGB
 
+Complete RGB presets are available in [`colorschemes/`](colorschemes/README.md),
+including [One Dark](colorschemes/one-dark.conf), adapted from Vim One. Copy its
+entries into `~/.tinyeditrc` and restart; presets are not loaded automatically.
+
 F2 → Colors contains **Mode**, **RGB output** (in RGB mode), **Interface** and
 **Syntax highlighting** groups on the same page. Interface groups the
 background, gutter, selection,

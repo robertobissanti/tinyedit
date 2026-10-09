@@ -4,6 +4,9 @@
 
 ### New features
 
+- Ship a complete One Dark RGB colorscheme adapted from Vim One, with
+  instructions to apply it while preserving other editor settings.
+
 - Configure a separate Markdown heading background in RGB mode, with preview
   in Colors; ANSI retains heading inversion.
 
