@@ -33,6 +33,8 @@ with tempfile.TemporaryDirectory(prefix="tinyedit-build-") as directory:
     run("git", "add", "src", "inc", "scripts", "Makefile")
     run("git", "commit", "-qm", "Initial sources")
     clean = identity()
+    run("make", "bin/tinyedit")
+    original_version = run("bin/tinyedit", "--version")
     assert '"g' in clean and "dirty" not in clean
     with (root / "src/tinyedit.c").open("a") as stream:
         stream.write("\n/* changed source */\n")
@@ -44,6 +46,16 @@ with tempfile.TemporaryDirectory(prefix="tinyedit-build-") as directory:
     run("git", "add", "src/tinyedit.c")
     run("git", "commit", "-qm", "Change sources")
     assert identity() != clean and "dirty" not in identity()
+    run("make", "bin/tinyedit")
+    assert run("bin/tinyedit", "--version") != original_version, "make did not rebuild after commit"
+    # An archive nested in another repository must not inherit its parent commit.
+    nested = root / "nested-archive"
+    nested.mkdir()
+    for name in ("src", "inc", "scripts"):
+        shutil.copytree(root / name, nested / name)
+    shutil.copy2(root / "Makefile", nested / "Makefile")
+    subprocess.check_call(["sh", "scripts/build-info.sh"], cwd=nested, env=env)
+    assert '"source-s' in (nested / "bin/build_info.h").read_text()
     env["BUILD_ID"] = "package-r2"
     assert '"package-r2"' in identity()
     env["BUILD_ID"] = 'bad"identifier'

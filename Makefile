@@ -26,7 +26,7 @@ BINDIR ?= $(PREFIX)/bin
 INSTALL ?= install
 SYNTAX_DIR ?= $(HOME)/.tinyedit/syntax
 
-$(TARGET): $(BIN_DIR)/build_info.h $(SOURCES) $(HEADERS) | $(BIN_DIR)
+$(TARGET): FORCE $(BIN_DIR)/build_info.h $(SOURCES) $(HEADERS) | $(BIN_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(SOURCES)
 
 $(BIN_DIR):

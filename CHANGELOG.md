@@ -22,6 +22,10 @@
 
 ### Other minor fixing
 
+- Refresh the installed build identity even for rapid successive commits on
+  make implementations with coarse timestamp resolution; identify source
+  archives independently of any enclosing Git repository.
+
 - Apply swapped top bar colors explicitly so dark palette choices are sent
   as dark backgrounds instead of relying on terminal reverse-video rendering.
 

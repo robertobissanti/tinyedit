@@ -11,7 +11,10 @@ else
             cksum < "$file"
         done | cksum | awk '{print $1 "-" $2}'
     )
-    commit=$(git rev-parse --verify HEAD 2>/dev/null || true)
+    commit=
+    if [ -e .git ]; then
+        commit=$(git rev-parse --verify HEAD 2>/dev/null || true)
+    fi
     if [ -n "$commit" ]; then
         identity=g$(printf '%s' "$commit" | cut -c1-12)
         if [ -n "$(git status --porcelain --untracked-files=all -- Makefile scripts inc src)" ]; then

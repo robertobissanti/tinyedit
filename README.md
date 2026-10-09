@@ -967,6 +967,8 @@ local source changes add `-dirty-s<checksum>`. Archives without Git use
 Makefile and build generator; it is not cryptographic and collisions are possible.
 Identical sources retain the same ID; compiler, flags and platform are not encoded.
 The generated header is checked on every make, without requiring make clean.
+The application is rebuilt each time, including on make implementations with
+coarse timestamp resolution; unchanged generated header content is retained.
 Packagers may override it with `make BUILD_ID=package-0.3.7-r2` (up to 120
 letters, digits, dots, underscores, plus signs or hyphens). The packager owns
 the accuracy and uniqueness of this override.
