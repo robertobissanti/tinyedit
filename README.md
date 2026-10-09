@@ -490,7 +490,9 @@ The empty area to the right of an ATX heading retains its heading background.
 
 
 The optional top bar (`show_top_bar`) shows only the filename (without its directory path) and
-unsaved-changes state as a persistent title, useful on long files
+unsaved-changes state as a persistent title. Its text and background use the
+reverse of the configured status bar colors, whether the menu is visible or hidden.
+This is useful on long files
 where you lose track of position while scrolling. When it's on, the
 filename doesn't repeat in the bottom status bar (which then shows
 only line/char counts); when it's off, the filename shows up there

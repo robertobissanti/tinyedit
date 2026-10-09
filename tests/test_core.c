@@ -478,6 +478,21 @@ static void testTopBar(void) {
         }
         abFree(&ab);
     }
+    for (int32_t menu = 0; menu < 2; menu++) {
+        S.show_menu = menu;
+        ab = (struct abuf)ABUF_INIT;
+        editorDrawTopBar(&ab);
+        abAppend(&ab, "", 1);
+        check(strstr(ab.b, "\x1b[7m") != NULL && strstr(ab.b, "\x1b[m") != NULL,
+            "top bar reverses colors and restores attributes with or without menu");
+        abFree(&ab);
+        ab = (struct abuf)ABUF_INIT;
+        editorDrawStatusBar(&ab);
+        abAppend(&ab, "", 1);
+        check(strstr(ab.b, "\x1b[7m") == NULL,
+            "bottom status bar retains its configured color orientation");
+        abFree(&ab);
+    }
     E.document.file.filename = "src/nested/abc.md";
     E.view.screencols = 20;
     ab = (struct abuf)ABUF_INIT;

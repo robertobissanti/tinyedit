@@ -2573,6 +2573,7 @@ static void editorDrawTopBar(struct abuf *ab) {
     const char *bar_fg = ansiColorCode(S.color_statusbar_text);
     if (bar_bg[0]) abAppend(ab, bar_bg, (int32_t)strlen(bar_bg));
     abAppend(ab, bar_fg, (int32_t)strlen(bar_fg));
+    abAppend(ab, "\x1b[7m", 4);
 
     const char *name = E.document.file.filename;
     if (name) {

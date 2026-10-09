@@ -11,6 +11,9 @@
 
 ### Other minor fixing
 
+- Reverse the top bar’s configured text and background colors to distinguish
+  the document title from the menu and bottom status bar, with or without menus.
+
 - Keep the current document name and modified indicator in the top bar while
   browsing the sidebar, instead of replacing them with the selected path.
 
