@@ -4,6 +4,9 @@
 
 ### New features
 
+- Place Color Scheme below Mode and show only valid presets matching ANSI or
+  RGB. Include separate ANSI adaptations of One Dark and Catppuccin Mocha.
+
 - Add an installable basic Vimscript definition for `.vim`, `.vimrc` and
   `.gvimrc`, with commands, single-quoted strings and comments.
 

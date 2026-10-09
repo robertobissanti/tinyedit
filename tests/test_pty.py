@@ -941,7 +941,7 @@ def setting_navigation(key):
         return down * general.index(key), 0
     colors = down * len(general) + b"\r"
     if key == "color_mode":
-        return colors + down * 2, 1
+        return colors + down, 1
     palette = [k for k in keys if k.startswith("color_") and k != "color_mode"]
     palette.sort(key=lambda k: k.startswith("color_syntax_"))
     palette.append("markdown_heading_reverse")
@@ -1654,20 +1654,24 @@ def test_color_scheme_selection(home):
     directory.mkdir(parents=True)
     (directory / "one-dark.conf").write_bytes((ROOT / "colorschemes" / "one-dark.conf").read_bytes())
     (directory / "catppuccin-mocha.conf").write_bytes((ROOT / "colorschemes" / "catppuccin-mocha.conf").read_bytes())
+    for name in ("one-dark-ansi.conf", "catppuccin-mocha-ansi.conf"):
+        (directory / name).write_bytes((ROOT / "colorschemes" / name).read_bytes())
     config = case_home / ".tinyeditrc"
-    config.write_text("tab_stop = 7\ncolor_mode = ansi\n", encoding="utf-8")
+    config.write_text("tab_stop = 7\ncolor_mode = rgb\n", encoding="utf-8")
     original = config.read_bytes()
     process, master = spawn_editor([], case_home)
     try:
         read_available(master)
         navigation, _ = setting_navigation("color_mode")
-        # Mode is directly below the scheme selector.
-        os.write(master, b"\x1bOQ" + navigation + b"\x1b[A\r")
+        # Mode is directly above the scheme selector.
+        os.write(master, b"\x1bOQ" + navigation + b"\x1b[B\r")
         output = read_available(master)
         assert b"Choose Color Scheme (use < > to change) catppuccin-mocha" in output
         assert b"Settings > Colors >" not in output, "selector opened another screen"
         os.write(master, b"\x1b[C")
-        assert b"Choose Color Scheme (use < > to change) one-dark" in read_available(master)
+        output = read_available(master)
+        assert b"Choose Color Scheme (use < > to change) one-dark" in output
+        assert b"one-dark-ansi" not in output, "ANSI scheme offered in RGB mode"
         os.write(master, b"\x1b[D")
         assert b"Choose Color Scheme (use < > to change) catppuccin-mocha" in read_available(master)
         os.write(master, b"\x1b")
@@ -1684,13 +1688,29 @@ def test_color_scheme_selection(home):
         read_available(master)
         assert config.read_bytes() == original, "discarded scheme wrote settings"
         # Apply again, then save through the shared Settings action.
-        os.write(master, b"\x1bOQ" + navigation + b"\x1b[A\r\x1b[C\r")
+        os.write(master, b"\x1bOQ" + navigation + b"\x1b[B\r\x1b[C\r")
         read_available(master)
         os.write(master, b"\x1bOQ")
         read_available(master)
         saved = config.read_text()
         assert "rgb_background = #282C34" in saved and "tab_stop = 7" in saved
         assert "color_mode = rgb" in saved
+        # Switching Mode changes which complete presets can be selected.
+        os.write(master, b"\x1bOQ" + navigation + b"\r\x1b[B\r")
+        output = read_available(master)
+        assert b"Choose Color Scheme (use < > to change) catppuccin-mocha-ansi" in output
+        os.write(master, b"\x1b[C")
+        output = read_available(master)
+        assert b"Choose Color Scheme (use < > to change) one-dark-ansi" in output
+        os.write(master, b"\x1b[C")
+        output = read_available(master)
+        assert b"Choose Color Scheme (use < > to change) catppuccin-mocha-ansi" in output
+        os.write(master, b"\r\x1bOQ")
+        read_available(master)
+        saved = config.read_text()
+        assert "color_mode = ansi" in saved
+        assert "color_statusbar = blue-dark" in saved
+        assert "rgb_background = #282C34" in saved, "inactive palette changed"
     finally:
         finish(process, master)
 

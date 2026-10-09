@@ -3865,12 +3865,14 @@ static int32_t editorSettingsDescriptorAt(const struct editorSettings *edited, i
         return -1;
     }
     if (visible_idx-- == 0) return -4;
+    for (int32_t i = 0; i < settingDescriptorCount; i++)
+        if (strcmp(settingDescriptors[i].key, "color_mode") == 0 && visible_idx-- == 0) return i;
     if (visible_idx-- == 0) return -5;
     for (int32_t group = 0; group < 3; group++) {
         if (group && visible_idx-- == 0) return group == 1 ? -2 : -3;
         for (int32_t i = 0; i < settingDescriptorCount; i++) {
             const struct settingDescriptor *d = &settingDescriptors[i];
-            if (!editorSettingsOnPage(edited, d) || (strcmp(d->key, "markdown_heading_reverse") == 0 ||
+            if (!editorSettingsOnPage(edited, d) || strcmp(d->key, "color_mode") == 0 || (strcmp(d->key, "markdown_heading_reverse") == 0 ||
                 strcmp(d->key, "rgb_markdown_heading_background") == 0)) continue;
             int32_t category = !editorSettingsIsColor(d) ? 0 : editorSettingsIsSyntaxColor(d) ? 2 : 1;
             if (category == group && visible_idx-- == 0) return i;
@@ -4416,6 +4418,10 @@ static void editorSettingsChooseScheme(struct editorSettings *edited, int32_t sc
         struct stat st;
         int32_t pathlen = snprintf(filepath, sizeof(filepath), "%s/%s", directory, entry->d_name);
         if (pathlen < 0 || (size_t)pathlen >= sizeof(filepath) || stat(filepath, &st) || !S_ISREG(st.st_mode)) continue;
+        struct editorSettings candidate = *edited;
+        char error[128];
+        if (!settingsLoadColorScheme(filepath, &candidate, error, sizeof(error)) ||
+            candidate.color_mode != edited->color_mode) continue;
         names = teRealloc(names, teArrayBytes((size_t)count + 1, sizeof(*names)));
         int32_t at = count;
         while (at > 0 && strcmp(names[at - 1], entry->d_name) > 0) {
@@ -4424,7 +4430,7 @@ static void editorSettingsChooseScheme(struct editorSettings *edited, int32_t sc
         names[at] = teStrdup(entry->d_name); count++;
     }
     closedir(dir);
-    if (!count) { free(names); snprintf(msg, msg_size, "No .conf schemes in ~/.tinyedit/color-scheme/"); return; }
+    if (!count) { free(names); snprintf(msg, msg_size, "No valid schemes for this mode in ~/.tinyedit/color-scheme/"); return; }
     int32_t cursor = 0;
     for (int32_t i = 0; i < count; i++) {
         struct editorSettings candidate = *edited;
@@ -4441,16 +4447,20 @@ static void editorSettingsChooseScheme(struct editorSettings *edited, int32_t sc
         uint8_t valid = n >= 0 && (size_t)n < sizeof(path) &&
             settingsLoadColorScheme(path, &candidate, error, sizeof(error));
         if (n < 0 || (size_t)n >= sizeof(path)) snprintf(error, sizeof(error), "Path too long");
+        if (valid && candidate.color_mode != edited->color_mode) {
+            valid = 0;
+            snprintf(error, sizeof(error), "Scheme no longer matches Mode");
+        }
         settings_scheme_preview = names[cursor];
         struct abuf ab = ABUF_INIT;
-        editorSettingsRender(&ab, valid ? &candidate : edited, 1, scroll, valid ? "" : error);
+        editorSettingsRender(&ab, valid ? &candidate : edited, 2, scroll, valid ? "" : error);
         if (!terminalWrite(ab.b, (size_t)ab.len)) terminalDie("write");
         abFree(&ab);
         int32_t c = editorReadKey();
         if (c == MOUSE_EVENT_KEY && S.mouse_enabled) {
             if (mouseEventButton == 64) c = ARROW_LEFT;
             else if (mouseEventButton == 65) c = ARROW_RIGHT;
-            else if (mouseEventButton == 0 && mouseEventPress && mouseEventRow == 4 - scroll) c = '\r';
+            else if (mouseEventButton == 0 && mouseEventPress && mouseEventRow == 5 - scroll) c = '\r';
             else continue;
         }
         if (c == '\x1b') break;

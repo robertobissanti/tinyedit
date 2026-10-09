@@ -386,6 +386,10 @@ including undo depth, wrapping, backup, colors, and mouse support.*
 
 ### Colors page and RGB
 
+In Colors, **Choose Color Scheme >** is directly below **Mode** and offers only
+valid presets for the selected ANSI/RGB mode. Separate ANSI adaptations of
+One Dark and Catppuccin Mocha are included; their shades follow the terminal palette.
+
 Complete RGB presets are available in [`colorschemes/`](colorschemes/README.md),
 including One Dark and Catppuccin Mocha. Install the `.conf` files in
 `~/.tinyedit/color-scheme/`, then select **F2 → Colors → Choose Color Scheme >**.

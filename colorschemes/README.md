@@ -1,6 +1,6 @@
 # Colorschemes
 
-Complete RGB presets adapted to tinyedit's color roles:
+Complete RGB presets and separate ANSI adaptations, adapted to tinyedit's color roles:
 
 - `one-dark.conf`: [Vim One](https://github.com/rakr/vim-one), `background=dark`.
 - `catppuccin-mocha.conf`: [Catppuccin Mocha](https://github.com/catppuccin/catppuccin).
@@ -15,12 +15,18 @@ mkdir -p ~/.tinyedit/color-scheme
 cp colorschemes/*.conf ~/.tinyedit/color-scheme/
 ```
 
-In **F2 → Colors**, activate **Choose Color Scheme >** with Enter or Right.
+ANSI files are `one-dark-ansi.conf` and `catppuccin-mocha-ansi.conf`.
+Their shades depend on the terminal palette and approximate the RGB originals.
+
+In **F2 → Colors**, choose **Mode** first. **Choose Color Scheme >** sits
+immediately below it and lists only valid presets declaring that mode.
+Switching Mode changes the available schemes without replacing either palette.
+Activate **Choose Color Scheme >** with Enter or Right.
 The same row becomes **Choose Color Scheme (use < > to change) name**.
 Left/Right (or mouse wheel) cycles the installed presets and updates the color
 samples on the Colors page. Enter applies the displayed preset to the draft;
 Esc cancels and restores the previous draft. There is no separate screen or
-second confirmation. Invalid presets are reported and cannot be applied.
+second confirmation. Invalid or incompatible presets are excluded from the list.
 
 Confirming a preset does not write configuration immediately. Ctrl-S/F2 in
 Settings saves all draft changes to `~/.tinyeditrc`; discarding Settings keeps

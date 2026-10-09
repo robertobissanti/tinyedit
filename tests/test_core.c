@@ -840,12 +840,15 @@ static void testColorSettings(void) {
         "heading reverse available in Colors");
     check(editorSettingsVisibleCount(&edited) > 10 && editorSettingsDescriptorAt(&edited, 0) == -4,
         "Colors contains Back, mode and two groups");
+    check(strcmp(settingDescriptors[editorSettingsDescriptorAt(&edited, 1)].key, "color_mode") == 0,
+        "Mode is first after Back");
+    check(editorSettingsDescriptorAt(&edited, 2) == -5, "scheme follows Mode");
     int32_t ansi_count = editorSettingsVisibleCount(&edited);
     for (int32_t row = 0; row < ansi_count; row++) {
         edited.color_mode = COLOR_MODE_ANSI;
         int32_t ansi_idx = editorSettingsDescriptorAt(&edited, row);
         edited.color_mode = COLOR_MODE_RGB;
-        /* RGB output is the sole extra row, directly after Mode. */
+        /* RGB output is the sole extra row, after the scheme selector. */
         int32_t rgb_idx = editorSettingsDescriptorAt(&edited, row + (row > 2));
         if (ansi_idx < 0) check(rgb_idx == ansi_idx, "same color group positions in both modes");
         else {
@@ -892,7 +895,7 @@ static void testColorSettings(void) {
         memcpy(keys + length, "\x1b[B", 3); length += 3;
     }
     keys[length++] = '\r';
-    memcpy(keys + length, "\x1b[B\x1b[B\r", 7); length += 7; /* RGB */
+    memcpy(keys + length, "\x1b[B\r", 4); length += 4; /* RGB */
     memcpy(keys + length, cancel, sizeof(cancel)-1); length += sizeof(cancel)-1; /* Back */
     memcpy(keys + length, cancel, sizeof(cancel)-1); length += sizeof(cancel)-1; /* exit confirmation */
     memcpy(keys + length, cancel, sizeof(cancel)-1); length += sizeof(cancel)-1; /* cancel exit */
