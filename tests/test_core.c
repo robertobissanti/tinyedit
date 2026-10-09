@@ -834,16 +834,24 @@ static void testColorSettings(void) {
         check(!editorSettingsIsColor(&settingDescriptors[editorSettingsDescriptorAt(&edited, i)]),
             "main hides color settings");
     settings_page = SETTINGS_COLORS;
-    check(editorSettingsVisibleCount(&edited) == 4 && editorSettingsDescriptorAt(&edited, 0) == -4,
+    check(editorSettingsVisibleCount(&edited) > 10 && editorSettingsDescriptorAt(&edited, 0) == -4,
         "Colors contains Back, mode and two groups");
+    int32_t ansi_count = editorSettingsVisibleCount(&edited);
     edited.color_mode = COLOR_MODE_RGB;
-    check(editorSettingsVisibleCount(&edited) == 5, "RGB adds output choice");
-    settings_page = SETTINGS_SYNTAX;
+    check(editorSettingsVisibleCount(&edited) == ansi_count + 1, "RGB adds output choice");
+    settings_page = SETTINGS_COLORS;
     edited.syntax_highlight = 0;
     check(editorSettingsVisibleCount(&edited) > 10, "syntax palette editable while highlighting disabled");
-    for (int32_t i = 1; i < editorSettingsVisibleCount(&edited); i++)
-        check(settingDescriptors[editorSettingsDescriptorAt(&edited, i)].type == SETTING_RGB,
-            "RGB page contains RGB descriptors only");
+    int32_t headings = 0;
+    for (int32_t i = 1; i < editorSettingsVisibleCount(&edited); i++) {
+        int32_t idx = editorSettingsDescriptorAt(&edited, i);
+        if (idx == -2 || idx == -3) {
+            headings++;
+            check(editorSettingsMove(&edited, i - 1, 1) == i + 1, "navigation skips heading");
+        } else if (editorSettingsIsColor(&settingDescriptors[idx]))
+            check(settingDescriptors[idx].type == SETTING_RGB, "active RGB palette only");
+    }
+    check(headings == 2, "both color groups share one page");
     edited.rgb_color_background = 0x010203;
     edited.rgb_color_syntax_keyword = 0x040506;
     struct abuf frame = ABUF_INIT;
@@ -874,7 +882,7 @@ static void testColorSettings(void) {
     struct editorSettings original = S;
     runInputBurst(keys, length, 1);
     check(memcmp(&original, &S, sizeof(S)) == 0, "back, cancel exit and discard preserve live settings");
-    settings_page = SETTINGS_SYNTAX;
+    settings_page = SETTINGS_COLORS;
     edited = S; edited.color_mode = COLOR_MODE_RGB;
     const struct settingDescriptor *rgb_descriptor = settingsFind("rgb_syntax_keyword");
     const char *rgb_inputs[] = {"\x7f\x7f\x7f\x7f\x7f\x7f\x7f#gggggg\r"

@@ -942,11 +942,9 @@ def setting_navigation(key):
     colors = down * len(general) + b"\r"
     if key == "color_mode":
         return colors + down, 1
-    # Default ANSI page: Back, Mode, Interface, Syntax highlighting.
-    syntax = key.startswith("color_syntax_")
-    palette = [k for k in keys if k.startswith("color_") and k != "color_mode"
-               and k.startswith("color_syntax_") == syntax]
-    return colors + down * (3 if syntax else 2) + b"\r" + down * (palette.index(key) + 1), 2
+    palette = [k for k in keys if k.startswith("color_") and k != "color_mode"]
+    palette.sort(key=lambda k: k.startswith("color_syntax_"))
+    return colors + down * (palette.index(key) + 2), 1
 
 
 def edit_setting(master, key, keys, save):
@@ -1138,7 +1136,7 @@ def test_rgb_settings_mouse(home):
         assert b"\x1b[7m Colors >" in output, "wheel does not reach Colors"
         os.write(master, b"\r")
         assert b"Settings > Colors" in read_available(master), "open Colors"
-        # Back row click, then re-enter and click Interface (Back, Mode, Output, Interface).
+        # Back returns to root; clicking the Interface heading stays on Colors.
         os.write(master, b"\x1b[<0;3;3M\x1b[<0;3;3m")
         output = read_available(master)
         assert b"\x1b[7m Settings " in output, "Back click does not return to root"
@@ -1146,10 +1144,11 @@ def test_rgb_settings_mouse(home):
         read_available(master)
         os.write(master, b"\x1b[<0;3;6M\x1b[<0;3;6m")
         output = read_available(master)
-        assert b"Settings > Colors > Interface" in output, "mouse cannot open Interface"
+        assert b"Settings > Colors" in output and b"Settings > Colors >" not in output, "heading must stay on Colors"
+        assert b"Syntax highlighting" in output, "syntax group missing from shared page"
         assert b"\x1b[48;2;1;2;3m" in output, "RGB background preview missing"
-        # Leave submenus without losing the session, then discard at root.
-        for _ in range(3):
+        # Return from Colors, then leave the unchanged root.
+        for _ in range(2):
             os.write(master, b"\x1b")
             read_available(master, 0.15)
     finally:

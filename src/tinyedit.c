@@ -180,7 +180,7 @@ static const struct helpEntry helpEntries[] = {
     { "Ctrl-N", "New empty unnamed document (offers to save first)" },
     { "Ctrl-W", "Close current file without quitting" },
     { "Ctrl-Q", "Quit (offers to save first if unsaved)" },
-    { "F2", "Settings; Colors submenus, Esc goes back, Ctrl-S/F2 saves" },
+    { "F2", "Settings; Colors groups, Esc goes back, Ctrl-S/F2 saves" },
     { "Ctrl-D (Settings)", "Reset all draft settings; Esc at root offers save/discard/cancel" },
     { "F1", "This help screen" },
     { "F3", "Info screen: version, author, current file stats" },
@@ -3833,10 +3833,8 @@ static uint8_t editorSettingsOnPage(const struct editorSettings *edited,
     uint8_t color = editorSettingsIsColor(d);
     uint8_t mode = strcmp(d->key, "color_mode") == 0 || strcmp(d->key, "rgb_output") == 0;
     if (settings_page == SETTINGS_MAIN) return !color && !mode;
-    if (settings_page == SETTINGS_COLORS)
-        return mode && (strcmp(d->key, "rgb_output") != 0 || edited->color_mode == COLOR_MODE_RGB);
-    if (!color || (d->type == SETTING_RGB) != (edited->color_mode == COLOR_MODE_RGB)) return 0;
-    return editorSettingsIsSyntaxColor(d) == (settings_page == SETTINGS_SYNTAX);
+    if (mode) return strcmp(d->key, "rgb_output") != 0 || edited->color_mode == COLOR_MODE_RGB;
+    return color && (d->type == SETTING_RGB) == (edited->color_mode == COLOR_MODE_RGB);
 }
 
 /** @brief Count rows, including submenu links and Back, in the current page. */
@@ -3849,13 +3847,33 @@ static int32_t editorSettingsVisibleCount(const struct editorSettings *edited) {
 
 /** @brief Map a page row to a descriptor or a negative navigation sentinel. */
 static int32_t editorSettingsDescriptorAt(const struct editorSettings *edited, int32_t visible_idx) {
-    if (settings_page != SETTINGS_MAIN && visible_idx-- == 0) return -4;
-    for (int32_t i = 0; i < settingDescriptorCount; i++) {
-        if (!editorSettingsOnPage(edited, &settingDescriptors[i])) continue;
-        if (visible_idx-- == 0) return i;
+    if (settings_page == SETTINGS_MAIN) {
+        for (int32_t i = 0; i < settingDescriptorCount; i++) {
+            if (editorSettingsOnPage(edited, &settingDescriptors[i]) && visible_idx-- == 0) return i;
+        }
+        return -1;
     }
-    if (settings_page == SETTINGS_MAIN) return -1;
-    return visible_idx == 0 ? -2 : -3;
+    if (visible_idx-- == 0) return -4;
+    for (int32_t group = 0; group < 3; group++) {
+        if (group && visible_idx-- == 0) return group == 1 ? -2 : -3;
+        for (int32_t i = 0; i < settingDescriptorCount; i++) {
+            const struct settingDescriptor *d = &settingDescriptors[i];
+            if (!editorSettingsOnPage(edited, d)) continue;
+            int32_t category = !editorSettingsIsColor(d) ? 0 : editorSettingsIsSyntaxColor(d) ? 2 : 1;
+            if (category == group && visible_idx-- == 0) return i;
+        }
+    }
+    return -4;
+}
+
+/** @brief Move between editable rows, skipping group headings. */
+static int32_t editorSettingsMove(const struct editorSettings *edited, int32_t cursor, int32_t delta) {
+    int32_t count = editorSettingsVisibleCount(edited);
+    do {
+        cursor = (cursor + delta + count) % count;
+        int32_t idx = editorSettingsDescriptorAt(edited, cursor);
+        if (idx != -2 && idx != -3) return cursor;
+    } while (1);
 }
 
 /** @brief Measure labels on this page without counting terminal escapes. */
@@ -3918,9 +3936,10 @@ static void editorSettingsCycleEnum(const struct settingDescriptor *d, int32_t *
 static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected,
     const struct editorSettings *edited, char scroll_indicator, int32_t label_width) {
     if (idx < 0) {
-        const char *label = idx == -1 ? " Colors >" : idx == -2 ? " Interface >" :
-            idx == -3 ? " Syntax highlighting >" : " Back";
-        if (selected) abAppend(ab, "\x1b[7m", 4);
+        const char *label = idx == -1 ? " Colors >" : idx == -2 ? " Interface" :
+            idx == -3 ? " Syntax highlighting" : " Back";
+        if (idx == -2 || idx == -3) abAppend(ab, "\x1b[1m", 4);
+        else if (selected) abAppend(ab, "\x1b[7m", 4);
         abAppend(ab, label, (int32_t)strlen(label));
         abAppend(ab, "\x1b[m\x1b[K\r\n", 8);
         return;
@@ -4285,10 +4304,7 @@ static void editorSettingsRender(struct abuf *ab, const struct editorSettings *e
     int32_t cursor, int32_t scroll, const char *msg) {
     abAppend(ab, "\x1b[m\x1b[?25l\x1b[H", 12);
     int32_t rows_used = 0;
-    const char *title = settings_page == SETTINGS_MAIN ? "Settings" :
-        settings_page == SETTINGS_COLORS ? "Settings > Colors" :
-        settings_page == SETTINGS_INTERFACE ? "Settings > Colors > Interface" :
-        "Settings > Colors > Syntax highlighting";
+    const char *title = settings_page == SETTINGS_MAIN ? "Settings" : "Settings > Colors";
     abAppend(ab, "\x1b[7m ", 5);
     abAppend(ab, title, (int32_t)strlen(title));
     abAppend(ab, " \x1b[m\x1b[K\r\n\x1b[K\r\n", 14);
@@ -4504,6 +4520,8 @@ static void editorSettingsScreen(void) {
         int32_t visible = editorSettingsVisibleRows();
         int32_t count = editorSettingsVisibleCount(&edited);
         if (cursor >= count) cursor = count - 1;
+        int32_t current = editorSettingsDescriptorAt(&edited, cursor);
+        if (current == -2 || current == -3) cursor = editorSettingsMove(&edited, cursor, 1);
         if (cursor < scroll) scroll = cursor;
         if (cursor >= scroll + visible) scroll = cursor - visible + 1;
 
@@ -4517,21 +4535,24 @@ static void editorSettingsScreen(void) {
         int32_t c = editorReadKey();
         if (c == MOUSE_EVENT_KEY && S.mouse_enabled) {
             if (mouseEventButton == 64 || mouseEventButton == 65) {
-                if (mouseEventButton == 64 && cursor > 0) cursor--;
-                if (mouseEventButton == 65 && cursor + 1 < count) cursor++;
+                if (mouseEventButton == 64 && cursor > 0) cursor = editorSettingsMove(&edited, cursor, -1);
+                if (mouseEventButton == 65 && cursor + 1 < count) cursor = editorSettingsMove(&edited, cursor, 1);
                 continue;
             } else if (mouseEventButton == 0 && mouseEventPress && mouseEventRow >= 3 &&
                 mouseEventRow < 3 + visible && scroll + mouseEventRow - 3 < count) {
-                cursor = scroll + mouseEventRow - 3; c = '\r';
+                int32_t clicked = scroll + mouseEventRow - 3;
+                int32_t item = editorSettingsDescriptorAt(&edited, clicked);
+                if (item == -2 || item == -3) continue;
+                cursor = clicked; c = '\r';
             } else continue;
         }
         int32_t idx = editorSettingsDescriptorAt(&edited, cursor);
         if ((c == '\x1b' && settings_page != SETTINGS_MAIN) ||
-            (idx < 0 && (c == '\r' || c == ' ' || c == ARROW_RIGHT))) {
+            ((idx == -1 || idx == -4) && (c == '\r' || c == ' ' || c == ARROW_RIGHT))) {
             parent_cursor[settings_page] = cursor; parent_scroll[settings_page] = scroll;
             if (c == '\x1b' || idx == -4)
-                settings_page = settings_page == SETTINGS_COLORS ? SETTINGS_MAIN : SETTINGS_COLORS;
-            else settings_page = idx == -1 ? SETTINGS_COLORS : idx == -2 ? SETTINGS_INTERFACE : SETTINGS_SYNTAX;
+                settings_page = SETTINGS_MAIN;
+            else settings_page = SETTINGS_COLORS;
             cursor = parent_cursor[settings_page]; scroll = parent_scroll[settings_page];
             continue;
         }
@@ -4540,10 +4561,10 @@ static void editorSettingsScreen(void) {
 
         switch (c) {
             case ARROW_UP:
-                cursor = (cursor > 0) ? cursor - 1 : count - 1;
+                cursor = editorSettingsMove(&edited, cursor, -1);
                 break;
             case ARROW_DOWN:
-                cursor = (cursor + 1) % count;
+                cursor = editorSettingsMove(&edited, cursor, 1);
                 break;
 
             /* Left/Right cycle an enum value backward/forward -- only

@@ -83,8 +83,8 @@ Non accede alla clipboard di sistema e non provoca esaurimento reale di RAM.
 
 The settings tests cover old ANSI/legacy configurations, independent RGB
 palette round trips, strict hex validation, explicit foreground/background
-escapes and the manual ANSI fallback. Core tests exercise nested Settings
-navigation, cancelling exit, discarding a draft, cancelling/correcting RGB
+escapes and the manual ANSI fallback. Core tests exercise both color groups
+on one Settings page, navigation that skips headings, cancelling exit, discarding a draft, cancelling/correcting RGB
 input and failed-save isolation. PTY tests verify terminal-default Settings
 labels, RGB/swapped bars, samples, mouse wheel/click navigation and complete
 build identifiers in splash and F3.

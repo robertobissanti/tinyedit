@@ -6,7 +6,7 @@
 
 - Choose optional RGB colors with validated #RRGGBB input, live samples and
   independent ANSI/RGB palettes; select true color or an explicit ANSI fallback.
-- Configure colors in F2 Colors → Interface / Syntax highlighting submenus,
+- Configure colors in one F2 Colors page with Interface / Syntax highlighting groups,
   with shared drafts, Back navigation, mouse interaction and scroll. Settings
   labels always use terminal defaults, keeping color mistakes recoverable.
 

@@ -46,7 +46,7 @@ selection, and optional mouse support for clicking and scrolling.
   - [Mouse support](#mouse-support)
   - [Menus](#menus)
   - [Settings and appearance](#settings-and-appearance)
-  - [Colors submenus and RGB](#colors-submenus-and-rgb)
+  - [Colors page and RGB](#colors-page-and-rgb)
   - [Indentation and tabs](#indentation-and-tabs)
   - [Automatic pair and tag closing](#automatic-pair-and-tag-closing)
   - [Invisible characters and colors](#invisible-characters-and-colors)
@@ -384,14 +384,16 @@ version) simply stay at their default until set explicitly.
 *The built-in `F2` panel exposes the same options stored in `~/.tinyeditrc`,
 including undo depth, wrapping, backup, colors, and mouse support.*
 
-### Colors submenus and RGB
+### Colors page and RGB
 
 F2 → Colors contains **Mode**, **RGB output** (in RGB mode), **Interface** and
-**Syntax highlighting**. Interface groups the background, gutter, selection,
+**Syntax highlighting** groups on the same page. Interface groups the
+background, gutter, selection,
 invisibles and the status bar's text/background. Syntax highlighting groups
 all token colors, including normal text and brackets; the palette remains
 editable when syntax highlighting is off. Up/Down select rows; Enter/Space
-opens a submenu. Left/Right cycle enum choices. **Back** or Esc returns to the
+edits a value (group headings are skipped). Left/Right cycle enum choices.
+**Back** or Esc returns to the
 parent, remembering its position and retaining the same draft.
 
 With mouse support already enabled, click a row to edit/open it and use the
