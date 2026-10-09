@@ -23,7 +23,7 @@ static const struct commandDescriptor command_descriptors[] = {
     { CMD_TOGGLE_MENU, "F10 menu", NULL, "show_menu" },
     { CMD_TOGGLE_INVISIBLES, "Show invisibles", NULL, "show_invisibles" },
     { CMD_TOGGLE_SYNTAX_HIGHLIGHT, "Syntax highlighting", NULL, "syntax_highlight" },
-    { CMD_TOGGLE_TREE, "Show/hide file tree", NULL, NULL },
+    { CMD_TOGGLE_TREE, "Show/hide file tree", "^E", NULL },
     { CMD_TOGGLE_AUTO_INDENT, "Auto-indent new lines", NULL, "auto_indent" }
 };
 

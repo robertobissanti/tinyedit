@@ -11,6 +11,8 @@
 
 ### Other minor fixing
 
+- Show the Ctrl-E shortcut beside “Show/hide file tree” in the View menu.
+
 - Reverse the top bar’s configured text and background colors to distinguish
   the document title from the menu and bottom status bar, with or without menus.
 
