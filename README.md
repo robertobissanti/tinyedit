@@ -390,7 +390,8 @@ F2 → Colors contains **Mode**, **RGB output** (in RGB mode), **Interface** and
 **Syntax highlighting** groups on the same page. Interface groups the
 background, gutter, selection,
 invisibles and the status bar's text/background. Syntax highlighting groups
-all token colors, including normal text and brackets; the palette remains
+all token colors, including normal text and brackets, plus the Markdown
+reverse heading colors toggle; the palette remains
 editable when syntax highlighting is off. Up/Down select rows; Enter/Space
 edits a value (group headings are skipped). Left/Right cycle enum choices.
 **Back** or Esc returns to the

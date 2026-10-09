@@ -3832,7 +3832,9 @@ static uint8_t editorSettingsOnPage(const struct editorSettings *edited,
     const struct settingDescriptor *d) {
     uint8_t color = editorSettingsIsColor(d);
     uint8_t mode = strcmp(d->key, "color_mode") == 0 || strcmp(d->key, "rgb_output") == 0;
-    if (settings_page == SETTINGS_MAIN) return !color && !mode;
+    uint8_t heading_reverse = strcmp(d->key, "markdown_heading_reverse") == 0;
+    if (settings_page == SETTINGS_MAIN) return !color && !mode && !heading_reverse;
+    if (heading_reverse) return 1;
     if (mode) return strcmp(d->key, "rgb_output") != 0 || edited->color_mode == COLOR_MODE_RGB;
     return color && (d->type == SETTING_RGB) == (edited->color_mode == COLOR_MODE_RGB);
 }
@@ -3858,11 +3860,13 @@ static int32_t editorSettingsDescriptorAt(const struct editorSettings *edited, i
         if (group && visible_idx-- == 0) return group == 1 ? -2 : -3;
         for (int32_t i = 0; i < settingDescriptorCount; i++) {
             const struct settingDescriptor *d = &settingDescriptors[i];
-            if (!editorSettingsOnPage(edited, d)) continue;
+            if (!editorSettingsOnPage(edited, d) || strcmp(d->key, "markdown_heading_reverse") == 0) continue;
             int32_t category = !editorSettingsIsColor(d) ? 0 : editorSettingsIsSyntaxColor(d) ? 2 : 1;
             if (category == group && visible_idx-- == 0) return i;
         }
     }
+    for (int32_t i = 0; i < settingDescriptorCount; i++)
+        if (strcmp(settingDescriptors[i].key, "markdown_heading_reverse") == 0) return i;
     return -4;
 }
 

@@ -30,6 +30,8 @@
 
 ### Other minor fixing
 
+- Move Markdown reverse heading colors into Colors alongside syntax colors.
+
 - Keep color setting names and order identical in ANSI and RGB mode, including
   function names and Markdown highlighting.
 

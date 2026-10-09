@@ -833,7 +833,11 @@ static void testColorSettings(void) {
     for (int32_t i = 0; i < main_count - 1; i++)
         check(!editorSettingsIsColor(&settingDescriptors[editorSettingsDescriptorAt(&edited, i)]),
             "main hides color settings");
+    check(!editorSettingsOnPage(&edited, settingsFind("markdown_heading_reverse")),
+        "heading reverse hidden from main Settings");
     settings_page = SETTINGS_COLORS;
+    check(editorSettingsOnPage(&edited, settingsFind("markdown_heading_reverse")),
+        "heading reverse available in Colors");
     check(editorSettingsVisibleCount(&edited) > 10 && editorSettingsDescriptorAt(&edited, 0) == -4,
         "Colors contains Back, mode and two groups");
     int32_t ansi_count = editorSettingsVisibleCount(&edited);

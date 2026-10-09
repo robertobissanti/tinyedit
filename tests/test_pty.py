@@ -935,7 +935,7 @@ def setting_navigation(key):
     # The platform-only descriptor remains conditional in the C table.
     if sys.platform != "darwin":
         keys = [k for k in keys if k != "mac_command_keys"]
-    general = [k for k in keys if not k.startswith(("color_", "rgb_"))]
+    general = [k for k in keys if not k.startswith(("color_", "rgb_")) and k != "markdown_heading_reverse"]
     down = b"\x1b[B"
     if key in general:
         return down * general.index(key), 0
@@ -944,6 +944,7 @@ def setting_navigation(key):
         return colors + down, 1
     palette = [k for k in keys if k.startswith("color_") and k != "color_mode"]
     palette.sort(key=lambda k: k.startswith("color_syntax_"))
+    palette.append("markdown_heading_reverse")
     return colors + down * (palette.index(key) + 2), 1
 
 
