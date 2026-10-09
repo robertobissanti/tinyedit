@@ -44,6 +44,10 @@
 
 ### Other minor fixing
 
+- Simplify color scheme selection to an inline Left/Right picker in Colors,
+  with Enter to accept and Esc to cancel, removing the separate list and
+  second confirmation.
+
 - Move Markdown reverse heading colors into Colors alongside syntax colors.
 
 - Keep color setting names and order identical in ANSI and RGB mode, including

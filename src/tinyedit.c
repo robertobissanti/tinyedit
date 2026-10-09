@@ -71,6 +71,7 @@
 static struct editorConfig E;
 static struct editorSettings S;
 static enum settingsPage settings_page;
+static const char *settings_scheme_preview;
 static struct editorMenu M;
 static struct editorTree T;
 static struct timespec tree_click_time;
@@ -3946,8 +3947,16 @@ static void editorSettingsCycleEnum(const struct settingDescriptor *d, int32_t *
  */
 static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected,
     const struct editorSettings *edited, char scroll_indicator, int32_t label_width) {
+    if (idx == -5 && settings_scheme_preview) {
+        const char *label = " Choose Color Scheme (use < > to change) ";
+        abAppend(ab, "\x1b[7m", 4);
+        abAppend(ab, label, (int32_t)strlen(label));
+        abAppend(ab, settings_scheme_preview, (int32_t)strlen(settings_scheme_preview) - 5);
+        abAppend(ab, "\x1b[m\x1b[K\r\n", 8);
+        return;
+    }
     if (idx < 0) {
-        const char *label = idx == -5 ? " Color scheme..." : idx == -1 ? " Colors >" : idx == -2 ? " Interface" :
+        const char *label = idx == -5 ? " Choose Color Scheme >" : idx == -1 ? " Colors >" : idx == -2 ? " Interface" :
             idx == -3 ? " Syntax highlighting" : " Back";
         if (idx == -2 || idx == -3) abAppend(ab, "\x1b[1m", 4);
         else if (selected) abAppend(ab, "\x1b[7m", 4);
@@ -4380,7 +4389,7 @@ static void editorSettingsRender(struct abuf *ab, const struct editorSettings *e
 }
 
 /** @brief Choose and confirm a preset without committing the Settings draft. */
-static void editorSettingsChooseScheme(struct editorSettings *edited, char *msg, size_t msg_size) {
+static void editorSettingsChooseScheme(struct editorSettings *edited, int32_t scroll, char *msg, size_t msg_size) {
     const char *home = getenv("HOME");
     char directory[1024];
     int32_t n = snprintf(directory, sizeof(directory), "%s/.tinyedit/color-scheme", home ? home : "");
@@ -4412,8 +4421,15 @@ static void editorSettingsChooseScheme(struct editorSettings *edited, char *msg,
     }
     closedir(dir);
     if (!count) { free(names); snprintf(msg, msg_size, "No .conf schemes in ~/.tinyedit/color-scheme/"); return; }
-    int32_t cursor = 0, scroll = 0;
-    uint8_t confirm = 0;
+    int32_t cursor = 0;
+    for (int32_t i = 0; i < count; i++) {
+        struct editorSettings candidate = *edited;
+        char path[2048], error[128];
+        n = snprintf(path, sizeof(path), "%s/%s", directory, names[i]);
+        if (n >= 0 && (size_t)n < sizeof(path) &&
+            settingsLoadColorScheme(path, &candidate, error, sizeof(error)) &&
+            memcmp(&candidate, edited, sizeof(candidate)) == 0) { cursor = i; break; }
+    }
     while (1) {
         struct editorSettings candidate = *edited;
         char path[2048], error[128];
@@ -4421,55 +4437,28 @@ static void editorSettingsChooseScheme(struct editorSettings *edited, char *msg,
         uint8_t valid = n >= 0 && (size_t)n < sizeof(path) &&
             settingsLoadColorScheme(path, &candidate, error, sizeof(error));
         if (n < 0 || (size_t)n >= sizeof(path)) snprintf(error, sizeof(error), "Path too long");
-        int32_t height = E.view.screenrows + 2 + S.show_top_bar + S.show_menu;
-        int32_t visible = (height - 6) / 2;
-        if (visible < 1) visible = 1;
-        if (cursor < scroll) scroll = cursor;
-        if (cursor >= scroll + visible) scroll = cursor - visible + 1;
+        settings_scheme_preview = names[cursor];
         struct abuf ab = ABUF_INIT;
-        const char *title = "\x1b[m\x1b[?25l\x1b[HSettings > Colors > Color scheme\x1b[K\r\n\r\n";
-        abAppend(&ab, title, (int32_t)strlen(title));
-        int32_t rows = 2;
-        for (int32_t i = scroll; i < count && i < scroll + visible; i++) {
-            if (i == cursor) abAppend(&ab, "\x1b[7m", 4);
-            abAppend(&ab, " ", 1); abAppend(&ab, names[i], (int32_t)strlen(names[i]));
-            abAppend(&ab, "\x1b[m\x1b[K\r\n", 8); rows++;
-        }
-        const char *help = !valid ? error : confirm ?
-            "Enter confirms colors in draft; Esc returns to list" :
-            "Up/Down preview, Enter review confirmation, Esc back";
-        abAppend(&ab, help, (int32_t)strlen(help));
-        abAppend(&ab, "\x1b[K\r\n", 5); rows++;
-        if (valid) {
-            for (int32_t i = 0; i < settingDescriptorCount && rows < height - 1; i++) {
-                const struct settingDescriptor *d = &settingDescriptors[i];
-                if (!editorSettingsIsColor(d) || !editorSettingsOnPage(&candidate, d)) continue;
-                editorSettingsDrawRow(&ab, i, 0, &candidate, 0, editorSettingsLabelWidth(&candidate));
-                rows++;
-            }
-        }
-        for (; rows < height - 1; rows++) abAppend(&ab, "\x1b[K\r\n", 5);
-        abAppend(&ab, "\x1b[K", 3);
-        editorSettingsClip(&ab);
+        editorSettingsRender(&ab, valid ? &candidate : edited, 1, scroll, valid ? "" : error);
         if (!terminalWrite(ab.b, (size_t)ab.len)) terminalDie("write");
         abFree(&ab);
         int32_t c = editorReadKey();
         if (c == MOUSE_EVENT_KEY && S.mouse_enabled) {
-            if (mouseEventButton == 64) c = ARROW_UP;
-            else if (mouseEventButton == 65) c = ARROW_DOWN;
-            else if (mouseEventButton == 0 && mouseEventPress && mouseEventRow >= 3 &&
-                mouseEventRow < 3 + visible && scroll + mouseEventRow - 3 < count) {
-                cursor = scroll + mouseEventRow - 3; confirm = 0; continue;
-            } else continue;
+            if (mouseEventButton == 64) c = ARROW_LEFT;
+            else if (mouseEventButton == 65) c = ARROW_RIGHT;
+            else if (mouseEventButton == 0 && mouseEventPress && mouseEventRow == 4 - scroll) c = '\r';
+            else continue;
         }
-        if (c == '\x1b') { if (confirm) confirm = 0; else break; }
-        else if (c == ARROW_UP || c == ARROW_DOWN) {
-            cursor = (cursor + (c == ARROW_UP ? count - 1 : 1)) % count; confirm = 0;
-        } else if ((c == '\r' || c == ' ') && valid) {
-            if (!confirm) confirm = 1;
-            else { *edited = candidate; snprintf(msg, msg_size, "Scheme applied to draft; Ctrl-S/F2 saves"); break; }
+        if (c == '\x1b') break;
+        if (c == ARROW_LEFT || c == ARROW_RIGHT) {
+            cursor = (cursor + (c == ARROW_LEFT ? count - 1 : 1)) % count;
+        } else if (c == '\r' && valid) {
+            *edited = candidate;
+            snprintf(msg, msg_size, "Scheme applied to draft; Ctrl-S/F2 saves");
+            break;
         }
     }
+    settings_scheme_preview = NULL;
     for (int32_t i = 0; i < count; i++) free(names[i]);
     free(names);
 }
@@ -4658,7 +4647,7 @@ static void editorSettingsScreen(void) {
         }
         int32_t idx = editorSettingsDescriptorAt(&edited, cursor);
         if (idx == -5 && (c == '\r' || c == ' ' || c == ARROW_RIGHT)) {
-            editorSettingsChooseScheme(&edited, msg, sizeof(msg));
+            editorSettingsChooseScheme(&edited, scroll, msg, sizeof(msg));
             continue;
         }
         if ((c == '\x1b' && settings_page != SETTINGS_MAIN) ||

@@ -15,10 +15,12 @@ mkdir -p ~/.tinyedit/color-scheme
 cp colorschemes/*.conf ~/.tinyedit/color-scheme/
 ```
 
-In **F2 → Colors → Color scheme...**, Up/Down or the mouse wheel selects a
-file and previews its colors. Click selects a file. Enter opens confirmation;
-Enter again applies it to the Settings draft. Esc cancels confirmation or
-returns to Colors. An invalid preset is reported and cannot be confirmed.
+In **F2 → Colors**, activate **Choose Color Scheme >** with Enter or Right.
+The same row becomes **Choose Color Scheme (use < > to change) name**.
+Left/Right (or mouse wheel) cycles the installed presets and updates the color
+samples on the Colors page. Enter applies the displayed preset to the draft;
+Esc cancels and restores the previous draft. There is no separate screen or
+second confirmation. Invalid presets are reported and cannot be applied.
 
 Confirming a preset does not write configuration immediately. Ctrl-S/F2 in
 Settings saves all draft changes to `~/.tinyeditrc`; discarding Settings keeps

@@ -108,4 +108,5 @@ automatic PTY checks do not certify those terminal-specific behaviors.
 
 Color scheme tests cover complete RGB/ANSI presets, missing or invalid roles,
 duplicate/foreign keys, preservation of unrelated settings and output policy,
-and PTY preview/confirmation cancellation, draft discard and saving.
+and PTY inline Left/Right preview, single confirmation, cancellation, draft
+discard and saving.

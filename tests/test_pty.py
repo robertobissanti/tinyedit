@@ -1634,6 +1634,7 @@ def test_color_scheme_selection(home):
     directory = case_home / ".tinyedit" / "color-scheme"
     directory.mkdir(parents=True)
     (directory / "one-dark.conf").write_bytes((ROOT / "colorschemes" / "one-dark.conf").read_bytes())
+    (directory / "catppuccin-mocha.conf").write_bytes((ROOT / "colorschemes" / "catppuccin-mocha.conf").read_bytes())
     config = case_home / ".tinyeditrc"
     config.write_text("tab_stop = 7\ncolor_mode = ansi\n", encoding="utf-8")
     original = config.read_bytes()
@@ -1644,16 +1645,17 @@ def test_color_scheme_selection(home):
         # Mode is directly below the scheme selector.
         os.write(master, b"\x1bOQ" + navigation + b"\x1b[A\r")
         output = read_available(master)
-        assert b"one-dark.conf" in output and b"preview" in output, "scheme list/preview missing"
-        os.write(master, b"\r")
-        assert b"Enter confirms" in read_available(master), "confirmation missing"
-        os.write(master, b"\x1b")
-        read_available(master)
+        assert b"Choose Color Scheme (use < > to change) catppuccin-mocha" in output
+        assert b"Settings > Colors >" not in output, "selector opened another screen"
+        os.write(master, b"\x1b[C")
+        assert b"Choose Color Scheme (use < > to change) one-dark" in read_available(master)
+        os.write(master, b"\x1b[D")
+        assert b"Choose Color Scheme (use < > to change) catppuccin-mocha" in read_available(master)
         os.write(master, b"\x1b")
         read_available(master)
         assert config.read_bytes() == original, "cancelled scheme wrote settings"
         # Reopen, confirm, return to root and discard the entire draft.
-        os.write(master, b"\r\r\r")
+        os.write(master, b"\x1b[C\x1b[C\r")
         assert b"Scheme applied to draft" in read_available(master)
         os.write(master, b"\x1b")
         read_available(master)
@@ -1663,7 +1665,7 @@ def test_color_scheme_selection(home):
         read_available(master)
         assert config.read_bytes() == original, "discarded scheme wrote settings"
         # Apply again, then save through the shared Settings action.
-        os.write(master, b"\x1bOQ" + navigation + b"\x1b[A\r\r\r")
+        os.write(master, b"\x1bOQ" + navigation + b"\x1b[A\r\x1b[C\r")
         read_available(master)
         os.write(master, b"\x1bOQ")
         read_available(master)
