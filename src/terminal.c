@@ -612,13 +612,15 @@ int32_t terminalReadKey(
                     if (read(STDIN_FILENO, &term, 1) != 1) return '\x1b';
                     if (term == '~') return F3_KEY; /* common CSI F3 form: ESC[13~ */
                     /* Ghostty's Kitty keyboard protocol reports Shift+Enter
-                     * as CSI 13;2u. The 13 prefix also belongs to CSI F3,
+                     * as CSI 13;2u and Alt+Enter as CSI 13;3u (verified on
+                     * the real terminal). The 13 prefix also belongs to CSI F3,
                      * so distinguish the two only after reading this byte. */
                     if (term == ';') {
                         uint8_t mod, csi_term;
                         if (read(STDIN_FILENO, &mod, 1) != 1) return '\x1b';
                         if (read(STDIN_FILENO, &csi_term, 1) != 1) return '\x1b';
                         if (mod == '2' && csi_term == 'u') return '\r';
+                        if (mod == '3' && csi_term == 'u') return OPEN_LINK_KEY;
                         if (csi_term < 0x40 || csi_term > 0x7e)
                             editorDrainUnknownCsiSequence(16);
                     }

@@ -80,6 +80,10 @@
 
 ### Other minor fixing
 
+- Recognize Alt+Enter in Ghostty with Kitty keyboard mode enabled (including
+  experimental macOS Command keys), so links open with either verified key
+  sequence and subsequent typing is preserved.
+
 - Split the full user, configuration, syntax and development guides into
   `docs/`, keeping a shorter README with quick reference and documentation links.
   Add C99, supported-platform and runtime-dependency badges.

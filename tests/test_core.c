@@ -992,6 +992,14 @@ static void testLinks(void) {
     check(E.document.cursor.cy == 1 && E.document.cursor.cx == 1 &&
         !strcmp(E.document.buffer.rows[1].chars, "Z## Target"),
         "Alt-Enter follows anchor without consuming next key");
+    editorResetDocument();
+    editorInsertRow(0, "[jump](#target)", 15);
+    editorInsertRow(1, "## Target", 9);
+    const char kitty_alt_enter_text[] = "\x1b[13;3uK";
+    runInputBurst(kitty_alt_enter_text, sizeof(kitty_alt_enter_text) - 1, 2);
+    check(E.document.cursor.cy == 1 && E.document.cursor.cx == 1 &&
+        !strcmp(E.document.buffer.rows[1].chars, "K## Target"),
+        "Kitty Alt-Enter follows link without consuming next key");
 
     char root[] = "/tmp/tinyedit-links-XXXXXX";
     check(mkdtemp(root) != NULL, "local link fixtures");
@@ -1039,7 +1047,7 @@ static void testLinks(void) {
 
     check(pipe(input) == 0, "prompt Alt-Enter input");
     saved_input = dup(STDIN_FILENO);
-    const char prompt_keys[] = "\x1b\rabc\r";
+    const char prompt_keys[] = "\x1b\r\x1b[13;3uabc\r";
     check(saved_input >= 0 && write(input[1], prompt_keys, sizeof(prompt_keys) - 1) == sizeof(prompt_keys) - 1 &&
         dup2(input[0], STDIN_FILENO) >= 0, "prompt Alt-Enter keys"); close(input[0]);
     char *prompt_value = editorPrompt("Open file: %s");

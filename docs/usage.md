@@ -209,7 +209,9 @@ press **Alt+Enter**, or double-click it with mouse support enabled. Bare
 `http://` and `https://` URLs also work. The message bar shows
 `Alt+Enter open link` while over a link; temporary messages and prompts take
 priority. Alt+Enter is ignored inside text-entry prompts. Its `Esc` + carriage
-return sequence has been confirmed on Ghostty/macOS and ArchLinux.
+return sequence has been confirmed on Ghostty/macOS and ArchLinux. With
+Kitty keyboard mode enabled, Ghostty sends `CSI 13;3u` instead; both forms
+open links, including when experimental macOS Command keys are enabled.
 
 Local links resolve relative to the current file (or the working directory
 for an unnamed document). They accept percent-encoded paths, angle-bracket
