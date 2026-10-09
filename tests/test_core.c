@@ -751,6 +751,9 @@ static void runInputBurst(const char *bytes, size_t len, int32_t turns) {
 }
 
 static void testNewDocument(void) {
+    char new_home[] = "/tmp/tinyedit-new-home-XXXXXX";
+    char *previous_home = getenv("HOME") ? teStrdup(getenv("HOME")) : NULL;
+    check(mkdtemp(new_home) && setenv("HOME", new_home, 1) == 0, "New temporary home");
     settingsDefaults(&S);
     editorResetDocument();
     E.view.screencols = 80; E.view.screenrows = 20;
@@ -774,15 +777,49 @@ static void testNewDocument(void) {
         memcmp(E.document.buffer.rows[0].chars, "keep", 4) == 0, "failed save aborts New");
     T.visible = 1; T.focused = 1;
     E.search.search_match_y = 0; E.document.file.last_backup_time = 123;
+    E.search.regex_mode = 1; E.search.switch_to_replace = 1;
+    E.search.saved_cx = 99; E.search.last_len = 10;
+    E.search.direction = -1;
     runInputBurst("\x0e" "n", 2, 1);
     check(!E.document.buffer.row_count && !E.document.file.filename && !E.document.file.dirty &&
         !E.document.selection.active && !E.document.history.undo_count && !E.document.history.redo_count &&
-        E.search.search_match_y == -1 && !E.document.file.last_backup_time &&
+        E.search.search_match_y == -1 && !E.search.regex_mode && !E.search.switch_to_replace &&
+        !E.search.saved_cx && !E.search.last_len && E.search.direction == 1 &&
+        !E.document.file.last_backup_time &&
         !E.document.cursor.cx && !E.document.cursor.cy && !E.view.rowoff && T.visible && !T.focused,
         "discard New resets document state and focuses document while keeping sidebar");
+    char saved_path[] = "/tmp/tinyedit-new-save-XXXXXX";
+    int file = mkstemp(saved_path);
+    check(file >= 0, "New save fixture"); close(file);
+    editorInsertRow(0, "saved", 5);
+    E.document.file.filename = teStrdup(saved_path); E.document.file.dirty = 1;
+    check(backupWrite(saved_path, "old", 3), "New backup fixture");
+    runInputBurst("\x0e" "y", 2, 1);
+    check(!E.document.file.filename && !E.document.buffer.row_count && !backupExists(saved_path),
+        "successful save before New clears document and old backup");
+    FILE *saved = fopen(saved_path, "rb");
+    char content[8] = {0};
+    check(saved && fread(content, 1, sizeof(content), saved) == 6 && memcmp(content, "saved\n", 6) == 0,
+        "New saves the old document before replacing it");
+    fclose(saved); unlink(saved_path);
+#ifdef __APPLE__
+    int keys[2], saved_input = dup(STDIN_FILENO);
+    check(saved_input >= 0 && pipe(keys) == 0, "Cmd-N input fixture");
+    check(write(keys[1], "\x1b[110;9u", 8) == 8 && dup2(keys[0], STDIN_FILENO) >= 0,
+        "Cmd-N input bytes"); close(keys[0]);
+    check(terminalReadKey(1) == CTRL_KEY('n'), "experimental Cmd-N protocol mapping");
+    check(dup2(saved_input, STDIN_FILENO) >= 0, "restore Cmd-N input");
+    close(saved_input); close(keys[1]);
+#endif
     T.visible = 0;
     check(editorMenuCommandKey(CMD_NEW) == CTRL_KEY('n'), "New menu dispatch");
     check(dup2(saved_output, STDOUT_FILENO) >= 0, "restore New output"); close(saved_output);
+    char cleanup[256];
+    snprintf(cleanup, sizeof(cleanup), "%s/.tinyedit/backup", new_home); rmdir(cleanup);
+    snprintf(cleanup, sizeof(cleanup), "%s/.tinyedit", new_home); rmdir(cleanup);
+    rmdir(new_home);
+    if (previous_home) { setenv("HOME", previous_home, 1); free(previous_home); }
+    else unsetenv("HOME");
 }
 
 static void testMouseDispatch(void) {

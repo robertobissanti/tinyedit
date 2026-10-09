@@ -22,6 +22,9 @@
 
 ### Other minor fixing
 
+- Clear residual search mode and navigation state when resetting a document
+  through New, Close or Open.
+
 - Refresh the installed build identity even for rapid successive commits on
   make implementations with coarse timestamp resolution; identify source
   archives independently of any enclosing Git repository.

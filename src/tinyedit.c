@@ -1601,6 +1601,8 @@ static uint8_t editorConfirmDocumentChange(const char *action) {
  */
 static void editorResetDocument(void) {
     searchQueryFree(&E.search.query);
+    E.search = (struct editorSearch){0};
+    E.search.direction = 1;
     E.search.last_cy = -1;
     E.search.last_end_y = -1;
     if (E.document.file.filename) backupRemove(E.document.file.filename);
