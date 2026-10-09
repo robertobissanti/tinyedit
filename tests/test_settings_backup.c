@@ -114,7 +114,7 @@ int main(void) {
     if (scheme.rgb_color_syntax_preprocessor != 0x61afef ||
         scheme.rgb_color_syntax_emphasis_strong != 0xde4000 ||
         scheme.rgb_color_syntax_math != 0xd19a66 ||
-        scheme.rgb_markdown_heading_background != 0x2c323c)
+        scheme.rgb_markdown_heading_background != 0x3e4b60)
         fail("One Markdown palette differs from personal Vim overrides");
     if (scheme.rgb_color_background != 0x282c34 || scheme.color_mode != COLOR_MODE_RGB ||
         scheme.tab_stop != before_scheme.tab_stop || scheme.rgb_output != RGB_OUTPUT_ANSI_FALLBACK ||
