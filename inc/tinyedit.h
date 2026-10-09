@@ -28,6 +28,7 @@
 /* ---- config -------------------------------------------------------- */
 
 #define TE_VERSION "0.3.7"
+#include "build_info.h"
 #define ABUF_INIT {NULL, 0, 0}
 #define INVISIBLE_SPACE_GLYPH '.'
 #define INVISIBLE_TAB_GLYPH '>'

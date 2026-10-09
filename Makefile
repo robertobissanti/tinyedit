@@ -1,6 +1,8 @@
 CC ?= cc
 CFLAGS ?= -Wall -O2 -D_FORTIFY_SOURCE=2 -std=c99
 CPPFLAGS ?= -Iinc
+CPPFLAGS += -Ibin
+export BUILD_ID
 TEST_CFLAGS ?= -O2 -D_FORTIFY_SOURCE=2 -std=c99 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Wundef -Wstrict-prototypes -Wmissing-prototypes
 
 BIN_DIR := bin
@@ -14,7 +16,7 @@ SOURCES := $(SRC_DIR)/tinyedit.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c \
 	$(SRC_DIR)/utf8.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c \
 	$(SRC_DIR)/syntax.c $(SRC_DIR)/terminal.c $(SRC_DIR)/alloc.c \
 	$(SRC_DIR)/tree.c $(SRC_DIR)/command.c $(SRC_DIR)/menu.c $(SRC_DIR)/fileio.c $(SRC_DIR)/search.c
-HEADERS := $(wildcard $(INC_DIR)/*.h)
+HEADERS := $(wildcard $(INC_DIR)/*.h) $(BIN_DIR)/build_info.h
 TEST_BINS := $(TEST_DIR)/test_syntax $(TEST_DIR)/test_settings_backup \
 	$(TEST_DIR)/test_editor_state $(TEST_DIR)/test_buffer $(TEST_DIR)/test_history \
 	$(TEST_DIR)/test_render $(TEST_DIR)/test_utf8 $(TEST_DIR)/test_core $(TEST_DIR)/test_fileio $(TEST_DIR)/test_search $(TEST_DIR)/test_backup_paths $(TEST_DIR)/test_memory_contracts $(TEST_DIR)/test_menu
@@ -24,7 +26,7 @@ BINDIR ?= $(PREFIX)/bin
 INSTALL ?= install
 SYNTAX_DIR ?= $(HOME)/.tinyedit/syntax
 
-$(TARGET): $(SOURCES) $(HEADERS) | $(BIN_DIR)
+$(TARGET): $(BIN_DIR)/build_info.h $(SOURCES) $(HEADERS) | $(BIN_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(SOURCES)
 
 $(BIN_DIR):
@@ -110,6 +112,7 @@ test: $(TARGET) $(TEST_BINS)
 	./$(TEST_DIR)/test_memory_contracts
 	./$(TEST_DIR)/test_menu
 	python3 $(TEST_DIR)/test_pty.py
+	python3 $(TEST_DIR)/test_build.py
 
 clean:
 	rm -f $(TARGET) $(TEST_BINS) $(TEST_DIR)/benchmark_core
@@ -123,3 +126,9 @@ benchmark: $(TEST_DIR)/benchmark_core
 	./$(TEST_DIR)/benchmark_core
 
 .PHONY: benchmark
+
+$(BIN_DIR)/build_info.h: FORCE | $(BIN_DIR)
+	sh scripts/build-info.sh $@
+
+FORCE:
+.PHONY: FORCE

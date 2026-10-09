@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### New features
+
+- Show the source build identifier with --version, in the startup splash and F3;
+  distinguish Git commits, local changes and source archives, with a packaging override.
+
 ### Important fixes
 
 - Navigate into directory symlinks from the sidebar with double-click or Right,

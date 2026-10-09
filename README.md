@@ -949,3 +949,16 @@ see above) stays
 under Salvatore Sanfilippo and Pieter Noordhuis's original BSD
 2-Clause license; see
 [`LICENSE-THIRD-PARTY`](LICENSE-THIRD-PARTY).
+
+### Build identification
+
+`bin/tinyedit --version`, the startup splash and F3 display the same complete
+version and build identifier. Git builds use `g` plus twelve commit digits;
+local source changes add `-dirty-s<checksum>`. Archives without Git use
+`source-s<checksum>`. The POSIX checksum covers source/header files, the
+Makefile and build generator; it is not cryptographic and collisions are possible.
+Identical sources retain the same ID; compiler, flags and platform are not encoded.
+The generated header is checked on every make, without requiring make clean.
+Packagers may override it with `make BUILD_ID=package-0.3.7-r2` (up to 120
+letters, digits, dots, underscores, plus signs or hyphens). The packager owns
+the accuracy and uniqueness of this override.

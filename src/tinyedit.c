@@ -114,7 +114,7 @@ static const char *splashLines[] = {
     "tinyedit",
     NULL, /* session slogan, assigned at startup */
     NULL,
-    "version " TE_VERSION,
+    "version " TE_BUILD_VERSION,
     "by Roberto Bissanti",
     "MIT licensed -- free to use and redistribute",
     NULL,
@@ -4181,7 +4181,7 @@ static void editorInfoScreen(void) {
     }
 
     editorInfoAppendSection(&ab, &rows_used, "tinyedit");
-    editorInfoAppendLine(&ab, &rows_used, "    Version   %s", TE_VERSION);
+    editorInfoAppendLine(&ab, &rows_used, "    Version   %s", TE_BUILD_VERSION);
     {
         char slogan[160];
         editorShortcutText(slogan, sizeof(slogan), sessionSlogan);
@@ -5864,6 +5864,10 @@ static void initEditor(void) {
  * cleanup, offers recovery, and continues until the quit action exits.
  */
 int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
+        printf("tinyedit %s\n", TE_BUILD_VERSION);
+        return 0;
+    }
     terminalEnableRawMode();
     terminalEnterAlternateScreen();
     terminalEnableBracketedPaste();
