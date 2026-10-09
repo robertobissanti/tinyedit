@@ -122,6 +122,7 @@ struct editorSettings {
     int32_t rgb_color_syntax_number;
     int32_t rgb_color_syntax_preprocessor;
     int32_t rgb_color_syntax_emphasis_strong;
+    int32_t rgb_color_syntax_italic;
     int32_t rgb_color_syntax_math;
     int32_t rgb_color_syntax_function;
     int32_t rgb_color_background;
@@ -212,10 +213,11 @@ struct editorSettings {
     int32_t color_syntax_number;
     int32_t color_syntax_preprocessor;
     /* Markdown-only: color for bold text (double asterisk or double
-     * underscore marker), distinct from color_syntax_keyword which
+     * underscore marker), distinct from color_syntax_italic which
      * single-marker italic text uses -- see enum syntaxHighlight's
      * HL_EMPHASIS_STRONG in syntax.h. */
     int32_t color_syntax_emphasis_strong;
+    int32_t color_syntax_italic;
     /* Markdown-only: color for LaTeX math ("$...$"/"$$...$$"), distinct
      * from color_syntax_string which inline code spans/fences use --
      * see enum syntaxHighlight's HL_MATH in syntax.h. */

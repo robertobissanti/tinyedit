@@ -358,6 +358,12 @@ int main(void) {
     struct editorSettings colors;
     settingsDefaults(&colors);
     colors.color_syntax_json_key = COLOR_RED_DARK;
+    colors.color_syntax_italic = COLOR_GREEN_DARK;
+    if (strcmp(syntaxColorFor(HL_EMPHASIS, &colors), ansiColorCode(COLOR_GREEN_DARK))) failures++;
+    colors.color_mode = COLOR_MODE_RGB;
+    colors.rgb_color_syntax_italic = 0xd19a67;
+    if (strcmp(syntaxColorFor(HL_EMPHASIS, &colors), "\x1b[38;2;209;154;103m")) failures++;
+    colors.color_mode = COLOR_MODE_ANSI;
     if (strcmp(syntaxColorFor(HL_JSON_KEY, &colors), ansiColorCode(COLOR_RED_DARK))) failures++;
     if (!syntaxHasBuiltinExtension("JSON")) failures++;
 

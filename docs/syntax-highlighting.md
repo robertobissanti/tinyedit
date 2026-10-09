@@ -18,7 +18,7 @@ configurable color (`color_syntax_keyword`, `color_syntax_string`,
 `color_syntax_comment`, `color_syntax_number`,
 `color_syntax_preprocessor`, plus `color_syntax_emphasis_strong` for
 Markdown bold text, kept distinct from italic which uses
-`color_syntax_keyword`, and `color_syntax_function` for function
+`color_syntax_italic`, and `color_syntax_function` for function
 names), using the active ANSI or RGB palette. Function
 names are recognized by the same heuristic other lightweight editors
 use, an identifier immediately followed by `(`, which covers both

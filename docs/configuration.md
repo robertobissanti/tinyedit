@@ -42,7 +42,7 @@ this additional row.
 Interface contains the editor background, gutter, selection, invisible
 characters and status-bar text/background. Syntax highlighting contains the
 same token roles in the same order in both modes, including function names,
-Markdown bold text and LaTeX math. ANSI offers **reverse heading colors**;
+Markdown bold/italic text and LaTeX math. ANSI offers **reverse heading colors**;
 RGB offers a separate **heading background color**, with heading text using
 `rgb_syntax_preprocessor`. Colors remain editable when highlighting is off.
 
@@ -212,3 +212,7 @@ file contained a mix of both styles, and auto will use the first one.
 When the settings list doesn't fit the screen, a column on the left
 (like the line-number gutter) shows `^` on the first visible entry if
 there are more above, and `v` on the last one if there are more below.
+
+Markdown italic text has its own **Italic text color** row in Colors:
+`color_syntax_italic` (ANSI) / `rgb_syntax_italic` (RGB). One Dark RGB uses
+`#D19A67`. Older configurations without these keys retain the keyword color.

@@ -43,7 +43,10 @@ Each `.conf` is a plain `key = value` file using the same color names and
 hex syntax as `~/.tinyeditrc`. Comments start with `#`; RGB hex values retain
 their leading `#`. `color_mode = ansi` or `color_mode = rgb` is required.
 
-An RGB preset must define every `SETTING_RGB` key, including
+For compatibility, missing `color_syntax_italic` / `rgb_syntax_italic` inherit
+the corresponding keyword color. New presets should include them explicitly.
+
+An RGB preset must otherwise define every `SETTING_RGB` key, including
 `rgb_markdown_heading_background`. An ANSI preset must define every ANSI
 `color_*` role plus `markdown_heading_reverse`. Missing roles, duplicate keys,
 invalid values, unknown keys and non-color settings reject the entire file.

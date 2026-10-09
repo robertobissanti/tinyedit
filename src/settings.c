@@ -121,6 +121,7 @@ const struct settingDescriptor settingDescriptors[] = {
     { "rgb_syntax_preprocessor", "Syntax: preprocessor color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_preprocessor), 0, 0, NULL, 0 },
     { "rgb_syntax_function", "Syntax: function name color (C/C++)", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_function), 0, 0, NULL, 0 },
     { "rgb_syntax_emphasis_strong", "Markdown: bold text color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_emphasis_strong), 0, 0, NULL, 0 },
+    { "rgb_syntax_italic", "Markdown: italic text color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_italic), 0, 0, NULL, 0 },
     { "rgb_syntax_math", "Markdown: LaTeX math color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_math), 0, 0, NULL, 0 },
     { "rgb_markdown_heading_background", "Markdown: heading background color", SETTING_RGB,
       offsetof(struct editorSettings, rgb_markdown_heading_background), 0, 0, NULL, 0 },
@@ -212,6 +213,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, markdown_heading_reverse), 0, 0, NULL, 0 },
     { "color_syntax_emphasis_strong", "Markdown: bold text color", SETTING_ENUM,
       offsetof(struct editorSettings, color_syntax_emphasis_strong), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_syntax_italic", "Markdown: italic text color", SETTING_ENUM,
+      offsetof(struct editorSettings, color_syntax_italic), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_syntax_math", "Markdown: LaTeX math color", SETTING_ENUM,
       offsetof(struct editorSettings, color_syntax_math), 0, 0, colorNames, SETTING_COLOR_COUNT },
 };
@@ -319,6 +322,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_syntax_number = COLOR_MAGENTA_LIGHT;
     out->color_syntax_preprocessor = COLOR_YELLOW_LIGHT;
     out->color_syntax_emphasis_strong = COLOR_RED_LIGHT;
+    out->color_syntax_italic = out->color_syntax_keyword;
     out->color_syntax_math = COLOR_CYAN_LIGHT;
     out->color_syntax_function = COLOR_YELLOW_LIGHT;
     out->color_background = COLOR_TERMINAL_DEFAULT;
@@ -336,6 +340,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->rgb_color_syntax_number = out->color_syntax_number == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_number];
     out->rgb_color_syntax_preprocessor = out->color_syntax_preprocessor == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_preprocessor];
     out->rgb_color_syntax_emphasis_strong = out->color_syntax_emphasis_strong == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_emphasis_strong];
+    out->rgb_color_syntax_italic = out->rgb_color_syntax_keyword;
     out->rgb_color_syntax_math = out->color_syntax_math == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_math];
     out->rgb_color_syntax_function = out->color_syntax_function == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_function];
     out->rgb_color_background = out->color_background == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_background];
@@ -504,6 +509,7 @@ void settingsLoad(struct editorSettings *out) {
         return;
     }
 
+    uint8_t has_italic = 0, has_rgb_italic = 0;
     char line[256];
     while (fgets(line, sizeof(line), fp)) {
         char *key_start = line;
@@ -538,6 +544,8 @@ void settingsLoad(struct editorSettings *out) {
             const struct settingDescriptor *d = &settingDescriptors[i];
             if (strcmp(d->key, key) != 0) continue;
 
+            if (strcmp(key, "color_syntax_italic") == 0) has_italic = 1;
+            if (strcmp(key, "rgb_syntax_italic") == 0) has_rgb_italic = 1;
             int32_t *slot = settingSlot(out, d);
             if (d->type == SETTING_RGB) {
                 settingsParseRgb(value, slot);
@@ -565,6 +573,8 @@ void settingsLoad(struct editorSettings *out) {
         }
     }
     fclose(fp);
+    if (!has_italic) out->color_syntax_italic = out->color_syntax_keyword;
+    if (!has_rgb_italic) out->rgb_color_syntax_italic = out->rgb_color_syntax_keyword;
 }
 
 /** @brief Load a complete color preset atomically, preserving non-color settings. */
@@ -623,7 +633,11 @@ uint8_t settingsLoadColorScheme(const char *path, struct editorSettings *draft,
         uint8_t required = candidate.color_mode == COLOR_MODE_RGB ? d->type == SETTING_RGB :
             (d->type == SETTING_ENUM && d->enum_names == colorNames) ||
             strcmp(d->key, "markdown_heading_reverse") == 0;
-        if (required && !seen[i]) valid = 0;
+        if (required && !seen[i] && strcmp(d->key, "rgb_syntax_italic") == 0) {
+            candidate.rgb_color_syntax_italic = candidate.rgb_color_syntax_keyword;
+        } else if (required && !seen[i] && strcmp(d->key, "color_syntax_italic") == 0) {
+            candidate.color_syntax_italic = candidate.color_syntax_keyword;
+        } else if (required && !seen[i]) valid = 0;
     }
     free(seen);
     if (!valid) { snprintf(error, error_size, "Invalid or incomplete color scheme"); return 0; }

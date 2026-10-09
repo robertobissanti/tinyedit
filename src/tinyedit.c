@@ -182,6 +182,7 @@ static const struct helpEntry helpEntries[] = {
     { "Ctrl-W", "Close current file without quitting" },
     { "Ctrl-Q", "Quit (offers to save first if unsaved)" },
     { "F2", "Settings; Colors and schemes, Esc goes back, Ctrl-S/F2 saves" },
+    { "Markdown italic color", "F2 > Colors > Syntax highlighting; independent of keyword colors" },
     { "Cursor blinking", "Toggle in F2 or View; applies to block and bar cursors" },
     { "Ctrl-D (Settings)", "Reset all draft settings; Esc at root offers save/discard/cancel" },
     { "F1", "This help screen" },
@@ -3805,6 +3806,7 @@ static const char *editorSettingsSyntaxColorSample(const struct settingDescripto
     if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_comment") == 0) return "// note";
     if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_number") == 0) return "42";
     if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_preprocessor") == 0) return "#include";
+    if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_italic") == 0) return "*italic*";
     if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_emphasis_strong") == 0) return "**bold**";
     if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_math") == 0) return "$x^2$";
     if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_function") == 0) return "main()";
@@ -4034,6 +4036,7 @@ static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected
         abAppend(ab, bg[0] ? bg : "\x1b[49m", bg[0] ? (int32_t)strlen(bg) : 5);
         abAppend(ab, fg, (int32_t)strlen(fg));
         if (strstr(d->key, "selection")) abAppend(ab, "\x1b[7m", 4);
+        if (strstr(d->key, "syntax_italic")) abAppend(ab, "\x1b[3m", 4);
         abAppend(ab, sample, (int32_t)strlen(sample));
         abAppend(ab, "\x1b[m", 3);
         if (bar) {

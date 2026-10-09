@@ -4,6 +4,10 @@
 
 ### New features
 
+- Configure Markdown italic text independently from keywords in ANSI and RGB,
+  with a Colors preview. One Dark uses `#D19A67`; older configurations and
+  presets without the new color retain their keyword color for italics.
+
 - Toggle cursor blinking for block and bar shapes from F2 or the View menu;
   save the choice as `cursor_blink`, off by default.
 

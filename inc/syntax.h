@@ -48,7 +48,7 @@
  * tag markers rather than inventing a parallel class, since it maps to
  * the same settingColor slot. HL_EMPHASIS_STRONG exists only for
  * Markdown bold text (double asterisk/underscore marker; single-marker
- * italic uses HL_EMPHASIS instead) -- kept as its own class rather than
+ * italic uses HL_EMPHASIS and its own color_syntax_italic slot) -- kept as its own class rather than
  * reused from another language's slot because bold and italic are
  * visually distinct concepts a user would reasonably want different
  * colors for, unlike (say) Markdown headings reusing HL_PREPROCESSOR's

@@ -47,7 +47,7 @@ int main(void) {
     fputs("scrolloff = 999\n", fp);
     fputs("undo_memory_mb = 32\n", fp);
     fputs("auto_indent = false\n", fp);
-    fputs("color_gutter = cyan-dark\n", fp);
+    fputs("color_gutter = cyan-dark\ncolor_syntax_keyword = green-dark\nrgb_syntax_keyword = #112233\n", fp);
     fputs("color_syntax_json_key = red-dark\ncolor_syntax_bracket = magenta-light\n", fp);
     if (fclose(fp) != 0) fail("close test config");
 
@@ -62,8 +62,14 @@ int main(void) {
     if (settings.undo_memory_mb != 32) fail("undo memory budget parse");
     if (settings.color_syntax_json_key != COLOR_RED_DARK ||
         settings.color_syntax_bracket != COLOR_MAGENTA_LIGHT) fail("new color parsing");
+    if (settings.color_syntax_italic != COLOR_GREEN_DARK || settings.rgb_color_syntax_italic != 0x112233)
+        fail("legacy italic colors do not follow customized keywords");
+    settings.color_syntax_italic = COLOR_RED_DARK;
+    settings.rgb_color_syntax_italic = 0xd19a67;
     if (!settingsSave(&settings)) fail("settingsSave");
     settingsLoad(&settings);
+    if (settings.color_syntax_italic != COLOR_RED_DARK || settings.rgb_color_syntax_italic != 0xd19a67)
+        fail("independent italic palette persistence");
     if (settings.undo_memory_mb != 32) fail("undo memory budget persistence");
     if (settings.color_syntax_json_key != COLOR_RED_DARK ||
         settings.color_syntax_bracket != COLOR_MAGENTA_LIGHT) fail("new color persistence");
@@ -111,7 +117,8 @@ int main(void) {
     scheme.rgb_output = RGB_OUTPUT_ANSI_FALLBACK;
     if (!settingsLoadColorScheme("colorschemes/one-dark.conf", &scheme, scheme_error, sizeof(scheme_error)))
         fail("complete One scheme rejected");
-    if (scheme.rgb_color_syntax_preprocessor != 0x61afef ||
+    if (scheme.rgb_color_syntax_italic != 0xd19a67 ||
+        scheme.rgb_color_syntax_preprocessor != 0x61afef ||
         scheme.rgb_color_syntax_emphasis_strong != 0xde4000 ||
         scheme.rgb_color_syntax_math != 0xd19a66 ||
         scheme.rgb_markdown_heading_background != 0x354151)
@@ -119,6 +126,17 @@ int main(void) {
     if (scheme.rgb_color_background != 0x282c34 || scheme.color_mode != COLOR_MODE_RGB ||
         scheme.tab_stop != before_scheme.tab_stop || scheme.rgb_output != RGB_OUTPUT_ANSI_FALLBACK ||
         scheme.color_gutter != before_scheme.color_gutter) fail("scheme changed unrelated settings or ANSI palette");
+    FILE *legacy = fopen("colorschemes/one-dark.conf", "r");
+    fp = fopen(config, "w");
+    if (!legacy || !fp) fail("open legacy scheme");
+    char legacy_line[256];
+    while (fgets(legacy_line, sizeof(legacy_line), legacy))
+        if (strncmp(legacy_line, "rgb_syntax_italic", 16) != 0) fputs(legacy_line, fp);
+    fclose(legacy); fclose(fp);
+    if (!settingsLoadColorScheme(config, &scheme, scheme_error, sizeof(scheme_error)) ||
+        scheme.rgb_color_syntax_italic != scheme.rgb_color_syntax_keyword ||
+        scheme.color_syntax_italic != before_scheme.color_syntax_italic)
+        fail("legacy scheme italic inheritance preserves inactive palette");
     if (!settingsLoadColorScheme("colorschemes/catppuccin-mocha.conf", &scheme, scheme_error, sizeof(scheme_error)) ||
         scheme.rgb_color_background != 0x1e1e2e) fail("Mocha scheme rejected");
     before_scheme = scheme;

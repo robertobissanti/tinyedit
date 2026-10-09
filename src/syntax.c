@@ -1774,7 +1774,7 @@ const char *syntaxColorFor(enum syntaxHighlight hl, const struct editorSettings 
             if (settingsColor(s, color_syntax_normal) == COLOR_TERMINAL_DEFAULT) return NULL;
             return ansiColorCode(settingsColor(s, color_syntax_normal));
         case HL_COMMENT:      return ansiColorCode(settingsColor(s, color_syntax_comment));
-        case HL_EMPHASIS:
+        case HL_EMPHASIS:     return ansiColorCode(settingsColor(s, color_syntax_italic));
         case HL_KEYWORD:      return ansiColorCode(settingsColor(s, color_syntax_keyword));
         case HL_JSON_KEY:     return ansiColorCode(settingsColor(s, color_syntax_json_key));
         case HL_STRING:       return ansiColorCode(settingsColor(s, color_syntax_string));
