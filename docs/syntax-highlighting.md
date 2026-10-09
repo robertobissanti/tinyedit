@@ -31,7 +31,7 @@ supported languages: C/C++ (`.c` `.h` `.cpp` `.cc` `.cxx` `.hpp` `.hh`
 `.hxx`), Python (`.py`), Shell (`.sh` `.bash` `.zsh`), JavaScript/
 TypeScript (`.js` `.jsx` `.ts` `.tsx`), Markdown (`.md` `.markdown`, with
 headings, `` `inline code` ``, multi-line code fences, italic
-`*...*`/`_..._`, bold `**...**`/`__..._` (both may span several lines),
+`*...*`/`_..._`, bold `**...**`/`__...__` (both may span several lines),
 links and images, YAML front matter, and
 embedded HTML tags), HTML/XML (`.html` `.htm`
 `.xml`, with tags, attributes, and `<!-- -->` comments), and CSS (`.css`, with
@@ -128,8 +128,8 @@ math_mode = true
 ```
 
 <p align="center">
-  <img src="imgs/latex-syntax-highlighting.png" alt="LaTeX command syntax highlighting in tinyedit" width="49%">
-  <img src="imgs/latex-math-highlighting.png" alt="LaTeX mathematics syntax highlighting in tinyedit" width="49%">
+  <img src="../imgs/latex-syntax-highlighting.png" alt="LaTeX command syntax highlighting in tinyedit" width="49%">
+  <img src="../imgs/latex-math-highlighting.png" alt="LaTeX mathematics syntax highlighting in tinyedit" width="49%">
 </p>
 
 *A user-defined LaTeX syntax configuration highlights commands and mathematical

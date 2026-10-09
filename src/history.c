@@ -251,7 +251,7 @@ void historyRecordEdit(struct editorDocument *document, int32_t max_depth,
     history->pending = action;
 }
 
-/** @brief Detach only a changed row, preparing its new source allocation first. */
+/** @brief Prepare a row for mutation; see history.h for the 1/0 contract. */
 uint8_t historyPrepareRow(erow *row, size_t capacity) {
     struct editorBuffer *buffer = row->owner;
     struct editorHistory *history = buffer ? buffer->history : NULL;
@@ -304,7 +304,8 @@ static uint8_t historyReserveRows(struct editorBuffer *buffer) {
 }
 
 /**
- * @brief Insert copied source bytes at a row index; return zero without mutation on failure.
+ * @brief Offer a row insertion to the pending action; 1 means handled, even on a recorded failure.
+ * @details See history.h: 0 only when no recording is active.
  */
 uint8_t historyInsertRow(struct editorBuffer *buffer, int32_t at,
     const char *text, size_t len) {
@@ -337,7 +338,8 @@ uint8_t historyInsertRow(struct editorBuffer *buffer, int32_t at,
 }
 
 /**
- * @brief Detach the indexed source row into the pending action; return zero on failure.
+ * @brief Offer a row deletion to the pending action; 1 means handled, even on a recorded failure.
+ * @details See history.h: 0 only when no recording is active.
  */
 uint8_t historyDeleteRow(struct editorBuffer *buffer, int32_t at) {
     struct editorHistory *history = buffer->history;

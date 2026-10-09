@@ -136,7 +136,9 @@ color_syntax_keyword = blue-light
 Every `color_<name>` palette key has a corresponding `rgb_<name>` key.
 `color_mode` and `rgb_output` select behavior rather than colors.
 A leading `#` starts a comment, except at the start of an RGB color value;
-trailing comments after an RGB value are supported. Invalid values keep the
+trailing comments after a value are supported. In `filetype.<ext>` labels a
+`#` only starts a comment when preceded by whitespace, so `filetype.cs = C#`
+keeps its label. Invalid values keep the
 previous value (or default); absent keys use defaults. `terminal-default`
 means the terminal's own foreground or background in either mode. Explicit RGB
 values emit 24-bit foreground/background escapes and do not use its palette.

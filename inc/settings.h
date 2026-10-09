@@ -345,7 +345,8 @@ void settingsLoad(struct editorSettings *out);
 /**
  * @brief Persist settings and known filetype overrides through a temporary file.
  *
- * @details s must contain valid descriptor values, including enum indices.
+ * @details s must contain valid descriptor values, including enum indices. A
+ * symlinked ~/.tinyeditrc is followed, so the link itself is preserved.
  * @return 1 after file and directory sync, otherwise 0 with the temporary
  * file removed. A post-rename sync failure may have replaced the config.
  */
@@ -388,7 +389,10 @@ uint8_t settingColorIsDim(int32_t c);
  */
 const char *settingColorName(int32_t c);
 
-/* Applies a complete ANSI/RGB preset only on success; preserves RGB output. */
+/** @brief Apply a complete ANSI/RGB color preset to draft only on success.
+ * @details Other settings and rgb_output are preserved. On failure draft is
+ * untouched and a message is written to error (error_size bytes).
+ * @return 1 on success, otherwise 0. */
 uint8_t settingsLoadColorScheme(const char *path, struct editorSettings *draft,
     char *error, size_t error_size);
 

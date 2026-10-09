@@ -78,6 +78,39 @@ mostra/nasconde e Ctrl-B cambia focus. Non abilita ancora buffer multipli.
   Il vettore delle righe merita misure specifiche su caricamenti
   e modifiche strutturali; non confondere questo costo con i redraw ripetuti.
 
+- **Gestione sistematica dei fallimenti fatali** — oggi `terminalDie`,
+  `teOutOfMemory`, gli errori di `write` e i messaggi di stato seguono percorsi
+  separati, e ciascuno decide da sé quando ripristinare il terminale e quando
+  stampare (un messaggio stampato nell'alternate screen va perso: corretto per
+  l'apertura da riga di comando, non ancora per l'esaurimento di memoria).
+  Un unico punto di uscita fatale — ripristino del terminale, messaggio, codice
+  di uscita — richiamabile anche da `alloc.c` senza dipendere da `terminal.c`
+  (per esempio tramite un hook registrabile) renderebbe il comportamento
+  uniforme. Da valutare insieme alla gestione di SIGTERM/SIGHUP.
+
+- **Decoder dei tasti basato su un parser CSI generale** — oggi `terminal.c`
+  legge un numero fisso di byte per ogni forma nota (Kitty, modifyOtherKeys,
+  tasti funzione) e scarta il resto con un "drain": una forma non prevista può
+  consumare il byte sbagliato. Un parser a stati che accumula parametri
+  (`;`/`:`), byte intermedi e byte finale, e decide solo a sequenza completa,
+  scarterebbe le sequenze sconosciute per intero. Idee collegate:
+  - negoziare il protocollo Kitty (`CSI ? u`) invece di decodificare ogni forma
+    in ogni caso, ricordando la modalità attiva e mantenendo la tabella legacy
+    come ripiego;
+  - descrivere i tasti come tabella dati (`codepoint + modificatori → azione`,
+    con le equivalenze legacy accanto), così una nuova scorciatoia è una riga e
+    un test;
+  - fixture con i byte realmente catturati nei terminali (Ghostty, iTerm2,
+    Terminal.app, Konsole, kitty, tmux; si può usare il logger di tasti) che il
+    decoder deve tradurre nell'azione attesa, al posto di soli test che
+    simulano le sequenze;
+  - una pagina di compatibilità generata dalle fixture: per ogni scorciatoia,
+    quali terminali la inviano distinta e quali no;
+  - un ripiego universale per ogni azione che dipende da una combinazione non
+    disponibile ovunque (come `Ctrl-T` per la selezione). L'obiettivo realistico
+    è la stessa esperienza dei programmi desktop dove il terminale lo permette,
+    con l'alternativa dichiarata dove no.
+
 ## Interfaccia
 
 - **Mouse support opzionale (implementato)** — attivabile da F2/config,

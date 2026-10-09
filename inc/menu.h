@@ -13,6 +13,7 @@ struct menuDefinition {
     int32_t item_count;
 };
 
+/** @brief Output callback: copy len bytes of text into the caller's frame buffer. */
 typedef void (*menuAppendFn)(void *context, const char *text, int32_t len);
 
 struct editorMenu {

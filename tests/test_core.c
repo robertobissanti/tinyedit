@@ -1740,11 +1740,177 @@ static void testAuditRegressions(void) {
     editorResetDocument();
 }
 
+static void testControlBytes(void) {
+    settingsDefaults(&S);
+    S.show_menu = S.show_top_bar = S.show_line_numbers = S.syntax_highlight = 0;
+    S.auto_close_pairs = 1;
+    E.view.screenrows = 10; E.view.screencols = 60;
+    editorResetDocument();
+    editorInsertRow(0, "ab", 2);
+    E.document.file.dirty = 0;
+    /* Unbound controls and key events above the byte range are not text:
+     * NUL/LF/EOT would corrupt the saved file, F10 (menu off) was inserted
+     * as (uint8_t)1028. */
+    const int32_t ignored[] = {0, CTRL_KEY('d'), CTRL_KEY('j'), CTRL_KEY('k'), 0x1c, F10_KEY};
+    for (size_t i = 0; i < sizeof(ignored) / sizeof(ignored[0]); i++) {
+        pending_key = ignored[i] == 0 ? 0 : ignored[i];
+        editorDispatchKey(ignored[i]);
+        check(E.document.buffer.row_count == 1 && E.document.buffer.rows[0].size == 2 &&
+            !memcmp(E.document.buffer.rows[0].chars, "ab", 2) && !E.document.file.dirty,
+            "unbound control keys never enter the document");
+    }
+    pending_key = -1;
+    editorDispatchKey('x');
+    check(E.document.buffer.rows[0].size == 3, "printable keys are still inserted");
+
+    /* Controls stored in the document (e.g. a CRLF file with a doubled CR)
+     * keep their bytes but are never written to the terminal. */
+    editorResetDocument();
+    editorInsertRow(0, "vis\r\x1b[2J\x07\x7f", 11);
+    erow *row = &E.document.buffer.rows[0];
+    check(row->size == 11, "controls remain in the row");
+    struct abuf frame = ABUF_INIT;
+    editorDrawRowSegment(&frame, 0, 0, row->rsize, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    uint8_t leaked = 0;
+    for (int32_t i = 0; i < frame.len; i++)
+        if ((uint8_t)frame.b[i] < 32 && frame.b[i] != '\x1b') leaked = 1;
+    check(!leaked && !memmem(frame.b, (size_t)frame.len, "\x1b[2J", 4),
+        "document controls cannot reach the terminal");
+    check(memmem(frame.b, (size_t)frame.len, "vis", 3) != NULL, "visible text still drawn");
+    abFree(&frame);
+
+    /* The recovery screen prints the filename: controls are replaced and the
+     * UTF-8 name is centered/clipped by columns. */
+    editorResetDocument();
+    E.document.file.filename = teStrdup("x\x1b[2Jy\xc3\xa8.txt");
+    E.view.screencols = 40;
+    struct abuf line = ABUF_INIT;
+    editorRecoveryScreenLine(&line, "", E.document.file.filename);
+    check(!memmem(line.b, (size_t)line.len, "\x1b[2J", 4) && memmem(line.b, (size_t)line.len, "x?[2Jy\xc3\xa8", 8),
+        "recovery filename is sanitized");
+    int32_t columns = 0;
+    for (int32_t i = 0; i < line.len; ) {
+        if (line.b[i] == '\x1b') { while (i < line.len && line.b[i] != 'm') i++; i++; continue; }
+        if (line.b[i] == '\r' || line.b[i] == '\n') { i++; continue; }
+        size_t step = utf8NextCharLen(line.b, (size_t)i, (size_t)line.len);
+        columns += utf8SingleCharWidth(line.b + i, step);
+        i += (int32_t)step;
+    }
+    check(columns == 40, "recovery line fills exactly the screen columns");
+    abFree(&line);
+    editorResetDocument();
+}
+
+static void testSettingsEditIntClamp(void) {
+    settingsDefaults(&S);
+    E.view.screenrows = 20; E.view.screencols = 80;
+    const struct settingDescriptor *tab = settingsFind("tab_stop");
+    check(tab != NULL, "tab_stop descriptor");
+    struct editorSettings draft = S;
+    const char *inputs[] = {"4294967297\r", "4294967300\r", "99999999999999\r", "-5\r"};
+    const int32_t expected[] = {16, 16, 16, 1};
+    for (size_t i = 0; i < 4; i++) {
+        int pipefd[2];
+        check(pipe(pipefd) == 0, "int prompt pipe");
+        check(write(pipefd[1], inputs[i], strlen(inputs[i])) == (ssize_t)strlen(inputs[i]), "queue digits");
+        close(pipefd[1]);
+        int saved_in = dup(STDIN_FILENO), saved_out = dup(STDOUT_FILENO);
+        int sink = open("/dev/null", O_WRONLY);
+        check(dup2(pipefd[0], STDIN_FILENO) >= 0 && dup2(sink, STDOUT_FILENO) >= 0, "redirect int prompt");
+        close(pipefd[0]); close(sink);
+        int32_t value = 0;
+        uint8_t accepted = editorSettingsEditInt(&draft, 0, 0, tab, &value);
+        check(dup2(saved_in, STDIN_FILENO) >= 0 && dup2(saved_out, STDOUT_FILENO) >= 0, "restore int prompt");
+        close(saved_in); close(saved_out);
+        check(accepted && value == expected[i], "oversized numeric input clamps instead of wrapping");
+    }
+}
+
+static void testSecondReviewRegressions(void) {
+    settingsDefaults(&S);
+    S.show_menu = S.show_top_bar = S.show_line_numbers = S.syntax_highlight = 0;
+    E.view.screenrows = 10; E.view.screencols = 60;
+
+    /* A ZWJ joins the next code point into the same grapheme, so a control
+     * after it must still be filtered (ESC c would reset the terminal). */
+    editorResetDocument();
+    editorInsertRow(0, "A\xe2\x80\x8d\x1b" "c\r\xe2\x80\x8d\x07", 11);
+    erow *row = &E.document.buffer.rows[0];
+    struct abuf frame = ABUF_INIT;
+    editorDrawRowSegment(&frame, 0, 0, row->rsize, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    uint8_t leaked = 0;
+    for (int32_t i = 0; i < frame.len; i++) {
+        uint8_t byte = (uint8_t)frame.b[i];
+        if (byte < 32 && byte != 0x1b) leaked = 1;
+        if (byte == 0x1b && i + 1 < frame.len && frame.b[i + 1] == 'c') leaked = 1;
+    }
+    check(!leaked && row->size == 11, "controls hidden behind a joiner never reach the terminal");
+    abFree(&frame);
+
+    /* A pathname replaced by a FIFO must not block the disk comparison. */
+    char directory[] = "/tmp/tinyedit-fifo-XXXXXX";
+    check(mkdtemp(directory) != NULL, "fifo fixture directory");
+    char path[256];
+    snprintf(path, sizeof(path), "%s/doc.txt", directory);
+    FILE *file = fopen(path, "w");
+    check(file && fputs("x\n", file) >= 0 && fclose(file) == 0, "fifo fixture file");
+    editorResetDocument();
+    check(editorOpen(path), "open fixture before replacing it");
+    check(unlink(path) == 0 && mkfifo(path, 0600) == 0, "replace file with fifo");
+    pid_t child = fork();
+    check(child >= 0, "fork fifo probe");
+    if (!child) { alarm(2); _exit(editorDiffersFromDisk() ? 0 : 1); }
+    int status = 0;
+    check(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0,
+        "FIFO in place of the file counts as different without blocking");
+    unlink(path);
+
+    /* Save as asks before replacing a different existing file. */
+    char other[256];
+    snprintf(other, sizeof(other), "%s/other.txt", directory);
+    file = fopen(other, "w");
+    check(file && fputs("precious\n", file) >= 0 && fclose(file) == 0, "existing destination");
+    editorResetDocument();
+    editorInsertRow(0, "new text", 8);
+    const char *answers[] = {"n", "\x1b", "y"};
+    for (size_t i = 0; i < 3; i++) {
+        char keys[512];
+        snprintf(keys, sizeof(keys), "%s\r%s", other, answers[i]);
+        int input[2];
+        check(pipe(input) == 0 && write(input[1], keys, strlen(keys)) == (ssize_t)strlen(keys), "queue save as");
+        close(input[1]);
+        int saved_in = dup(STDIN_FILENO), saved_out = dup(STDOUT_FILENO);
+        int sink = open("/dev/null", O_WRONLY);
+        check(dup2(input[0], STDIN_FILENO) >= 0 && dup2(sink, STDOUT_FILENO) >= 0, "redirect save as");
+        close(input[0]); close(sink);
+        editorSaveAs();
+        check(dup2(saved_in, STDIN_FILENO) >= 0 && dup2(saved_out, STDOUT_FILENO) >= 0, "restore save as");
+        close(saved_in); close(saved_out);
+        char contents[32] = {0};
+        file = fopen(other, "r");
+        check(file != NULL && fgets(contents, sizeof(contents), file) != NULL, "read destination");
+        fclose(file);
+        if (i < 2) check(!strcmp(contents, "precious\n") && !E.document.file.filename,
+            "declined overwrite leaves the file and the document name untouched");
+        else check(!strcmp(contents, "new text\n") && E.document.file.filename,
+            "confirmed overwrite replaces the file");
+    }
+    /* Saving over the already-open file never asks. */
+    E.document.file.dirty = 1;
+    check(editorConfirmOverwrite(other) == 1, "same file is not an overwrite");
+    editorResetDocument();
+    unlink(other);
+    rmdir(directory);
+}
+
 int main(void) {
     settingsDefaults(&S);
     E.search.search_match_y = -1;
     E.search.search_match_end_y = -1;
     testAuditRegressions();
+    testControlBytes();
+    testSecondReviewRegressions();
+    testSettingsEditIntClamp();
     testPromptGrowth();
     testPathCompletion();
     testFilesystemTree();

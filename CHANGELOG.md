@@ -59,6 +59,41 @@
 
 ### Important fixes
 
+- Ignore unbound control keys instead of inserting them into the document.
+  Pressing Ctrl-D, Ctrl-Space (NUL), Ctrl-J (LF) or F10 with the menu disabled
+  used to add raw bytes that were saved: a LF split the line on disk and a NUL
+  made the file unopenable as binary by tinyedit itself.
+- Never send control bytes from a document to the terminal. A stray carriage
+  return (for example `\r\r\n` line endings) erased the whole visible row, and
+  ESC or BEL bytes were emitted as terminal commands, also when hidden behind a
+  zero-width joiner. The file bytes are unchanged; controls now occupy no
+  cells, as before.
+- Show the reason when a file named on the command line cannot be opened
+  (directory, permission denied, binary). The message used to be printed on the
+  alternate screen and vanished when tinyedit exited.
+- Keep `#` inside `filetype.<ext>` labels such as `C#`. Opening Settings and
+  saving used to truncate the label in `~/.tinyeditrc` to `C`; only ` #`
+  (preceded by whitespace) starts a comment there.
+- Sanitize and column-align the file name in the crash-recovery screen, so a name
+  containing escape bytes cannot control the terminal.
+- Stop an unsupported function key such as F5 (`ESC[15~`) from swallowing the
+  next typed character.
+- Ask before Save as replaces a different existing file (`y` confirms, any other
+  key keeps the file and the document name). Saving over the file already open
+  never asks.
+- Stop the editor from hanging when a modified file's pathname has been replaced
+  by a FIFO: the comparison with the disk now opens non-blockingly and treats
+  anything but a regular file as different.
+- Keep a symlinked `~/.tinyeditrc` (dotfile managers) as a link when Settings
+  are saved: the file it points to is rewritten.
+- Report an `xdg-open`/`open` launch failure reliably: the status pipe now
+  retries interrupted and short writes instead of discarding their result
+  (GCC warns about ignored `write()` results on Linux). The browser is still started
+  asynchronously; a permanent status-pipe failure in the detached launcher
+  remains unobservable.
+- Retry an interrupted system-clipboard paste (for example during a window
+  resize) instead of silently pasting the older internal clipboard.
+
 - Match One Dark RGB Markdown to the personal Vim One colors: blue headings,
   orange-red bold and orange math, with a more distinct blue-gray heading
   background (`#354151`). Heading
@@ -79,6 +114,21 @@
   retaining their distinct symlink color.
 
 ### Other minor fixing
+
+- Record the future ideas for unified fatal-error handling and a general CSI key
+  parser in `IDEAS.md`.
+- Correct the contracts of `historyInsertRow` and `historyDeleteRow`: 1 means
+  "handled", even when a recorded failure left the buffer unchanged.
+  Clarify separately that `historyPrepareRow` returns permission to mutate.
+- Clamp oversized numbers typed in Settings instead of wrapping them
+  (`4294967297` for Tab width became 1).
+- Open Help → Documentation even when `$HOME` contains `#` or a percent escape.
+- Correct the LaTeX screenshot paths in the syntax guide, check HTML image
+  references in the documentation test, list F10 in the F1 help screen, and
+  document the `filetype.*` comment rule.
+- Add the missing English Doxygen contracts for `links.c`, `links.h` and the link
+  and word-selection helpers in `tinyedit.c`; correct stale function names in the
+  `backup.h` overview.
 
 - Recognize Alt+Enter in Ghostty with Kitty keyboard mode enabled (including
   experimental macOS Command keys), so links open with either verified key

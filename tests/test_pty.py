@@ -94,6 +94,14 @@ def test_path_completion(home):
             if key == b"\x0f":
                 assert b"completion content" in read_until(master, b"completion content")
             else:
+                assert b"exists. Replace it?" in read_until(master, b"exists. Replace it?"), \
+                    "saving over an existing completed path asks first"
+                os.write(master, b"n")
+                read_available(master, 0.2)
+                assert existing.read_text() == "completion content\n", "declining keeps the file"
+                os.write(master, key + (str(folder) + "/sam").encode() + b"\t\r")
+                read_until(master, b"exists. Replace it?")
+                os.write(master, b"y")
                 read_available(master, 0.2)
                 assert existing.read_bytes() == b"", "save accepts completed path"
                 existing.write_text("completion content\n")
@@ -1744,6 +1752,69 @@ def test_cursor_blink(home):
         finish(process, master)
 
 
+def test_unknown_csi_keeps_next_key(home):
+    """F5-style ESC[15~ is ignored without consuming the following keystroke."""
+    target = pathlib.Path(home) / "csi-next-key.txt"
+    target.write_text("")
+    for sequence in (b"\x1b[15~", b"\x1b[17~", b"\x1b[24~"):
+        target.write_text("")
+        process, master = spawn_editor([str(target)], home)
+        try:
+            read_available(master)
+            os.write(master, sequence + b"abc")
+            read_available(master, 0.3)
+            os.write(master, b"\x13")
+            read_until(master, b"bytes written")
+            assert target.read_bytes() == b"abc\n", (sequence, target.read_bytes())
+        finally:
+            finish(process, master)
+
+
+def test_startup_error_survives_alternate_screen(home):
+    """The reason for a failed startup open is printed after leaving the alternate screen."""
+    unreadable = pathlib.Path(home) / "startup-unreadable.txt"
+    unreadable.write_text("x")
+    unreadable.chmod(0)
+    try:
+        for argument, message in ((str(home), b"open file: Is a directory"),
+                                  (str(unreadable), b"open file: Permission denied")):
+            process, master = spawn_editor([argument], home)
+            output = b""
+            try:
+                deadline = time.monotonic() + 3
+                while process.poll() is None and time.monotonic() < deadline:
+                    output += read_available(master, 0.1)
+                output += read_available(master, 0.2)
+            finally:
+                finish(process, master)
+            tail = output[output.rfind(b"\x1b[?1049h"):]
+            leave = tail.find(b"\x1b[?1049l")
+            assert leave >= 0 and tail.find(message) > leave, \
+                "error text must come after leaving the alternate screen"
+            assert message + b"\r\n" in tail, "raw-mode output ends with CR LF"
+    finally:
+        unreadable.chmod(0o600)
+
+
+def test_documentation_path_with_special_characters(home):
+    """Help > Documentation works when HOME contains '#' or a percent escape."""
+    for name in ("docs#hash", "docs%20escape"):
+        special = pathlib.Path(home) / name
+        guide = special / ".tinyedit" / "docs"
+        guide.mkdir(parents=True)
+        (guide / "README.md").write_text("plain guide\n")
+        process, master = spawn_editor([], special)
+        try:
+            read_available(master)
+            os.write(master, b"\x1b[21~")
+            read_available(master, 0.2)
+            os.write(master, b"\x1b[C" * 4 + b"\x1b[B\r")
+            output = read_available(master, 0.8)
+            assert b"not an accessible" not in output and b"README.md" in output, (name, output[-300:])
+        finally:
+            finish(process, master)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="tinyedit-tests-") as tmp:
         home = pathlib.Path(tmp)
@@ -1801,6 +1872,9 @@ def main():
         test_rgb_settings_mouse(home)
         test_settings_failed_save(home)
         test_settings_syntax_color_preview(home)
+        test_unknown_csi_keeps_next_key(home)
+        test_startup_error_survives_alternate_screen(home)
+        test_documentation_path_with_special_characters(home)
         test_settings_status_bar_preview(home)
         for save in ("ctrl-s", "f2", "esc-y"):
             for initially_visible in (0, 1):

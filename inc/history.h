@@ -43,12 +43,28 @@ uint8_t historyFailed(const struct editorDocument *document);
 
 /* Buffer-only recording hooks. Preparations leave source unchanged on failure.
  * Changes own detached rows; all row pointers are invalidated by structural edits. */
-/** @brief Detach only a changed row, preparing its new source allocation first. */
+/** @brief Prepare a row for in-place mutation, detaching its old source into the pending action.
+ * @details capacity is the byte size (with NUL) the row will need. Returns 1 when
+ * the caller may mutate the row: no history, no pending action, or the old source
+ * was detached and a fresh allocation installed. Returns 0, with the cause in
+ * history->error, when the mutation must not happen; the action rolls back at
+ * historyFinishEdit(). Row pointers stay valid; the row's derived caches are dropped. */
 uint8_t historyPrepareRow(erow *row, size_t capacity);
-/** @brief Insert copied source bytes at a row index; return zero without mutation on failure. */
+/** @brief Offer a row insertion to the pending action.
+ * @details Return value means "handled", not "succeeded". 0: no recording is
+ * active, nothing was done and the caller inserts the row directly. 1: the hook
+ * took over; check historyFailed() afterwards, because a budget, size or memory
+ * failure is also reported as 1, leaves the buffer unchanged and sets
+ * history->error. On success the buffer owns a copy of text (len bytes, no
+ * terminator needed) and all row pointers are invalidated. */
 uint8_t historyInsertRow(struct editorBuffer *buffer, int32_t at,
     const char *text, size_t len);
-/** @brief Detach the indexed source row into the pending action; return zero on failure. */
+/** @brief Offer a row deletion to the pending action.
+ * @details Same protocol as historyInsertRow(): 0 means no recording is active and
+ * the caller frees and removes the row; 1 means handled, including a recorded
+ * failure (check historyFailed()), in which case the row stays in the buffer.
+ * On success the pending action owns the detached row (its text and caches) and
+ * all row pointers are invalidated. at must be a valid row index. */
 uint8_t historyDeleteRow(struct editorBuffer *buffer, int32_t at);
 
 /* Replay moves owned row spans; no source allocation is needed. 0 is empty,

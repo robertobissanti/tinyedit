@@ -522,6 +522,12 @@ void settingsLoad(struct editorSettings *out) {
             if (value_start == hash && strncmp(key_start, "rgb_", 4) == 0 &&
                 strncmp(key_start, "rgb_output", 10) != 0) hash = strchr(hash + 1, '#');
         }
+        /* A filetype label may contain '#' ("C#", "F#"): only " #" starts a
+         * comment there, otherwise saving would silently truncate the label. */
+        if (hash && assignment && hash > assignment &&
+            strncmp(key_start, FILETYPE_KEY_PREFIX, strlen(FILETYPE_KEY_PREFIX)) == 0) {
+            while (hash && !isspace((unsigned char)hash[-1])) hash = strchr(hash + 1, '#');
+        }
         if (hash) *hash = '\0';
 
         char *eq = strchr(line, '=');
@@ -649,13 +655,26 @@ uint8_t settingsLoadColorScheme(const char *path, struct editorSettings *draft,
 /**
  * @brief Persist settings and known filetype overrides through a temporary file.
  *
- * @details s must contain valid descriptor values, including enum indices.
+ * @details s must contain valid descriptor values, including enum indices. A
+ * symlinked ~/.tinyeditrc is followed, so the link itself is preserved.
  * @return 1 after file and directory sync, otherwise 0 with the temporary
  * file removed. A post-rename sync failure may have replaced the config.
  */
 uint8_t settingsSave(const struct editorSettings *s) {
     char path[1024];
     if (!configPath(path, sizeof(path))) return 0;
+
+    /* A dotfile manager may keep ~/.tinyeditrc as a symlink: replace the real
+     * file it points to, not the link. realpath() allocates internally, so its
+     * failure is recoverable here; ENOENT just means the file is not there yet. */
+    char *resolved = realpath(path, NULL);
+    if (resolved) {
+        int32_t resolved_len = snprintf(path, sizeof(path), "%s", resolved);
+        free(resolved);
+        if (resolved_len < 0 || (size_t)resolved_len >= sizeof(path)) { errno = ENAMETOOLONG; return 0; }
+    } else if (errno != ENOENT) {
+        return 0;
+    }
 
     char tmppath[1040];
     int32_t pathlen = snprintf(tmppath, sizeof(tmppath), "%s.tmp.XXXXXX", path);

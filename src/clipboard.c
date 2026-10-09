@@ -279,7 +279,12 @@ static char *runPasteCommand(ClipboardBackend b, size_t *outlen) {
     char *buf = teMalloc(cap);
 
     ssize_t n;
-    while ((n = read(fds[0], buf + len, cap - len)) > 0) {
+    for (;;) {
+        n = read(fds[0], buf + len, cap - len);
+        /* The editor's SIGWINCH handler has no SA_RESTART: a resize during a
+         * slow paste tool must not discard the system clipboard. */
+        if (n == -1 && errno == EINTR) continue;
+        if (n <= 0) break;
         len += (size_t)n;
         if (len == cap) {
             cap = teGrowCapacity(cap, teSizeAdd(len, 1), SIZE_MAX);

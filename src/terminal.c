@@ -78,11 +78,17 @@ uint8_t terminalWrite(const char *data, size_t len) {
 /**
  * @brief Report a fatal system error and exit through terminal cleanup.
  *
- * @details s is the operation label passed to perror(). Does not return; exit
- * handlers restore modes already enabled.
+ * @details s is the operation label printed with the errno text on stderr after
+ * leaving the alternate screen, so the message remains visible. Does not
+ * return; exit handlers restore the remaining modes.
  */
 void terminalDie(const char *s) {
-    perror(s);
+    int saved_errno = errno;
+    /* Leave the alternate screen first: text printed there is discarded when
+     * the exit handlers switch back, which would hide the reason for the exit.
+     * Raw mode still disables output post-processing, hence the explicit CR. */
+    terminalRestoreVisualState();
+    fprintf(stderr, "%s: %s\r\n", s, strerror(saved_errno));
     exit(1);
 }
 
@@ -662,6 +668,7 @@ int32_t terminalReadKey(
                     int32_t field_idx = 0;
                     uint8_t term = 0;
                     uint8_t ok = 1;
+                    uint8_t ended = 0; /* the sequence's final byte was already consumed */
                     for (int32_t guard = 0; guard < 16; guard++) {
                         uint8_t b;
                         if (read(STDIN_FILENO, &b, 1) != 1) { ok = 0; break; }
@@ -678,6 +685,9 @@ int32_t terminalReadKey(
                             term = b;
                             break;
                         } else {
+                            /* e.g. the '~' of ESC[15~: draining further would
+                             * swallow the user's next keystroke. */
+                            ended = b >= 0x40 && b <= 0x7e;
                             ok = 0;
                             break;
                         }
@@ -692,7 +702,7 @@ int32_t terminalReadKey(
                         if ((fields[1] == 5 || fields[1] == 6) &&
                             fields[0] >= 'a' && fields[0] <= 'z')
                             return CTRL_KEY(fields[0]);
-                    } else if (!ok) {
+                    } else if (!ok && !ended) {
                         editorDrainUnknownCsiSequence(16);
                     }
                     return '\x1b';
@@ -975,5 +985,3 @@ int32_t terminalGetWindowSize(int32_t *rows, int32_t *cols) {
     *rows = ws.ws_row;
     return 0;
 }
-
-/* ---- row operations ----------------------------------------------------- */

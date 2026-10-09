@@ -4,6 +4,9 @@
 #include "clipboard.h"
 
 #include <stdint.h>
+#include <signal.h>
+#include <sys/stat.h>
+#include <sys/time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +35,45 @@ static void testRejectedSizes(void) {
         check(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
             WEXITSTATUS(status) == EXIT_FAILURE, "overflow rejects before allocation");
     }
+}
+
+static void tick(int sig) { (void)sig; }
+
+/* A handler without SA_RESTART (like the editor's SIGWINCH handler) interrupts
+ * read() while a slow clipboard tool runs; the paste must retry, not fall back
+ * to stale internal text. */
+static void testPasteSurvivesSignal(void) {
+    char dir[] = "/tmp/tinyedit-fakeclip-XXXXXX";
+    check(mkdtemp(dir) != NULL, "fake clipboard directory");
+    char tool[256];
+    snprintf(tool, sizeof(tool), "%s/xclip", dir);
+    FILE *script = fopen(tool, "w");
+    check(script != NULL, "fake clipboard tool");
+    fputs("#!/bin/sh\nsleep 0.4\nprintf 'SYSTEM-CLIPBOARD'\n", script);
+    check(fclose(script) == 0 && chmod(tool, 0755) == 0, "fake tool executable");
+    char *old_path = getenv("PATH") ? teStrdup(getenv("PATH")) : teStrdup("/usr/bin:/bin");
+    char new_path[512];
+    snprintf(new_path, sizeof(new_path), "%s:/usr/bin:/bin", dir);
+    setenv("PATH", new_path, 1);
+    backend = CLIPBOARD_BACKEND_XCLIP;
+    internalCopy("STALE", 5);
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = tick;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGALRM, &action, NULL);
+    struct itimerval timer = {{0, 0}, {0, 100000}};
+    setitimer(ITIMER_REAL, &timer, NULL);
+    size_t len = 0;
+    char *text = clipboardPaste(&len);
+    check(text && len == 16 && !strcmp(text, "SYSTEM-CLIPBOARD"),
+        "interrupted paste retries instead of using stale internal text");
+    clipboardFree(text);
+    setenv("PATH", old_path, 1);
+    free(old_path);
+    unlink(tool);
+    rmdir(dir);
+    backend = CLIPBOARD_BACKEND_INTERNAL;
 }
 
 int main(void) {
@@ -66,6 +108,7 @@ int main(void) {
     clipboardFree(text);
     free(internal_buf);
     internal_buf = NULL; internal_len = 0;
+    testPasteSurvivesSignal();
     puts("memory contract tests: ok");
     return 0;
 }

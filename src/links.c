@@ -12,10 +12,23 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+/**
+ * @brief Step over one grapheme in a bounded link-scanning buffer.
+ * @details text holds length bytes and at is a source-byte offset.
+ * @return the offset after the grapheme (one byte for malformed input), or at
+ * when it is already at or past length.
+ */
 static int32_t next(const char *text, int32_t at, int32_t length) {
     return at + (int32_t)utf8NextCharLen(text, (size_t)at, (size_t)length);
 }
 
+/**
+ * @brief Check that a target is a complete HTTP or HTTPS URL.
+ * @details target is NUL-terminated. Rejects anything but a case-insensitive
+ * http:// or https:// prefix followed by at least one byte, and any space or
+ * control byte, so the value is safe to pass as one launcher argument.
+ * @return 1 for an acceptable URL, otherwise 0.
+ */
 uint8_t linksIsWeb(const char *target) {
     size_t prefix = !strncasecmp(target, "https://", 8) ? 8 :
         !strncasecmp(target, "http://", 7) ? 7 : 0;
@@ -25,6 +38,14 @@ uint8_t linksIsWeb(const char *target) {
     return 1;
 }
 
+/**
+ * @brief Find the inline Markdown link or bare web URL under a cursor offset.
+ * @details text holds length source bytes (one row, no terminator required);
+ * cursor is a source-byte offset. Backslash escapes and code spans are skipped.
+ * All offsets written to link are source-byte boundaries; the end offsets are
+ * exclusive. Nothing is allocated, and link is left unchanged on failure.
+ * @return 1 when cursor lies inside a link, otherwise 0.
+ */
 uint8_t linksFind(const char *text, int32_t length, int32_t cursor,
     struct textLink *link) {
     if (cursor < 0 || cursor >= length) return 0;
@@ -120,6 +141,13 @@ uint8_t linksFind(const char *text, int32_t length, int32_t cursor,
     return 0;
 }
 
+/**
+ * @brief Copy a link destination, removing Markdown backslash escapes.
+ * @details link must come from linksFind() for the same text. Bytes are copied
+ * through the UTF-8 helpers, so malformed sequences survive unchanged.
+ * @return owned NUL-terminated text to free, or NULL when the destination
+ * contains a control byte.
+ */
 char *linksTarget(const char *text, const struct textLink *link) {
     size_t length = (size_t)(link->target_end - link->target_start);
     char *target = teMalloc(teSizeAdd(length, 1));
@@ -138,6 +166,10 @@ char *linksTarget(const char *text, const struct textLink *link) {
     return target;
 }
 
+/**
+ * @brief Convert one hexadecimal digit.
+ * @return 0-15, or -1 when c is not a hexadecimal digit.
+ */
 static int32_t hex(unsigned char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -145,6 +177,13 @@ static int32_t hex(unsigned char c) {
     return -1;
 }
 
+/**
+ * @brief Decode %XX escapes in a local path or heading fragment.
+ * @details text is NUL-terminated; invalid escapes stay literal and the result
+ * never grows beyond the input. Decoded bytes need not be valid UTF-8.
+ * @return owned NUL-terminated text to free, or NULL when a control byte
+ * (literal or percent-encoded) would result.
+ */
 char *linksDecode(const char *text) {
     size_t length = strlen(text), out = 0;
     char *decoded = teMalloc(teSizeAdd(length, 1));
@@ -162,6 +201,13 @@ char *linksDecode(const char *text) {
     return decoded;
 }
 
+/**
+ * @brief Build a GitHub-style anchor from an ATX heading row.
+ * @details text holds length source bytes. Leading and closing # marks are
+ * dropped, ASCII letters are lowercased, spaces become hyphens, other ASCII
+ * punctuation is removed and non-ASCII bytes are kept as they are.
+ * @return owned NUL-terminated text to free.
+ */
 char *linksHeadingSlug(const char *text, int32_t length) {
     char *slug = teMalloc(teSizeAdd((size_t)length, 1));
     int32_t at = 0;
@@ -182,6 +228,36 @@ char *linksHeadingSlug(const char *text, int32_t length) {
     return slug;
 }
 
+/**
+ * @brief Send an errno value through a pipe despite interruptions and short writes.
+ * @details fd is the write end of the launcher status pipe.
+ * @return 1 when all sizeof(int) bytes were written, otherwise 0.
+ */
+static uint8_t linksReportError(int fd, int error) {
+    const char *bytes = (const char *)&error;
+    size_t sent = 0;
+    while (sent < sizeof(error)) {
+        ssize_t count = write(fd, bytes + sent, sizeof(error) - sent);
+        if (count > 0) sent += (size_t)count;
+        else if (count < 0 && errno == EINTR) continue;
+        else return 0;
+    }
+    return 1;
+}
+
+/**
+ * @brief Ask the desktop to open an HTTP(S) URL without invoking a shell.
+ * @details Runs open (macOS) or xdg-open with target as a single argument from
+ * a detached grandchild, so the editor never waits for the browser. The pipe
+ * to the parent is close-on-exec: a successful exec closes it and the parent
+ * sees EOF; fork or exec failure sends the errno instead, retrying
+ * interrupted and short writes. If the intermediate child cannot deliver a
+ * fork failure it exits with status 126, which the parent reports as failure.
+ * The detached grandchild is never waited for, so a report lost there (a pipe
+ * write failing after all retries) cannot be observed.
+ * @return 1 when the launcher started, otherwise 0 with errno (EINVAL for a
+ * target rejected by linksIsWeb()).
+ */
 uint8_t linksOpenWeb(const char *target) {
     if (!linksIsWeb(target)) { errno = EINVAL; return 0; }
     int channel[2];
@@ -206,23 +282,28 @@ uint8_t linksOpenWeb(const char *target) {
 #else
             execlp("xdg-open", "xdg-open", target, (char *)NULL);
 #endif
-            int error = errno;
-            (void)write(channel[1], &error, sizeof(error));
-            _exit(127);
+            _exit(linksReportError(channel[1], errno) ? 127 : 126);
         }
-        if (launcher < 0) {
-            int error = errno;
-            (void)write(channel[1], &error, sizeof(error));
-        }
+        if (launcher < 0 && !linksReportError(channel[1], errno)) _exit(126);
         _exit(launcher < 0 ? 127 : 0);
     }
     close(channel[1]);
     if (child < 0) { int error = errno; close(channel[0]); errno = error; return 0; }
     int error = 0;
-    ssize_t count;
-    do { count = read(channel[0], &error, sizeof(error)); } while (count < 0 && errno == EINTR);
+    size_t received = 0;
+    uint8_t read_failed = 0;
+    while (received < sizeof(error)) {
+        ssize_t count = read(channel[0], (char *)&error + received, sizeof(error) - received);
+        if (count > 0) received += (size_t)count;
+        else if (count < 0 && errno == EINTR) continue;
+        else { read_failed = count < 0; break; }
+    }
+    int read_errno = errno;
     close(channel[0]);
-    while (waitpid(child, NULL, 0) < 0 && errno == EINTR) {}
-    if (count != 0) { if (error) errno = error; return 0; }
+    int status = 0;
+    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
+    if (received == sizeof(error)) { errno = error ? error : EIO; return 0; }
+    if (read_failed) { errno = read_errno; return 0; }
+    if (received > 0 || !WIFEXITED(status) || WEXITSTATUS(status) == 126) { errno = EIO; return 0; }
     return 1;
 }

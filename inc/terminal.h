@@ -23,8 +23,9 @@ uint8_t terminalWrite(const char *data, size_t len);
 /**
  * @brief Report a fatal system error and exit through terminal cleanup.
  *
- * @details s is the operation label passed to perror(). Does not return; exit
- * handlers restore modes already enabled.
+ * @details s is the operation label printed with the errno text on stderr after
+ * leaving the alternate screen, so the message remains visible. Does not
+ * return; exit handlers restore the remaining modes.
  */
 void terminalDie(const char *s);
 /**

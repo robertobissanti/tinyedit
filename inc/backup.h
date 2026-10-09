@@ -4,7 +4,7 @@
  * entry).
  *
  * <hash> is derived from the edited file's absolute path (see
- * backupHashPath()), so a lookup at startup is a direct path build +
+ * backupPathFor()), so a lookup at startup is a direct path build +
  * open(), never a directory scan -- important once many files have been
  * backed up over time. The first line of the .swp file itself carries
  * the absolute path in clear text, so a backup can be identified just by
@@ -16,7 +16,7 @@
  * dirty; backupRemove() is called on a clean exit (after a successful
  * save, or when quitting with nothing to save) so a stale .swp never
  * outlives the session that wrote it -- its mere presence at the next
- * startup is exactly the crash signal backupCheck() looks for.
+ * startup is exactly the crash signal backupExists() looks for.
  */
 
 #ifndef __TE_BACKUP_H

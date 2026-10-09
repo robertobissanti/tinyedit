@@ -214,8 +214,35 @@ int main(void) {
         unlink(longfile);
     }
 
-    unlink(filename);
+    /* A label such as "C#" keeps its hash; only " #" starts a comment, and a
+     * save/load round trip must not truncate the user's label. */
+    fp = fopen(config, "w");
+    if (!fp) fail("open filetype config");
+    fputs("filetype.cs = C#\nfiletype.fs = F# (ML)\nfiletype.xx = Name # note\n", fp);
+    if (fclose(fp) != 0) fail("close filetype config");
+    settingsLoad(&settings);
+    if (strcmp(filetypeForExtension("cs"), "C#") != 0) fail("filetype label keeps hash");
+    if (strcmp(filetypeForExtension("fs"), "F# (ML)") != 0) fail("filetype label keeps hash and text");
+    if (strcmp(filetypeForExtension("xx"), "Name") != 0) fail("whitespace-preceded hash is still a comment");
+    if (!settingsSave(&settings)) fail("save filetype labels");
+    settingsLoad(&settings);
+    if (strcmp(filetypeForExtension("cs"), "C#") != 0) fail("filetype label survives save and load");
+
+    /* A symlinked ~/.tinyeditrc (dotfile manager) keeps its link on save. */
+    char real_config[1100];
+    snprintf(real_config, sizeof(real_config), "%s.real", config);
+    if (rename(config, real_config) != 0) fail("move config aside");
+    if (symlink(real_config, config) != 0) fail("symlink config");
+    settings.tab_stop = 7;
+    if (!settingsSave(&settings)) fail("save through symlink");
+    struct stat link_info;
+    if (lstat(config, &link_info) != 0 || !S_ISLNK(link_info.st_mode)) fail("config symlink survives save");
+    settingsLoad(&settings);
+    if (settings.tab_stop != 7) fail("symlink target holds the saved value");
     unlink(config);
+    unlink(real_config);
+
+    unlink(filename);
     puts("settings/backup tests: ok");
     return 0;
 }

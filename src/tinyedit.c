@@ -193,6 +193,7 @@ static const struct helpEntry helpEntries[] = {
     { "Markdown italic color", "F2 > Colors > Syntax highlighting; independent of keyword colors" },
     { "Cursor blinking", "Toggle in F2 or View; applies to block and bar cursors" },
     { "Ctrl-D (Settings)", "Reset all draft settings; Esc at root offers save/discard/cancel" },
+    { "F10", "Open or close the menu bar (arrows, Enter, Esc)" },
     { "F1", "This help screen" },
     { "F3", "Info screen: version, author, current file stats" },
     { NULL, "Configuration files (see README.md for details)" },
@@ -901,6 +902,7 @@ static void editorCancelMouseDrag(void);
 static void abAppend(struct abuf *ab, const char *s, int32_t len);
 static void abFree(struct abuf *ab);
 static void editorMenuAppend(void *context, const char *text, int32_t len);
+static char *editorDisplayText(const char *text);
 
 /**
  * @brief Make whitespace visible in a single-line prompt.
@@ -1356,18 +1358,29 @@ static void editorMaybeBackup(void) {
  * @brief Append a centered, padded line to the recovery warning.
  *
  * @details ab receives output bytes; bg is an ANSI background or attribute
- * sequence and text is NUL-terminated.
+ * sequence and text is NUL-terminated. Controls and malformed bytes are
+ * replaced for display, and the line is clipped at grapheme boundaries and
+ * centered by display columns, not bytes.
  */
 static void editorRecoveryScreenLine(struct abuf *ab, const char *bg, const char *text) {
-    int32_t textlen = (int32_t)strlen(text);
-    if (textlen > E.view.screencols) textlen = E.view.screencols;
-    int32_t padding = (E.view.screencols - textlen) / 2;
+    char *safe = editorDisplayText(text);
+    size_t bytes = strlen(safe), shown = 0;
+    int32_t textwidth = 0;
+    while (shown < bytes) {
+        size_t step = utf8NextCharLen(safe, shown, bytes);
+        int32_t width = utf8SingleCharWidth(safe + shown, step);
+        if (width > E.view.screencols - textwidth) break;
+        textwidth += width;
+        shown += step;
+    }
+    int32_t padding = (E.view.screencols - textwidth) / 2;
 
     abAppend(ab, bg, (int32_t)strlen(bg));
     for (int32_t i = 0; i < padding; i++) abAppend(ab, " ", 1);
-    abAppend(ab, text, textlen);
-    for (int32_t i = padding + textlen; i < E.view.screencols; i++) abAppend(ab, " ", 1);
+    abAppend(ab, safe, (int32_t)shown);
+    for (int32_t i = padding + textwidth; i < E.view.screencols; i++) abAppend(ab, " ", 1);
     abAppend(ab, "\x1b[m\r\n", 5);
+    free(safe);
 }
 
 /**
@@ -1395,10 +1408,12 @@ static void editorRecoveryScreen(void) {
     editorRecoveryScreenLine(&ab, bg, "");
     editorRecoveryScreenLine(&ab, bg, "!!  UNSAVED CHANGES FOUND  !!");
     editorRecoveryScreenLine(&ab, bg, "");
-    char msg[160];
-    snprintf(msg, sizeof(msg), "A previous session on \"%.100s\" did not exit cleanly.",
-        E.document.file.filename ? E.document.file.filename : "");
+    const char *recovered_name = E.document.file.filename ? E.document.file.filename : "";
+    size_t msg_size = teSizeAdd(strlen(recovered_name), 64);
+    char *msg = teMalloc(msg_size);
+    snprintf(msg, msg_size, "A previous session on \"%s\" did not exit cleanly.", recovered_name);
     editorRecoveryScreenLine(&ab, bg, msg);
+    free(msg);
     editorRecoveryScreenLine(&ab, bg, "Restore the recovered changes?  [y] Yes    [n] No");
     editorRecoveryScreenLine(&ab, bg, "");
     for (int32_t i = mid + 3; i < E.view.screenrows; i++) editorRecoveryScreenLine(&ab, bg, "");
@@ -1482,6 +1497,30 @@ static enum fileSaveResult editorSaveToPath(const char *filename) {
 }
 
 /**
+ * @brief Ask before replacing an existing file other than the current document.
+ * @details name is the typed destination (home shorthand allowed). Nothing is
+ * asked for a new path, a directory (the save will report its own error) or the
+ * file already open (same device and inode, so a different spelling of the same
+ * path does not prompt). Any key but y/Y refuses.
+ * @return 1 to continue saving, 0 when the user declines.
+ */
+static uint8_t editorConfirmOverwrite(const char *name) {
+    char *path = fileioExpandHomePath(name);
+    if (!path) return 1;
+    struct stat target, current;
+    uint8_t exists = stat(path, &target) == 0 && !S_ISDIR(target.st_mode);
+    uint8_t same = exists && E.document.file.filename &&
+        stat(E.document.file.filename, &current) == 0 &&
+        current.st_dev == target.st_dev && current.st_ino == target.st_ino;
+    free(path);
+    if (!exists || same) return 1;
+    editorSetStatusMessage("%s exists. Replace it? (y/n)", name);
+    editorRefreshScreen();
+    int32_t key = editorReadKey();
+    return key == 'y' || key == 'Y';
+}
+
+/**
  * @brief Save the active document, asking for a name when needed.
  *
  * @details force_prompt selects Save as. On success clears dirty and removes
@@ -1503,6 +1542,11 @@ static void editorSaveInternal(uint8_t force_prompt) {
         if (name[0] == '\0') {
             free(name);
             editorSetStatusMessage("Save aborted: empty filename.");
+            return;
+        }
+        if (!editorConfirmOverwrite(name)) {
+            free(name);
+            editorSetStatusMessage("Save aborted: file not replaced.");
             return;
         }
     }
@@ -1533,8 +1577,8 @@ static void editorSaveAs(void) {
  * @brief Check whether the serialized document actually differs from its file.
  *
  * @details Used after undo/redo and before leaving a dirty document.
- * @return 1 for changed text or an unreadable file; unnamed empty buffers
- * are unchanged.
+ * @return 1 for changed text, an unreadable file or a non-regular file;
+ * unnamed empty buffers are unchanged.
  *
  * Any I/O failure answers "yes, it differs": if the file can't be read the
  * safe assumption is that there is something to lose, so the user still gets
@@ -1546,8 +1590,15 @@ static uint8_t editorDiffersFromDisk(void) {
         return E.document.buffer.row_count > 1 ||
             (E.document.buffer.row_count == 1 && E.document.buffer.rows[0].size > 0);
 
-    FILE *fp = fopen(E.document.file.filename, "rb");
-    if (!fp) return 1;
+    /* Non-blocking open plus fstat on the same descriptor: a pathname swapped
+     * for a FIFO or device after loading must neither block the editor nor be
+     * read as document text. Anything but a regular file counts as different. */
+    int fd = open(E.document.file.filename, O_RDONLY | O_NONBLOCK);
+    if (fd == -1) return 1;
+    struct stat disk_stat;
+    FILE *fp = NULL;
+    if (fstat(fd, &disk_stat) == 0 && S_ISREG(disk_stat.st_mode)) fp = fdopen(fd, "rb");
+    if (!fp) { close(fd); return 1; }
 
     uint8_t differs = 0;
     char disk[4096];
@@ -1721,6 +1772,13 @@ static void editorOpenFile(void) {
 
 /* ---- links and installed documentation ---------------------------------- */
 
+/**
+ * @brief Find the link under the document cursor.
+ * @details Returns 0 while the sidebar has focus and inside Markdown fenced
+ * code. The cursor and link offsets are source bytes of the current row; link
+ * borrows nothing from the row.
+ * @return 1 and fills link when the cursor is on a link, otherwise 0.
+ */
 static uint8_t editorCursorLink(struct textLink *link) {
     int32_t cy = E.document.cursor.cy;
     if (T.focused || cy < 0 || cy >= E.document.buffer.row_count) return 0;
@@ -1730,6 +1788,13 @@ static uint8_t editorCursorLink(struct textLink *link) {
     return linksFind(row->chars, row->size, E.document.cursor.cx, link);
 }
 
+/**
+ * @brief Move the cursor to the ATX heading whose slug equals anchor.
+ * @details anchor is borrowed, decoded text; NULL or empty does nothing. On a
+ * match the cursor goes to the heading start, selection is cleared and the view
+ * is reset to the top (the next redraw scrolls to the cursor). A miss only
+ * reports "Heading not found".
+ */
 static void editorLinkAnchor(const char *anchor) {
     if (!anchor || !*anchor) return;
     for (int32_t y = 0; y < E.document.buffer.row_count; y++) {
@@ -1752,6 +1817,15 @@ static void editorLinkAnchor(const char *anchor) {
     editorSetStatusMessage("Heading not found: %s", anchor);
 }
 
+/**
+ * @brief Open a link destination: web URL, same-file anchor or local file.
+ * @details target is a Markdown-level destination (percent escapes and an
+ * optional #fragment are interpreted). Web URLs go to the system browser; other
+ * URI schemes are refused. Relative paths resolve against the current file's
+ * directory, and a directory opens its README.md. Switching files uses the
+ * save/discard/cancel gate, and every failure leaves the current document
+ * untouched. Results are reported in the message bar.
+ */
 static void editorFollowLink(const char *target) {
     if (linksIsWeb(target)) {
         if (linksOpenWeb(target)) editorSetStatusMessage("Opened link in browser");
@@ -1813,6 +1887,11 @@ static void editorFollowLink(const char *target) {
     free(path); free(anchor);
 }
 
+/**
+ * @brief Follow the link under the cursor (Alt+Enter or double click).
+ * @details Reports "No link under cursor" or "Invalid link target" instead of
+ * acting when there is nothing safe to open.
+ */
 static void editorOpenCursorLink(void) {
     struct textLink link;
     if (!editorCursorLink(&link)) { editorSetStatusMessage("No link under cursor"); return; }
@@ -1821,6 +1900,12 @@ static void editorOpenCursorLink(void) {
     else editorSetStatusMessage("Invalid link target");
 }
 
+/**
+ * @brief Open the installed guide at $HOME/.tinyedit/docs/README.md.
+ * @details Reports a missing HOME or missing installation without changing the
+ * document. The path is escaped so editorFollowLink() cannot reinterpret a
+ * literal '#' or '%' in HOME as a fragment or percent escape.
+ */
 static void editorDocumentation(void) {
     const char *home = getenv("HOME");
     if (!home || !*home) { editorSetStatusMessage("HOME is not set"); return; }
@@ -1828,13 +1913,35 @@ static void editorDocumentation(void) {
     char *path = teMalloc(teSizeAdd(strlen(home), sizeof(suffix)));
     strcpy(path, home);
     strcat(path, suffix);
-    if (access(path, R_OK) < 0)
+    if (access(path, R_OK) < 0) {
         editorSetStatusMessage("Documentation missing: run make install-docs");
-    else editorFollowLink(path);
+        free(path);
+        return;
+    }
+    /* editorFollowLink() treats its argument as a link target: escape the two
+     * characters it would otherwise read as a fragment or percent escape. */
+    size_t specials = 0;
+    for (const char *c = path; *c; c++) specials += (*c == '%' || *c == '#') ? 2 : 0;
+    char *target = teMalloc(teSizeAdd(teSizeAdd(strlen(path), specials), 1));
+    char *out = target;
+    for (const char *c = path; *c; c++) {
+        if (*c == '%') { memcpy(out, "%25", 3); out += 3; }
+        else if (*c == '#') { memcpy(out, "%23", 3); out += 3; }
+        else *out++ = *c;
+    }
+    *out = '\0';
+    editorFollowLink(target);
+    free(target);
     free(path);
 }
 
-/* Non-ASCII graphemes stay intact; ASCII punctuation selects one grapheme. */
+/**
+ * @brief Classify the character at a source-byte offset for word selection.
+ * @details text holds length bytes and at < length is a character boundary.
+ * @return 1 for word characters (ASCII alphanumerics, underscore, any valid
+ * non-ASCII character), 2 for whitespace, 0 for punctuation and malformed
+ * bytes. Non-ASCII graphemes stay intact; punctuation selects one grapheme.
+ */
 static int32_t editorWordClass(const char *text, int32_t at, int32_t length) {
     struct utf8DecodeResult cp = utf8DecodeChar(text + at, (size_t)(length - at));
     if (cp.valid && cp.codepoint >= 128) return 1;
@@ -1842,6 +1949,12 @@ static int32_t editorWordClass(const char *text, int32_t at, int32_t length) {
     return isalnum(c) || c == '_' ? 1 : isspace(c) ? 2 : 0;
 }
 
+/**
+ * @brief Select the word (or single grapheme of punctuation) at the cursor.
+ * @details Scans left and right by whole graphemes within the cursor row and
+ * leaves the selection anchor at the start and the cursor at the end; does
+ * nothing at or past the row end. All offsets are source bytes.
+ */
 static void editorSelectMouseWord(void) {
     int32_t y = E.document.cursor.cy, at = E.document.cursor.cx;
     if (y >= E.document.buffer.row_count) return;
@@ -2211,6 +2324,16 @@ static void editorScroll(void) {
 }
 
 /**
+ * @brief Recognize C0, DEL and C1 control code points.
+ * @details Controls have zero display width and must never be written to the
+ * terminal as document text.
+ * @return 1 for U+0000-U+001F and U+007F-U+009F, otherwise 0.
+ */
+static uint8_t editorIsControlCodepoint(uint32_t codepoint) {
+    return codepoint < 32 || (codepoint >= 127 && codepoint <= 159);
+}
+
+/**
  * @brief Append a portion of a row with syntax, search and selection colors.
  *
  * @details seg_from and seg_to delimit a half-open render-byte range.
@@ -2343,8 +2466,19 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
          * ANSI escapes between continuation bytes would split the codepoint
          * and make terminals render replacement diamonds (�), especially
          * visible with accented characters such as é. */
-        if (decoded.valid) abAppend(ab, &line[j], emitted_len);
-        else abAppend(ab, "\xef\xbf\xbd", 3);
+        /* C0/C1 controls have zero display width and must not reach the
+         * terminal: a CR or ESC in the document would move the cursor,
+         * erase the row or start an escape sequence. A grapheme can hide
+         * them behind its first code point (ZWJ joins whatever follows), so
+         * every code point is checked. Document bytes stay unchanged; only
+         * their output is suppressed. */
+        for (int32_t k = 0; k < emitted_len; ) {
+            struct utf8DecodeResult part = utf8DecodeChar(line + j + k, (size_t)(emitted_len - k));
+            if (!part.valid) { abAppend(ab, "\xef\xbf\xbd", 3); k++; continue; }
+            if (!editorIsControlCodepoint(part.codepoint))
+                abAppend(ab, line + j + k, (int32_t)part.consumed);
+            k += (int32_t)part.consumed;
+        }
 
         if (syn_color || styled) abAppendReset(ab);
         if (is_invisible_glyph) abAppendReset(ab);
@@ -4676,10 +4810,12 @@ static uint8_t editorSettingsEditInt(struct editorSettings *edited, int32_t curs
             return 0;
         } else if (c == '\r') {
             if (buflen == 0) continue;
-            int32_t v = atoi(buf);
-            if (v < d->int_min) v = d->int_min;
-            if (v > d->int_max) v = d->int_max;
-            *out = v;
+            /* strtol keeps oversized input saturated; atoi() would wrap through int. */
+            errno = 0;
+            long parsed = strtol(buf, NULL, 10);
+            if (parsed < d->int_min) parsed = d->int_min;
+            if (parsed > d->int_max) parsed = d->int_max;
+            *out = (int32_t)parsed;
             return 1;
         } else if ((c == '-' || (c >= '0' && c <= '9')) && buflen < sizeof(buf) - 1) {
             buf[buflen++] = (char)c;
@@ -6155,6 +6291,11 @@ static void editorHandleEditKey(int32_t c) {
             break;
 
         default: {
+            /* Unbound control codes (Ctrl-D, Ctrl-@, Ctrl-J, ...) and key
+             * events above the byte range (F10 with the menu disabled)
+             * are not text: inserted, they would corrupt the saved file
+             * (a LF splits the row, a NUL makes it unopenable). */
+            if (c < 32 || c == 127 || c > 0xff) break;
             /* Pairs retain their useful "wrap selection" behavior. Every
              * other typed character replaces selected text, like paste and
              * delete already do. Keep deletion and insertion in one undo

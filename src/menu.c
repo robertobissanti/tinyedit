@@ -251,6 +251,7 @@ enum editorCommand menuHandleKey(struct editorMenu *menu, int32_t key) {
  * @details row, col and menu_row are one-based terminal coordinates. pressed
  * selects on button-down and motion handles hover; release over an item
  * returns its command and closes the popup.
+ * @param screencols Visible terminal width, shared with the drawing helpers.
  * @param row One-based terminal row of the mouse report.
  * @param col One-based terminal column of the mouse report.
  * @param menu_row One-based terminal row occupied by the menu bar.

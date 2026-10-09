@@ -21,8 +21,9 @@ def main():
             assert installed.read_bytes() == source.read_bytes(), source
             text = re.sub(r"```.*?```", "", installed.read_text(), flags=re.S)
             text = re.sub(r"`[^`]*`", "", text)
-            for match in re.finditer(r"!?\[[^\]\n]*\]\(([^)\n]+)\)", text):
-                target = match.group(1)
+            targets = [m.group(1) for m in re.finditer(r"!?\[[^\]\n]*\]\(([^)\n]+)\)", text)]
+            targets += re.findall(r'<img\s[^>]*src="([^"]+)"', text)  # HTML images too
+            for target in targets:
                 parts = urlsplit(target)
                 if parts.scheme or not parts.path:
                     continue
