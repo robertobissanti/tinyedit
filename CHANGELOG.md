@@ -4,6 +4,10 @@
 
 ### New features
 
+- Start an empty unnamed document with `tinyedit folder` instead of rejecting
+  the directory. Show it as the sidebar root, keep focus in the document,
+  and resolve relative Open/Save paths from that folder.
+
 - Open inline Markdown links and web URLs with Alt+Enter or a double click;
   show a contextual shortcut hint, navigate local heading anchors, and protect
   modified documents with save/discard/cancel before switching files.

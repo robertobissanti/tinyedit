@@ -93,6 +93,12 @@ your Ghostty configuration to avoid conflicts.
 
 ## Opening and closing files
 
+Start with `tinyedit folder` to edit an empty unnamed document in that folder.
+The sidebar is visible and rooted there, while keyboard focus stays in the
+document. Relative paths in Open and Save resolve from the supplied folder;
+absolute paths, relative paths and symlinks to directories are supported.
+A folder that cannot be entered or listed still reports an error.
+
 File → New (`Ctrl-N`) starts an empty unnamed document after the shared
 save/discard/cancel check. Cancel or save failure keeps the current document,
 selection and view. Success clears history, search and backup state, preserves

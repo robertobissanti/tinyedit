@@ -23,6 +23,9 @@ unit with a renamed application entry point. It checks prompt growth, bar
 clipping, empty page navigation and UTF-8 tab layout and selection. The render
 tests cover graphemes wider than the wrap width. PTY regressions check long
 paths entered by typing, clipboard and bracketed paste, and empty page keys.
+Directory-startup cases cover absolute/relative paths, home shorthand and
+directory symlinks, an unnamed editable document, the visible sidebar root,
+relative Open/Save and inaccessible-folder errors.
 
 `test_fileio.c` compiles the actual I/O implementation with controlled syscall
 failures: partial reads, close errors, short/interrupted/failed writes, file

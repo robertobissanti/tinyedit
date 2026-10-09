@@ -134,9 +134,13 @@ the accuracy and uniqueness of this override.
 ## Usage
 
 ```sh
-bin/tinyedit [file]
+bin/tinyedit [file-or-folder]
 bin/tinyedit --version  # print version and build ID without starting the editor
 ```
+
+Pass a folder to start an empty unnamed document with that folder as the
+visible sidebar root and the base for relative Open/Save paths. Keyboard focus
+starts in the document.
 
 ### Optional command installation
 

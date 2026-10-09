@@ -6430,8 +6430,10 @@ static void initEditor(void) {
 /**
  * @brief Start the terminal editor and run its redraw and input loop.
  *
- * @details An optional argv[1] names the document to open. Registers terminal
- * cleanup, offers recovery, and continues until the quit action exits.
+ * @details An optional argv[1] names a document or directory. A directory
+ * becomes the working directory and visible sidebar root, leaving an empty
+ * unnamed document focused. Registers terminal cleanup, offers recovery, and
+ * continues until the quit action exits.
  */
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--version") == 0) {
@@ -6451,7 +6453,20 @@ int main(int argc, char **argv) {
     if (S.mouse_enabled) terminalEnableMouseReporting();
     atexit(editorFreeUndoRedo);
     atexit(editorFreeTree);
-    if (argc >= 2 && !editorOpen(argv[1])) terminalDie(errno == EILSEQ ? "binary files are not supported" : "open file");
+    if (argc >= 2) {
+        char *path = fileioExpandHomePath(argv[1]);
+        if (!path) terminalDie("open path");
+        struct stat target;
+        if (stat(path, &target) == 0 && S_ISDIR(target.st_mode)) {
+            if (chdir(path) != 0 || !treeSetRoot(&T, "."))
+                terminalDie("open folder");
+            T.visible = 1;
+            T.focused = 0;
+        } else if (!editorOpen(path)) {
+            terminalDie(errno == EILSEQ ? "binary files are not supported" : "open file");
+        }
+        free(path);
+    }
 
     /* Terminal.app on macOS sends the same byte sequence for a plain
      * arrow and Shift+Arrow, so text selection via Shift+Arrow silently

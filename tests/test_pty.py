@@ -1770,13 +1770,46 @@ def test_unknown_csi_keeps_next_key(home):
             finish(process, master)
 
 
+def test_startup_directory(home):
+    """A directory argument creates an unnamed document rooted in that folder."""
+    folder = pathlib.Path(home) / "startup é space"
+    folder.mkdir()
+    marker = folder / "root-marker.txt"
+    marker.write_text("EXISTING-CONTENT\n")
+    alias = pathlib.Path(home) / "startup-link"
+    alias.symlink_to(folder, target_is_directory=True)
+    arguments = (str(folder), "./" + folder.name, str(alias), "~/" + folder.name)
+    for index, argument in enumerate(arguments):
+        process, master = spawn_editor([argument], home, cwd=home)
+        try:
+            output = read_available(master)
+            assert process.poll() is None, "a directory argument must keep the editor open"
+            assert b"[No Name]" in output and b"root-marker.txt" in output, output[-600:]
+            assert b"EXISTING-CONTENT" not in output, "directory startup must not open an existing file"
+            text = f"folder draft {index}"
+            os.write(master, text.encode() + b"\x13")
+            assert b"Save as" in read_until(master, b"Save as"), "typing starts in the unnamed document"
+            name = f"draft-{index}.txt"
+            os.write(master, name.encode() + b"\r")
+            assert b"bytes written" in read_until(master, b"bytes written")
+            assert (folder / name).read_text() == text + "\n"
+            assert not (pathlib.Path(home) / name).exists(), "relative saves belong to the chosen folder"
+            os.write(master, b"\x0froot-marker.txt\r")
+            assert b"EXISTING-CONTENT" in read_until(master, b"EXISTING-CONTENT")
+            assert marker.read_text() == "EXISTING-CONTENT\n"
+        finally:
+            finish(process, master)
+
+
 def test_startup_error_survives_alternate_screen(home):
     """The reason for a failed startup open is printed after leaving the alternate screen."""
     unreadable = pathlib.Path(home) / "startup-unreadable.txt"
     unreadable.write_text("x")
     unreadable.chmod(0)
+    blocked = pathlib.Path(home) / "startup-unreadable-directory"
+    blocked.mkdir(mode=0)
     try:
-        for argument, message in ((str(home), b"open file: Is a directory"),
+        for argument, message in ((str(blocked), b"open folder: Permission denied"),
                                   (str(unreadable), b"open file: Permission denied")):
             process, master = spawn_editor([argument], home)
             output = b""
@@ -1794,6 +1827,7 @@ def test_startup_error_survives_alternate_screen(home):
             assert message + b"\r\n" in tail, "raw-mode output ends with CR LF"
     finally:
         unreadable.chmod(0o600)
+        blocked.chmod(0o700)
 
 
 def test_documentation_path_with_special_characters(home):
@@ -1873,6 +1907,7 @@ def main():
         test_settings_failed_save(home)
         test_settings_syntax_color_preview(home)
         test_unknown_csi_keeps_next_key(home)
+        test_startup_directory(home)
         test_startup_error_survives_alternate_screen(home)
         test_documentation_path_with_special_characters(home)
         test_settings_status_bar_preview(home)
