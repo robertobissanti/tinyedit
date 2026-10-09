@@ -43,6 +43,8 @@
   generation and a descriptor table driving the parser and F2 submenus.
 - `src/command.c`, `inc/command.h`: Shared command labels, shortcuts, and
   links to settings toggles.
+- `src/links.c`, `inc/links.h`: Bounded inline link recognition, decoded local
+  targets, heading slugs and shell-free HTTP(S) browser dispatch.
 - `src/menu.c`, `inc/menu.h`: Menu bar and popup drawing, plus keyboard and
   mouse navigation.
 - `src/syntax.c`, `inc/syntax.h`: Syntax highlighting, with a generic tokenizer

@@ -933,6 +933,170 @@ static void testColorSettings(void) {
     settingsDefaults(&S);
 }
 
+static void testLinks(void) {
+    struct textLink link;
+    const char *inline_link = "é [guide](<folder/a b.md#title> \"title\") end";
+    check(linksFind(inline_link, (int32_t)strlen(inline_link), 5, &link), "UTF-8 Markdown label link");
+    char *target = linksTarget(inline_link, &link);
+    check(target && !strcmp(target, "folder/a b.md#title"), "angle target and optional title"); free(target);
+    const char *nested = "[![image](a.png)](https://example.org/a(b))";
+    check(linksFind(nested, (int32_t)strlen(nested), 4, &link), "nested image label");
+    target = linksTarget(nested, &link);
+    check(target && !strcmp(target, "https://example.org/a(b)"), "outer link and balanced destination"); free(target);
+    const char *escaped = "[name](a\\(b\\).md)";
+    check(linksFind(escaped, (int32_t)strlen(escaped), 2, &link), "escaped destination");
+    target = linksTarget(escaped, &link);
+    check(target && !strcmp(target, "a(b).md"), "Markdown destination unescaped"); free(target);
+    const char *raw = "See <https://example.org/a(b)>.";
+    check(linksFind(raw, (int32_t)strlen(raw), 8, &link), "raw URL");
+    target = linksTarget(raw, &link);
+    check(target && !strcmp(target, "https://example.org/a(b)"), "raw URL punctuation excluded"); free(target);
+    const char *code = "`[skip](a.md)` [yes](b.md)";
+    check(!linksFind(code, (int32_t)strlen(code), 4, &link) &&
+        linksFind(code, (int32_t)strlen(code), 17, &link), "inline code excluded");
+    check(!linksFind("[broken](", 9, 2, &link), "malformed link bounded");
+    target = linksDecode("a%20b/%C3%A9.md");
+    check(target && !strcmp(target, "a b/é.md"), "percent-encoded local path"); free(target);
+    check(!linksDecode("bad%00name") && !linksDecode("bad%1bname"), "encoded controls rejected");
+    target = linksHeadingSlug("## UTF-8 text", 13);
+    check(!strcmp(target, "utf-8-text"), "heading slug"); free(target);
+    check(linksIsWeb("https://example.org") && !linksIsWeb("file:///tmp/a") &&
+        !linksIsWeb("https://example.org\n"), "only safe web schemes");
+
+    settingsDefaults(&S);
+    S.show_menu = S.show_top_bar = S.show_line_numbers = S.auto_close_pairs = 0;
+    T.visible = T.focused = 0;
+    E.view.screenrows = 20; E.view.screencols = 80;
+    editorResetDocument();
+    editorInsertRow(0, "café world", 11);
+    const char double_click[] = "\x1b[<0;3;1M\x1b[<0;3;1m\x1b[<0;3;1M\x1b[<0;3;1m";
+    runInputBurst(double_click, sizeof(double_click) - 1, 1);
+    check(E.document.selection.active && E.document.selection.anchor_x == 0 &&
+        E.document.cursor.cx == 5 && !E.document.mouse.dragging,
+        "double click selects UTF-8 word at source boundaries");
+    editorResetDocument();
+    editorInsertRow(0, "[jump](#target)", 15);
+    editorInsertRow(1, "## Target", 9);
+    editorSetStatusMessage("");
+    struct abuf hint = ABUF_INIT;
+    editorDrawMessageBar(&hint); abAppend(&hint, "\0", 1);
+    check(strstr(hint.b, "Alt+Enter open link") != NULL, "link shortcut hint shown immediately"); abFree(&hint);
+    hint = (struct abuf)ABUF_INIT;
+    editorSetStatusMessage("Open file: typed path");
+    editorDrawMessageBar(&hint); abAppend(&hint, "\0", 1);
+    check(strstr(hint.b, "Open file: typed path") && !strstr(hint.b, "Alt+Enter"), "prompt takes priority over link hint"); abFree(&hint);
+    const char alt_enter_text[] = "\x1b\rZ";
+    int saved_output = dup(STDOUT_FILENO), sink = open("/dev/null", O_WRONLY);
+    check(saved_output >= 0 && sink >= 0 && dup2(sink, STDOUT_FILENO) >= 0, "link output sink"); close(sink);
+    runInputBurst(alt_enter_text, sizeof(alt_enter_text) - 1, 2);
+    check(E.document.cursor.cy == 1 && E.document.cursor.cx == 1 &&
+        !strcmp(E.document.buffer.rows[1].chars, "Z## Target"),
+        "Alt-Enter follows anchor without consuming next key");
+
+    char root[] = "/tmp/tinyedit-links-XXXXXX";
+    check(mkdtemp(root) != NULL, "local link fixtures");
+    char old_path[256], new_path[256];
+    snprintf(old_path, sizeof(old_path), "%s/old.md", root);
+    snprintf(new_path, sizeof(new_path), "%s/é guide.md", root);
+    FILE *file = fopen(old_path, "wb");
+    check(file && fputs("[guide](<é guide.md#target>)\n", file) >= 0 && fclose(file) == 0, "write linked source");
+    file = fopen(new_path, "wb");
+    check(file && fputs("text\n## Target\n", file) >= 0 && fclose(file) == 0, "write linked destination");
+    check(editorOpen(old_path), "open linked source");
+    runInputBurst(double_click, sizeof(double_click) - 1, 1);
+    check(strstr(E.document.file.filename, "é guide.md") && E.document.cursor.cy == 1,
+        "double click follows a local link instead of selecting its word");
+    check(editorOpen(old_path), "restore linked source");
+    editorPushUndo(EDIT_INSERT);
+    E.document.cursor.cx = E.document.buffer.rows[0].size;
+    editorInsertChar('X'); E.document.cursor.cx = 2;
+    E.document.selection.active = 1; E.document.selection.anchor_x = 1;
+    int32_t undo = E.document.history.undo_count;
+    runInputBurst("\x1b\rx", 3, 1);
+    check(!strcmp(E.document.file.filename, old_path) && E.document.file.dirty &&
+        E.document.cursor.cx == 2 && E.document.selection.active && E.document.history.undo_count == undo,
+        "cancel link preserves current document and selection/history");
+    runInputBurst("\x1b\rn", 3, 1);
+    check(strstr(E.document.file.filename, "é guide.md") && E.document.cursor.cy == 1 &&
+        !E.document.selection.active && !E.document.history.undo_count,
+        "relative Unicode link discard opens destination and heading");
+    check(editorOpen(old_path), "reopen link source for save failure");
+    free(E.document.file.filename);
+    E.document.file.filename = teStrdup("/nonexistent-tinyedit-directory/source.md");
+    E.document.file.dirty = 1;
+    E.document.cursor.cx = 2;
+    /* Use an absolute target so save failure is reached before replacement. */
+    int input[2], saved_input = dup(STDIN_FILENO);
+    check(saved_input >= 0 && pipe(input) == 0, "link save failure input");
+    check(write(input[1], "y", 1) == 1 && dup2(input[0], STDIN_FILENO) >= 0, "link save failure answer");
+    close(input[0]);
+    editorFollowLink(new_path);
+    check(E.document.file.dirty && E.document.cursor.cx == 2 &&
+        !strcmp(E.document.file.filename, "/nonexistent-tinyedit-directory/source.md"),
+        "failed save protects current document from link replacement");
+    check(dup2(saved_input, STDIN_FILENO) >= 0, "restore link input");
+    close(saved_input); close(input[1]);
+
+    check(pipe(input) == 0, "prompt Alt-Enter input");
+    saved_input = dup(STDIN_FILENO);
+    const char prompt_keys[] = "\x1b\rabc\r";
+    check(saved_input >= 0 && write(input[1], prompt_keys, sizeof(prompt_keys) - 1) == sizeof(prompt_keys) - 1 &&
+        dup2(input[0], STDIN_FILENO) >= 0, "prompt Alt-Enter keys"); close(input[0]);
+    char *prompt_value = editorPrompt("Open file: %s");
+    check(prompt_value && !strcmp(prompt_value, "abc"), "Alt-Enter inside prompt neither accepts nor consumes next key");
+    free(prompt_value);
+    check(dup2(saved_input, STDIN_FILENO) >= 0, "restore prompt link input"); close(saved_input); close(input[1]);
+
+    char opener[256], log[256];
+#ifdef __APPLE__
+    snprintf(opener, sizeof(opener), "%s/open", root);
+#else
+    snprintf(opener, sizeof(opener), "%s/xdg-open", root);
+#endif
+    snprintf(log, sizeof(log), "%s/url.txt", root);
+    file = fopen(opener, "wb");
+    check(file && fputs("#!/bin/sh\nprintf '%s' \"$1\" > \"$TINYEDIT_LINK_LOG\"\n", file) >= 0 &&
+        fclose(file) == 0 && chmod(opener, 0700) == 0, "fake browser launcher");
+    const char *path_env = getenv("PATH");
+    char *old_env = path_env ? teStrdup(path_env) : NULL;
+    check(setenv("PATH", root, 1) == 0 && setenv("TINYEDIT_LINK_LOG", log, 1) == 0, "isolated browser environment");
+    const char *url = "https://example.org/$(echo-surprise);x?y=1&z=2";
+    check(linksOpenWeb(url), "launch web link as one argument");
+    struct timespec pause = {0, 10000000};
+    for (int32_t attempt = 0; attempt < 100; attempt++) {
+        struct stat log_stat;
+        if (stat(log, &log_stat) == 0 && log_stat.st_size == (off_t)strlen(url)) break;
+        nanosleep(&pause, NULL);
+    }
+    file = fopen(log, "rb");
+    char logged[256] = {0};
+    check(file && fread(logged, 1, sizeof(logged) - 1, file) == strlen(url) &&
+        !strcmp(logged, url), "browser gets literal URL without shell expansion");
+    fclose(file); unlink(opener);
+    check(!linksOpenWeb(url) && errno == ENOENT, "missing browser launcher reported");
+    if (old_env) { setenv("PATH", old_env, 1); free(old_env); } else unsetenv("PATH");
+    unsetenv("TINYEDIT_LINK_LOG"); unlink(log);
+    const char *home_env = getenv("HOME");
+    char *old_home = home_env ? teStrdup(home_env) : NULL;
+    char docs_root[256], docs_folder[256], docs_index[256];
+    snprintf(docs_root, sizeof(docs_root), "%s/.tinyedit", root);
+    snprintf(docs_folder, sizeof(docs_folder), "%s/.tinyedit/docs", root);
+    snprintf(docs_index, sizeof(docs_index), "%s/.tinyedit/docs/README.md", root);
+    check(mkdir(docs_root, 0700) == 0 && mkdir(docs_folder, 0700) == 0, "documentation fixture folders");
+    file = fopen(docs_index, "wb");
+    check(file && fputs("# Installed documentation\n", file) >= 0 && fclose(file) == 0, "documentation index fixture");
+    check(setenv("HOME", root, 1) == 0, "documentation isolated home");
+    E.document.file.dirty = 0;
+    editorDocumentation();
+    check(E.document.file.filename && !strcmp(E.document.file.filename, docs_index) &&
+        !strcmp(E.document.buffer.rows[0].chars, "# Installed documentation"), "Documentation opens installed index");
+    if (old_home) { setenv("HOME", old_home, 1); free(old_home); } else unsetenv("HOME");
+    unlink(docs_index); rmdir(docs_folder); rmdir(docs_root);
+    check(editorMenuCommandKey(CMD_DOCUMENTATION) == DOCUMENTATION_KEY, "Documentation menu dispatch");
+    editorResetDocument(); unlink(old_path); unlink(new_path); rmdir(root);
+    check(dup2(saved_output, STDOUT_FILENO) >= 0, "restore link output"); close(saved_output);
+}
+
 static void testMouseDispatch(void) {
     settingsDefaults(&S);
     S.show_menu = S.show_top_bar = S.show_line_numbers = 0;
@@ -1597,6 +1761,7 @@ int main(void) {
     testNewDocument();
     testColorSettings();
     testMouseDispatch();
+    testLinks();
     testSharedAutoClose();
     testEditBatches();
     testSearchSession();

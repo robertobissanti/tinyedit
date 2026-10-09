@@ -20,3 +20,5 @@ __pycache__/
 /local/
 
 !tests/test_menu.c
+
+!tests/test_docs.py

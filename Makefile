@@ -15,7 +15,7 @@ SOURCES := $(SRC_DIR)/tinyedit.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c \
 	$(SRC_DIR)/render.c $(SRC_DIR)/editor_state.c $(SRC_DIR)/clipboard.c \
 	$(SRC_DIR)/utf8.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c \
 	$(SRC_DIR)/syntax.c $(SRC_DIR)/terminal.c $(SRC_DIR)/alloc.c \
-	$(SRC_DIR)/tree.c $(SRC_DIR)/command.c $(SRC_DIR)/menu.c $(SRC_DIR)/fileio.c $(SRC_DIR)/search.c
+	$(SRC_DIR)/tree.c $(SRC_DIR)/command.c $(SRC_DIR)/menu.c $(SRC_DIR)/fileio.c $(SRC_DIR)/search.c $(SRC_DIR)/links.c
 HEADERS := $(wildcard $(INC_DIR)/*.h) $(BIN_DIR)/build_info.h
 TEST_BINS := $(TEST_DIR)/test_syntax $(TEST_DIR)/test_settings_backup \
 	$(TEST_DIR)/test_editor_state $(TEST_DIR)/test_buffer $(TEST_DIR)/test_history \
@@ -25,6 +25,7 @@ PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 INSTALL ?= install
 SYNTAX_DIR ?= $(HOME)/.tinyedit/syntax
+DOCS_DIR ?= $(HOME)/.tinyedit
 
 $(TARGET): FORCE $(BIN_DIR)/build_info.h $(SOURCES) $(HEADERS) | $(BIN_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(SOURCES)
@@ -38,6 +39,21 @@ $(BIN_DIR):
 install: $(TARGET)
 	$(INSTALL) -d $(DESTDIR)$(BINDIR)
 	$(INSTALL) -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/tinyedit
+
+# Preserve the relative layout used by the documentation links. These are
+# reference copies, separate from the user's active syntax and theme folders.
+install-docs:
+	@$(INSTALL) -d "$(DOCS_DIR)"
+	@$(INSTALL) -m 644 README.md CONTRIBUTING.md IDEAS.md LICENSE LICENSE-THIRD-PARTY "$(DOCS_DIR)/"
+	@for dir in docs imgs syntax-configs colorschemes; do \
+		$(INSTALL) -d "$(DOCS_DIR)/$$dir" || exit 1; \
+		for f in "$$dir"/*; do \
+			[ -f "$$f" ] || continue; \
+			$(INSTALL) -m 644 "$$f" "$(DOCS_DIR)/$$dir/" || exit 1; \
+		done; \
+	done
+	@$(INSTALL) -d "$(DOCS_DIR)/tests"
+	@$(INSTALL) -m 644 tests/README.md "$(DOCS_DIR)/tests/README.md"
 
 # Installs shipped syntax configurations into the directory tinyedit scans at
 # startup. Building is not consent to write into the user's home, and existing
@@ -113,11 +129,12 @@ test: $(TARGET) $(TEST_BINS)
 	./$(TEST_DIR)/test_menu
 	python3 $(TEST_DIR)/test_pty.py
 	python3 $(TEST_DIR)/test_build.py
+	python3 $(TEST_DIR)/test_docs.py
 
 clean:
 	rm -f $(TARGET) $(TEST_BINS) $(TEST_DIR)/benchmark_core
 
-.PHONY: clean test install install-syntax install-syntax-force
+.PHONY: clean test install install-docs install-syntax install-syntax-force
 
 $(TEST_DIR)/benchmark_core: $(TEST_DIR)/benchmark_core.c $(SOURCES) $(HEADERS)
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Wno-format-nonliteral -o $@ $(TEST_DIR)/benchmark_core.c $(filter-out $(SRC_DIR)/tinyedit.c,$(SOURCES))

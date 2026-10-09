@@ -57,6 +57,10 @@ int main(void) {
     check(commandIsChecked(CMD_TOGGLE_CURSOR_BLINK, &settings), "cursor blink checkmark on");
     menu.open = 1; menu.selected_menu = 3; menu.selected_item = 6;
     check(menuHandleKey(&menu, '\r') == CMD_TOGGLE_CURSOR_BLINK, "View accepts cursor blink");
+    menu.open = 1; menu.selected_menu = 4; menu.selected_item = 0;
+    check(menuHandleKey(&menu, ARROW_DOWN) == CMD_NONE && menu.selected_item == 1,
+        "Help navigates to Documentation");
+    check(menuHandleKey(&menu, '\r') == CMD_DOCUMENTATION, "Help opens Documentation");
     puts("menu tests: ok");
     return 0;
 }

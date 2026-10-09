@@ -19,6 +19,7 @@ static const struct commandDescriptor command_descriptors[] = {
     { CMD_SELECT_ALL, "Select all", "^A", NULL },
     { CMD_FIND, "Find...", "^F", NULL },
     { CMD_HELP, "Help", "F1", NULL },
+    { CMD_DOCUMENTATION, "Documentation", NULL, NULL },
     { CMD_TOGGLE_LINE_NUMBERS, "Line numbers", NULL, "show_line_numbers" },
     { CMD_TOGGLE_TOP_BAR, "Top bar", NULL, "show_top_bar" },
     { CMD_TOGGLE_MENU, "F10 menu", NULL, "show_menu" },

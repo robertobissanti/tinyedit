@@ -4,6 +4,14 @@
 
 ### New features
 
+- Open inline Markdown links and web URLs with Alt+Enter or a double click;
+  show a contextual shortcut hint, navigate local heading anchors, and protect
+  modified documents with save/discard/cancel before switching files.
+- Double-click ordinary text to select a word while preserving UTF-8 boundaries.
+- Open installed Markdown guides from Help → Documentation. `make install-docs`
+  installs the index and linked resources under `~/.tinyedit`, separately from
+  active syntax definitions and color schemes.
+
 - Configure Markdown italic text independently from keywords in ANSI and RGB,
   with a Colors preview. One Dark uses `#D19A67`; older configurations and
   presets without the new color retain their keyword color for italics.

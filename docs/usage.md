@@ -12,6 +12,7 @@
 - [File information](#file-information)
 - [Fast terminal paste](#fast-terminal-paste)
 - [Mouse support](#mouse-support)
+- [Links and installed documentation](#links-and-installed-documentation)
 - [Menus](#menus)
 - [Indentation and tabs](#indentation-and-tabs)
 - [Automatic pair and tag closing](#automatic-pair-and-tag-closing)
@@ -184,13 +185,46 @@ passthrough is enabled in the multiplexer.
 ## Mouse support
 
 Mouse support (`mouse_enabled`, F2 panel, **off by default**) lets you
-click to place the cursor, drag with the left button to select text,
+click to place the cursor, double-click a word to select it (or a link to
+open it), drag with the left button to select text,
 Shift-click to extend a selection, and scroll with the wheel. It is opt-in
 because it overrides the terminal's native text selection, such as
 `Cmd-C`/`Cmd-V` in Ghostty, and directs mouse events to tinyedit while enabled.
 The change takes effect
 immediately: toggling it in `F2` and pressing `Ctrl-S` applies it
 right away, no restart needed.
+
+## Links and installed documentation
+
+Run `make install-docs` from the source directory, then choose
+**Help → Documentation**. This opens `~/.tinyedit/docs/README.md` as an ordinary,
+editable Markdown document. The installer includes linked images, reference
+syntax/color scheme files, and contributor/test guides in the same relative
+layout. It updates these reference copies; your active `syntax/` and
+`color-scheme/` directories are separate. Packaging can set `DOCS_DIR` to a
+staging directory; the installed editor looks under `$HOME/.tinyedit`.
+
+Place the cursor on the label or destination of an inline Markdown link and
+press **Alt+Enter**, or double-click it with mouse support enabled. Bare
+`http://` and `https://` URLs also work. The message bar shows
+`Alt+Enter open link` while over a link; temporary messages and prompts take
+priority. Alt+Enter is ignored inside text-entry prompts. Its `Esc` + carriage
+return sequence has been confirmed on Ghostty/macOS and ArchLinux.
+
+Local links resolve relative to the current file (or the working directory
+for an unnamed document). They accept percent-encoded paths, angle-bracket
+paths containing spaces, and `#heading` fragments for ATX Markdown headings.
+Directory links open their `README.md`. Switching files uses the usual
+save/discard/cancel confirmation: cancellation, failed saving, missing targets
+and unreadable files keep the current document. Same-document `#heading` links
+move the cursor without replacing the document.
+
+Web links open the system browser using `open` on macOS or `xdg-open` on Linux,
+with a literal argument vector. tinyedit reports a missing launcher but cannot
+confirm whether the browser subsequently loads the page. Other URI schemes
+are unsupported. Reference-style Markdown links, HTML links, duplicate-heading
+suffixes and Setext heading anchors are not yet supported. Images are installed
+as resources; tinyedit does not display image files inline or open binary files.
 
 ## Menus
 
@@ -204,7 +238,7 @@ click an item to run it; clicking outside closes the open menu.
 `Edit` has editing commands and Find; `View` has checked switches for line
 numbers, the top bar, the menu itself, invisible characters, syntax
 highlighting, automatic indentation, and cursor blinking; and `Help`
-opens the shortcut reference. Existing keyboard shortcuts appear beside
+contains the shortcut reference and Documentation. Existing keyboard shortcuts appear beside
 commands, with `^` meaning Ctrl (for example, `^S` means `Ctrl-S`). The
 `F10 Menu` hint in the bottom message bar also opens the menu when clicked.
 

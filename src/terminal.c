@@ -552,6 +552,7 @@ int32_t terminalReadKey(
 
         /* Meta/readline-style word jump: ESC b (backward-word),
          * ESC f (forward-word). Single byte after ESC, no '[' or 'O'. */
+        if (seq[0] == '\r') return OPEN_LINK_KEY;
         if (seq[0] == 'b') return ALT_ARROW_LEFT;
         if (seq[0] == 'f') return ALT_ARROW_RIGHT;
 

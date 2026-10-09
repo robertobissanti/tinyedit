@@ -112,7 +112,9 @@ enum editorKey {
      * globals (see tinyedit.c), to be read immediately (before the
      * next editorReadKey() call, which may overwrite them). */
     MOUSE_EVENT_KEY,
-    TREE_TOGGLE_KEY
+    TREE_TOGGLE_KEY,
+    OPEN_LINK_KEY,
+    DOCUMENTATION_KEY
 };
 
 enum undoEditType { EDIT_NONE, EDIT_INSERT, EDIT_DELETE, EDIT_OTHER };

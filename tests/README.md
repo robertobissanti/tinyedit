@@ -110,3 +110,9 @@ Color scheme tests cover complete RGB/ANSI presets, missing or invalid roles,
 duplicate/foreign keys, preservation of unrelated settings and output policy,
 and PTY inline Left/Right preview, single confirmation, cancellation, draft
 discard and saving.
+
+Link regressions in `test_core.c` cover source-byte matching, Unicode words,
+Alt+Enter decoding, local navigation, cancellation and failed saves, and literal
+browser arguments using a fake launcher. `test_docs.py` verifies installation
+in a temporary path containing spaces and checks guide resources without
+modifying the user's active syntax definitions.

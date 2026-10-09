@@ -175,6 +175,12 @@ and configuration.
 
 ## Documentation
 
+Install the guides and their linked resources with `make install-docs`, then
+open **Help → Documentation** inside tinyedit. The index lives at
+`~/.tinyedit/docs/README.md`. Use **Alt+Enter** on a link, or double-click it
+with mouse support enabled. Double-clicking ordinary text selects a word.
+
+
 - [User guide](docs/usage.md): full shortcuts, file operations, sidebar,
   mouse, menus, editing, search and backup recovery.
 - [Settings, colors and themes](docs/configuration.md): the shared F2 draft,

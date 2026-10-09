@@ -24,7 +24,7 @@ static const enum editorCommand view_items[] = {
     CMD_TOGGLE_INVISIBLES, CMD_TOGGLE_SYNTAX_HIGHLIGHT,
     CMD_TOGGLE_AUTO_INDENT, CMD_TOGGLE_CURSOR_BLINK, CMD_NONE, CMD_TOGGLE_TREE
 };
-static const enum editorCommand help_items[] = { CMD_HELP };
+static const enum editorCommand help_items[] = { CMD_HELP, CMD_DOCUMENTATION };
 
 static const struct menuDefinition menus[] = {
     { "TinyEdit", app_items, (int32_t)(sizeof(app_items) / sizeof(app_items[0])) },

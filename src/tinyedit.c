@@ -22,6 +22,7 @@
  *   fileio.c       home-path expansion, staged loading and atomic replacement
  *   history.c      bounded row deltas, undo/redo and allocation-failure rollback
  *   linenoise.c    historical line-editor implementation; not built
+ *   links.c        inline links, heading slugs and safe browser dispatch
  *   menu.c         UTF-8 menu layout, viewport clipping and input navigation
  *   render.c       shared layout calculations for rows and wrapped text
  *   search.c       compiled queries, text search and source-coordinate results
@@ -44,6 +45,7 @@
 #include "editor_state.h"
 #include "fileio.h"
 #include "history.h"
+#include "links.h"
 #include "render.h"
 #include "clipboard.h"
 #include "command.h"
@@ -84,6 +86,9 @@ static uint8_t edit_saved_dirty, edit_saved_final_newline;
 static enum historyError edit_last_error;
 static uint8_t replay_preparing;
 static uint8_t menu_mouse_motion_enabled;
+static uint8_t document_click_pending;
+static struct timespec document_click_time;
+static int32_t document_click_x, document_click_y;
 static uint8_t drawing_heading;
 static uint8_t drawing_heading_bold;
 
@@ -146,6 +151,9 @@ static const struct helpEntry helpEntries[] = {
     { "Ctrl-Home/End (or Ctrl-PageUp/Down)", "Jump to start/end of the file" },
     { "Alt+Left/Right (or Esc b / Esc f)", "Jump by word" },
     { "Mouse click (if enabled, see F2)", "Position cursor" },
+    { "Mouse double click", "Open link or select word" },
+    { "Alt+Enter", "Open link under cursor" },
+    { "Help > Documentation", "Open installed Markdown guides" },
     { "Mouse wheel (if enabled, see F2)", "Scroll view (cursor/selection unaffected)" },
     { NULL, "Editing" },
     { "Enter", "New line (auto-indents if enabled)" },
@@ -1179,6 +1187,7 @@ static char *editorPrompt(const char *prompt) {
  * disk with a newer crash-recovery backup, see editorOfferBackupRecovery().
  */
 static void editorClearRows(void) {
+    document_click_pending = 0;
     editorInvalidateDocumentCaches();
     bufferClear(&E.document.buffer);
     E.document.cursor.cx = 0;
@@ -1609,6 +1618,7 @@ static uint8_t editorConfirmDocumentChange(const char *action) {
  * starts with independent cursor, selection, search, backup, and undo state.
  */
 static void editorResetDocument(void) {
+    document_click_pending = 0;
     searchQueryFree(&E.search.query);
     E.search = (struct editorSearch){0};
     E.search.direction = 1;
@@ -1707,6 +1717,150 @@ static void editorOpenFile(void) {
         if (exists) editorSetStatusMessage("Opened %s", E.document.file.filename);
         else editorSetStatusMessage("New file: %s", E.document.file.filename);
     }
+}
+
+/* ---- links and installed documentation ---------------------------------- */
+
+static uint8_t editorCursorLink(struct textLink *link) {
+    int32_t cy = E.document.cursor.cy;
+    if (T.focused || cy < 0 || cy >= E.document.buffer.row_count) return 0;
+    erow *row = &E.document.buffer.rows[cy];
+    const char *extension = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
+    if (extension && syntaxIsMarkdownExtension(extension + 1) && row->hl_open_comment) return 0;
+    return linksFind(row->chars, row->size, E.document.cursor.cx, link);
+}
+
+static void editorLinkAnchor(const char *anchor) {
+    if (!anchor || !*anchor) return;
+    for (int32_t y = 0; y < E.document.buffer.row_count; y++) {
+        erow *row = &E.document.buffer.rows[y];
+        int32_t at = 0;
+        while (at < row->size && at < 4 && row->chars[at] == ' ') at++;
+        if (at >= row->size || row->chars[at] != '#' || row->hl_open_comment) continue;
+        char *slug = linksHeadingSlug(row->chars, row->size);
+        uint8_t match = !strcmp(slug, anchor);
+        free(slug);
+        if (match) {
+            E.document.cursor.cy = y;
+            E.document.cursor.cx = 0;
+            E.document.selection.active = E.document.selection.pinned = 0;
+            E.view.rowoff = E.view.coloff = E.view.free_scroll = 0;
+            editorSetStatusMessage("Heading: %s", anchor);
+            return;
+        }
+    }
+    editorSetStatusMessage("Heading not found: %s", anchor);
+}
+
+static void editorFollowLink(const char *target) {
+    if (linksIsWeb(target)) {
+        if (linksOpenWeb(target)) editorSetStatusMessage("Opened link in browser");
+        else editorSetStatusMessage("Can't open browser: %s", strerror(errno));
+        return;
+    }
+    /* Reject URI schemes rather than interpreting them as local filenames. */
+    const char *colon = strchr(target, ':');
+    const char *slash = strchr(target, '/');
+    if (colon && (!slash || colon < slash)) {
+        editorSetStatusMessage("Unsupported link type");
+        return;
+    }
+    char *name = teStrdup(target);
+    char *fragment = strchr(name, '#');
+    if (fragment) *fragment++ = '\0';
+    uint8_t has_fragment = fragment != NULL;
+    char *anchor = fragment ? linksDecode(fragment) : NULL;
+    char *decoded = linksDecode(name);
+    free(name);
+    if (!decoded || (has_fragment && !anchor)) {
+        free(decoded); free(anchor);
+        editorSetStatusMessage("Invalid link target");
+        return;
+    }
+    if (!*decoded) {
+        editorLinkAnchor(anchor);
+        free(decoded); free(anchor);
+        return;
+    }
+    char *path;
+    const char *filename = E.document.file.filename;
+    const char *separator = filename ? strrchr(filename, '/') : NULL;
+    if (decoded[0] == '/' || decoded[0] == '~' || !separator) path = fileioExpandHomePath(decoded);
+    else {
+        size_t prefix = (size_t)(separator - filename + 1);
+        path = teMalloc(teSizeAdd(teSizeAdd(prefix, strlen(decoded)), 1));
+        memcpy(path, filename, prefix);
+        strcpy(path + prefix, decoded);
+    }
+    free(decoded);
+    struct stat st;
+    if (path && stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        size_t length = strlen(path);
+        path = teRealloc(path, teSizeAdd(length, sizeof("/README.md")));
+        memcpy(path + length, "/README.md", sizeof("/README.md"));
+    }
+    if (!path || stat(path, &st) < 0 || !S_ISREG(st.st_mode)) {
+        editorSetStatusMessage("Link is not an accessible file");
+    } else if (editorConfirmDocumentChange("opening a link")) {
+        if (editorOpen(path)) {
+            T.focused = 0;
+            editorOfferBackupRecovery();
+            editorSetStatusMessage("Opened %s", E.document.file.filename);
+            editorLinkAnchor(anchor);
+        } else editorSetStatusMessage("Can't open link: %s",
+            errno == EILSEQ ? "binary files are not supported" : strerror(errno));
+    }
+    free(path); free(anchor);
+}
+
+static void editorOpenCursorLink(void) {
+    struct textLink link;
+    if (!editorCursorLink(&link)) { editorSetStatusMessage("No link under cursor"); return; }
+    char *target = linksTarget(E.document.buffer.rows[E.document.cursor.cy].chars, &link);
+    if (target) { editorFollowLink(target); free(target); }
+    else editorSetStatusMessage("Invalid link target");
+}
+
+static void editorDocumentation(void) {
+    const char *home = getenv("HOME");
+    if (!home || !*home) { editorSetStatusMessage("HOME is not set"); return; }
+    const char suffix[] = "/.tinyedit/docs/README.md";
+    char *path = teMalloc(teSizeAdd(strlen(home), sizeof(suffix)));
+    strcpy(path, home);
+    strcat(path, suffix);
+    if (access(path, R_OK) < 0)
+        editorSetStatusMessage("Documentation missing: run make install-docs");
+    else editorFollowLink(path);
+    free(path);
+}
+
+/* Non-ASCII graphemes stay intact; ASCII punctuation selects one grapheme. */
+static int32_t editorWordClass(const char *text, int32_t at, int32_t length) {
+    struct utf8DecodeResult cp = utf8DecodeChar(text + at, (size_t)(length - at));
+    if (cp.valid && cp.codepoint >= 128) return 1;
+    unsigned char c = (unsigned char)text[at];
+    return isalnum(c) || c == '_' ? 1 : isspace(c) ? 2 : 0;
+}
+
+static void editorSelectMouseWord(void) {
+    int32_t y = E.document.cursor.cy, at = E.document.cursor.cx;
+    if (y >= E.document.buffer.row_count) return;
+    erow *row = &E.document.buffer.rows[y];
+    if (at >= row->size) return;
+    int32_t start = at, end = at + (int32_t)utf8NextCharLen(row->chars, (size_t)at, (size_t)row->size);
+    int32_t kind = editorWordClass(row->chars, at, row->size);
+    while (kind && start > 0) {
+        int32_t previous = start - (int32_t)utf8PrevCharLen(row->chars, (size_t)start);
+        if (editorWordClass(row->chars, previous, row->size) != kind) break;
+        start = previous;
+    }
+    while (kind && end < row->size && editorWordClass(row->chars, end, row->size) == kind)
+        end += (int32_t)utf8NextCharLen(row->chars, (size_t)end, (size_t)row->size);
+    E.document.selection.active = 1;
+    E.document.selection.pinned = 0;
+    E.document.selection.anchor_y = y;
+    E.document.selection.anchor_x = start;
+    E.document.cursor.cx = end;
 }
 
 /**
@@ -2721,7 +2875,8 @@ static void editorDrawMessageBar(struct abuf *ab) {
     abAppend(ab, "\x1b[K", 3);
     int32_t msglen = (int32_t)strlen(E.ui.statusmsg);
     const char *msg = E.ui.statusmsg;
-    if (!msglen || (!E.ui.statusmsg_sticky && time(NULL) - E.ui.statusmsg_time >= 5)) {
+    uint8_t default_hint = !msglen || (!E.ui.statusmsg_sticky && time(NULL) - E.ui.statusmsg_time >= 5);
+    if (default_hint) {
         if (T.focused && editorSidebarWidth())
             msg = "Tree: ^E close | ^B focus | arrows/Enter/Space | r refresh | g root";
         else if (editorSidebarWidth())
@@ -2729,6 +2884,8 @@ static void editorDrawMessageBar(struct abuf *ab) {
         else msg = "^S save | ^O open | ^E show tree | F1 help";
         msglen = (int32_t)strlen(msg);
     }
+    struct textLink link;
+    if ((default_hint || E.ui.statusmsg_sticky) && editorCursorLink(&link)) msg = "Alt+Enter open link";
     char *safe_message = editorDisplayText(msg);
     size_t bytes = strlen(safe_message), offset = bytes;
     int32_t columns = 0;
@@ -5176,6 +5333,7 @@ static int32_t editorMenuCommandKey(enum editorCommand command) {
         case CMD_SELECT_ALL: return CTRL_KEY('a');
         case CMD_FIND: return CTRL_KEY('f');
         case CMD_HELP: return F1_KEY;
+        case CMD_DOCUMENTATION: return DOCUMENTATION_KEY;
         default: return 0;
     }
 }
@@ -5425,6 +5583,10 @@ static uint8_t editorTreeKey(int32_t c) {
  * a burst, passes through the same menu/text routing and release handling.
  */
 static int32_t editorHandleMouseEvent(void) {
+    if (mouseEventPress && (mouseEventRow <= (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0) ||
+        mouseEventRow > E.view.screenrows + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0) ||
+        mouseEventCol <= editorSidebarWidth() + editorGutterWidth()))
+        document_click_pending = 0;
     int32_t parent_row = 2 + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0);
     if (mouseEventPress && (mouseEventRow < parent_row ||
         mouseEventCol > editorSidebarWidth() || (mouseEventButton & ~28) != 0))
@@ -5495,6 +5657,7 @@ static int32_t editorHandleMouseEvent(void) {
     uint8_t shift_held = (mouseEventButton & 4) != 0;
     int32_t mouse_button = mouseEventButton & ~28;
     if (mouse_button == 64 || mouse_button == 65) {
+        document_click_pending = 0;
         /* Wheel gestures move the view independently of cursor and selection. */
         int32_t wrapcols = editorSoftWrapCols();
         int32_t delta = (mouse_button == 64) ? -3 : 3;
@@ -5519,6 +5682,24 @@ static int32_t editorHandleMouseEvent(void) {
              * cursor position immediately before the click. */
             int32_t cy, cx;
             editorMouseToCursor(mouseEventCol, mouseEventRow, &cy, &cx);
+            struct timespec now;
+            uint8_t timed = clock_gettime(CLOCK_MONOTONIC, &now) == 0;
+            double elapsed = timed ? difftime(now.tv_sec, document_click_time.tv_sec) +
+                (double)(now.tv_nsec - document_click_time.tv_nsec) / 1000000000.0 : 1.0;
+            uint8_t double_click = !shift_held && timed && document_click_pending &&
+                document_click_x == cx && document_click_y == cy && elapsed >= 0 && elapsed <= 0.5;
+            document_click_pending = !double_click && !shift_held && timed;
+            if (timed) document_click_time = now;
+            document_click_x = cx;
+            document_click_y = cy;
+            if (double_click) {
+                E.document.cursor.cy = cy;
+                E.document.cursor.cx = cx;
+                struct textLink link;
+                if (editorCursorLink(&link)) editorOpenCursorLink();
+                else editorSelectMouseWord();
+                return 0;
+            }
             if (shift_held) {
                 if (!E.document.selection.active) {
                     E.document.selection.active = 1;
@@ -5534,6 +5715,7 @@ static int32_t editorHandleMouseEvent(void) {
             E.document.cursor.cx = cx;
             E.document.mouse.dragging = 1;
         } else if (in_text_area && mouse_button == 32 && E.document.mouse.dragging) {
+            document_click_pending = 0;
             /* Arm from the press point only when motion creates a selection. */
             if (!E.document.selection.active) {
                 E.document.selection.active = 1;
@@ -5731,6 +5913,14 @@ static uint8_t editorHandleNavigationKey(int32_t c) {
  */
 static uint8_t editorHandleCommandKey(int32_t c) {
     switch (c) {
+        case OPEN_LINK_KEY:
+            editorOpenCursorLink();
+            break;
+
+        case DOCUMENTATION_KEY:
+            editorDocumentation();
+            break;
+
         case CTRL_KEY('q'):
             E.document.selection.active = 0;
             editorQuit();
@@ -5992,6 +6182,7 @@ static void editorHandleEditKey(int32_t c) {
  * here too, so keyboard and mouse execute the same actions.
  */
 static void editorDispatchKey(int32_t c) {
+    document_click_pending = 0;
     E.view.free_scroll = 0;
     if (S.show_menu && (M.open || c == F10_KEY)) {
         enum editorCommand command = menuHandleKey(&M, c);
