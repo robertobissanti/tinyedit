@@ -34,6 +34,7 @@ selection, and optional mouse support for clicking and scrolling.
 - [Features at a glance](#features-at-a-glance)
 - [Homebrew](#homebrew-macos--linux)
 - [Build](#build)
+  - [Build identification](#build-identification)
 - [Usage](#usage)
   - [Optional command installation](#optional-command-installation)
   - [Keyboard shortcuts](#keyboard-shortcuts)
@@ -45,6 +46,7 @@ selection, and optional mouse support for clicking and scrolling.
   - [Mouse support](#mouse-support)
   - [Menus](#menus)
   - [Settings and appearance](#settings-and-appearance)
+  - [Colors submenus and RGB](#colors-submenus-and-rgb)
   - [Indentation and tabs](#indentation-and-tabs)
   - [Automatic pair and tag closing](#automatic-pair-and-tag-closing)
   - [Invisible characters and colors](#invisible-characters-and-colors)
@@ -131,6 +133,22 @@ make clean  # removes it
 ```
 
 Needs only a C99 compiler and a POSIX system (macOS or Linux).
+
+### Build identification
+
+`bin/tinyedit --version`, the startup splash and F3 display the same complete
+version and build identifier. Git builds use `g` plus twelve commit digits;
+local source changes add `-dirty-s<checksum>`. Archives without Git use
+`source-s<checksum>`. The POSIX checksum covers source/header files, the
+Makefile and build generator; it is not cryptographic and collisions are possible.
+Identical sources retain the same ID; compiler, flags and platform are not encoded.
+The generated header is checked on every make, without requiring make clean.
+The application is rebuilt each time, including on make implementations with
+coarse timestamp resolution; unchanged generated header content is retained.
+Packagers may override it with `make BUILD_ID=package-0.3.7-r2` (up to 120
+letters, digits, dots, underscores, plus signs or hyphens). The packager owns
+the accuracy and uniqueness of this override.
+
 
 ## Usage
 
@@ -366,6 +384,76 @@ version) simply stay at their default until set explicitly.
 *The built-in `F2` panel exposes the same options stored in `~/.tinyeditrc`,
 including undo depth, wrapping, backup, colors, and mouse support.*
 
+### Colors submenus and RGB
+
+F2 → Colors contains **Mode**, **RGB output** (in RGB mode), **Interface** and
+**Syntax highlighting**. Interface groups the background, gutter, selection,
+invisibles and the status bar's text/background. Syntax highlighting groups
+all token colors, including normal text and brackets; the palette remains
+editable when syntax highlighting is off. Up/Down select rows; Enter/Space
+opens a submenu. Left/Right cycle enum choices. **Back** or Esc returns to the
+parent, remembering its position and retaining the same draft.
+
+With mouse support already enabled, click a row to edit/open it and use the
+wheel to move through rows. Ctrl-S or F2 saves all draft settings and closes
+from any page. Esc at the root offers save/discard/cancel if anything changed.
+Ctrl-D resets **all** draft settings, including both palettes; it does not save
+immediately or change `filetype.*` overrides. A failed save keeps the panel and
+its draft open and leaves live settings unchanged. If replacement succeeded
+but directory synchronization failed, the configuration on disk may already
+have changed; retry saving to confirm persistence.
+
+The Settings panel always uses the terminal's default text and background.
+Only preview samples use draft colors, followed immediately by an attribute
+reset, so an unreadable color combination cannot hide navigation or labels.
+Samples show the status bar and its explicitly swapped top-bar colors.
+
+ANSI is the default and existing configurations retain their colors, including
+legacy names such as `cyan`. RGB uses a separate palette: switching modes
+preserves both palettes. In RGB mode, Enter/Space opens a color field: Backspace
+edits the current value, Enter accepts a complete `#RRGGBB` or
+`terminal-default`, and Esc restores that field. Hex digits accept either case
+and save in uppercase. Valid input updates the sample while editing; invalid
+input is marked and cannot be accepted.
+
+```ini
+color_mode = rgb
+rgb_output = truecolor
+rgb_background = #222222
+rgb_syntax_normal = #E0E0E0
+rgb_syntax_keyword = #80A0FF
+rgb_statusbar = #303030
+rgb_statusbar_text = #FFFFFF
+# The ANSI palette is retained independently:
+color_background = terminal-default
+color_syntax_keyword = blue-light
+```
+
+Every `color_<name>` palette key has a corresponding `rgb_<name>` key.
+`color_mode` and `rgb_output` select behavior rather than colors.
+A leading `#` starts a comment, except at the start of an RGB color value;
+trailing comments after an RGB value are supported. Invalid values keep the
+previous value (or default); absent keys use defaults. `terminal-default`
+means the terminal's own foreground or background in either mode. Explicit RGB
+values emit 24-bit foreground/background escapes and do not use its palette.
+
+True color support is selected manually: **truecolor** emits RGB;
+**ansi-fallback** approximates each RGB value with the nearest of sixteen ANSI
+reference colors. The terminal still controls those ANSI colors, so the fallback
+cannot promise exact RGB appearance. No support is inferred from `TERM` or
+other environment variables, and there are no terminal capability queries.
+Choose fallback or ANSI for terminals or SSH/multiplexer paths without RGB;
+forcing truecolor there may render incorrectly or be ignored.
+
+RGB defaults are fixed references, independent of the terminal: gray `#808080`,
+blue `#5555FF`, green `#55FF55`, yellow `#FFFF55`, cyan `#55FFFF`, magenta
+`#FF55FF`, red `#FF5555`, white `#FFFFFF`; normal-intensity white is `#AAAAAA`
+and dim gray `#404040`. Default background and normal text remain
+`terminal-default`. The default RGB roles follow the existing ANSI default
+roles using those references. ANSI light/dark/dim choices remain exclusive to
+ANSI; RGB colors have no implicit intensity variants. ANSI dim backgrounds
+continue to use their dark counterparts. RGB fallback excludes dim variants.
+
 ### Indentation and tabs
 
 With `auto_indent` on (default), Enter copies the leading
@@ -437,7 +525,7 @@ Gutter, selection, status bar, and invisibles colors are all picked
 from a palette of 24 (each of the 8 base hues, gray, blue, green,
 yellow, cyan, magenta, red, and white, in three variants: light `-light`,
 dark `-dark`, and dim `-dim`, e.g. `cyan-dim`), always plain ANSI
-codes, never 256-color or truecolor (`-dim` support is somewhat less
+codes in the default ANSI mode (`-dim` support is somewhat less
 consistent across terminals; some render it identically to `-dark`
 instead of actually dimming it, but it is still base ANSI). In the
 `F2` panel, Left/Right cycle the selected color back/forward (in
@@ -559,13 +647,12 @@ configurable color (`color_syntax_keyword`, `color_syntax_string`,
 `color_syntax_preprocessor`, plus `color_syntax_emphasis_strong` for
 Markdown bold text, kept distinct from italic which uses
 `color_syntax_keyword`, and `color_syntax_function` for function
-names), same 24-color palette as the rest of the interface. Function
+names), using the active ANSI or RGB palette. Function
 names are recognized by the same heuristic other lightweight editors
 use, an identifier immediately followed by `(`, which covers both
 calls and definitions. Text with no class at all (identifiers, punctuation,
 whitespace) uses `color_syntax_normal`, defaulting to
-`terminal-default`, a 25th palette entry (not a real hue, only
-available for this setting) meaning "no color forced, terminal's own
+`terminal-default`, a palette sentinel rather than a real hue meaning "no color forced, terminal's own
 foreground", the same behavior this had before the setting existed;
 set it to any real hue to recolor plain text explicitly. Natively
 supported languages: C/C++ (`.c` `.h` `.cpp` `.cc` `.cxx` `.hpp` `.hh`
@@ -851,8 +938,8 @@ and asks whether to restore the changes before proceeding.
   and terminal display-width calculation, ported from linenoise (see
   above). Used for cursor movement, backspace, and rendering.
 - `src/settings.c`, `inc/settings.h`: Persistence of user settings
-  (`~/.tinyeditrc`), a descriptor table that drives both the file
-  parser and the `F2` panel.
+  (`~/.tinyeditrc`), independent ANSI/RGB palettes, shared color escape
+  generation and a descriptor table driving the parser and F2 submenus.
 - `src/command.c`, `inc/command.h`: Shared command labels, shortcuts, and
   links to settings toggles.
 - `src/menu.c`, `inc/menu.h`: Menu bar and popup drawing, plus keyboard and
@@ -957,18 +1044,3 @@ see above) stays
 under Salvatore Sanfilippo and Pieter Noordhuis's original BSD
 2-Clause license; see
 [`LICENSE-THIRD-PARTY`](LICENSE-THIRD-PARTY).
-
-### Build identification
-
-`bin/tinyedit --version`, the startup splash and F3 display the same complete
-version and build identifier. Git builds use `g` plus twelve commit digits;
-local source changes add `-dirty-s<checksum>`. Archives without Git use
-`source-s<checksum>`. The POSIX checksum covers source/header files, the
-Makefile and build generator; it is not cryptographic and collisions are possible.
-Identical sources retain the same ID; compiler, flags and platform are not encoded.
-The generated header is checked on every make, without requiring make clean.
-The application is rebuilt each time, including on make implementations with
-coarse timestamp resolution; unchanged generated header content is retained.
-Packagers may override it with `make BUILD_ID=package-0.3.7-r2` (up to 120
-letters, digits, dots, underscores, plus signs or hyphens). The packager owns
-the accuracy and uniqueness of this override.

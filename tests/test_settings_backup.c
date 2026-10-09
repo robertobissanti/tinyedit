@@ -68,6 +68,42 @@ int main(void) {
     if (settings.color_syntax_json_key != COLOR_RED_DARK ||
         settings.color_syntax_bracket != COLOR_MAGENTA_LIGHT) fail("new color persistence");
 
+    if (settings.color_mode != COLOR_MODE_ANSI || settings.color_gutter != COLOR_CYAN_DARK)
+        fail("old configuration keeps ANSI mode and colors");
+    int32_t rgb = 123;
+    const char *invalid[] = {"#fff", "#1234567", "#12345G", "123456", "#-12345", "#123456 junk", ""};
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+        if (settingsParseRgb(invalid[i], &rgb) || rgb != 123) fail("invalid RGB mutates output");
+    }
+    if (!settingsParseRgb("#aB01fF", &rgb) || rgb != 0xab01ff) fail("RGB mixed case");
+    char formatted[17];
+    settingsFormatRgb(rgb, formatted, sizeof(formatted));
+    if (strcmp(formatted, "#AB01FF")) fail("RGB canonical spelling");
+    fp = fopen(config, "w");
+    if (!fp) fail("open RGB config");
+    fputs("color_mode = rgb\nrgb_output = truecolor\n  rgb_background = #123456 # comment\n"
+        "rgb_syntax_keyword = #ABCDEF\nrgb_gutter = #bad\n"
+        "rgb_syntax_normal = terminal-default\ncolor_gutter = cyan\n", fp);
+    if (fclose(fp)) fail("close RGB config");
+    settingsLoad(&settings);
+    if (settings.color_mode != COLOR_MODE_RGB || settings.rgb_color_background != 0x123456 ||
+        settings.rgb_color_syntax_keyword != 0xabcdef || settings.rgb_color_gutter != 0x808080 ||
+        settings.rgb_color_syntax_normal != RGB_TERMINAL_DEFAULT || settings.color_gutter != COLOR_CYAN_LIGHT)
+        fail("RGB configuration parsing, comments, invalid values and legacy names");
+    if (strcmp(ansiBgColorCode(settingsColor(&settings, color_background)), "\x1b[48;2;18;52;86m") ||
+        strcmp(ansiColorCode(settingsColor(&settings, color_syntax_keyword)), "\x1b[38;2;171;205;239m"))
+        fail("RGB exact foreground/background escapes");
+    struct editorSettings expected = settings;
+    if (!settingsSave(&settings)) fail("save RGB");
+    settingsLoad(&settings);
+    if (memcmp(&settings, &expected, sizeof(settings))) fail("RGB and ANSI palettes round trip independently");
+    settings.rgb_output = RGB_OUTPUT_ANSI_FALLBACK;
+    int32_t fallback = settingsColor(&settings, color_background);
+    if (fallback < 0 || fallback >= SETTING_HUE_COLOR_COUNT || settingColorIsDim(fallback))
+        fail("manual fallback resolves to base ANSI color");
+    settings.color_mode = COLOR_MODE_ANSI;
+    if (settingsColor(&settings, color_gutter) != COLOR_CYAN_LIGHT) fail("switch restores ANSI palette");
+
     char filename[1024];
     snprintf(filename, sizeof(filename), "%s/document.txt", home);
     fp = fopen(filename, "w");

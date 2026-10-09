@@ -1767,18 +1767,18 @@ const char *syntaxColorFor(enum syntaxHighlight hl, const struct editorSettings 
          * color_syntax_normal to any of the 24 real hues to recolor it
          * explicitly. */
         case HL_NORMAL:
-            if (s->color_syntax_normal == COLOR_TERMINAL_DEFAULT) return NULL;
-            return ansiColorCode(s->color_syntax_normal);
-        case HL_COMMENT:      return ansiColorCode(s->color_syntax_comment);
+            if (settingsColor(s, color_syntax_normal) == COLOR_TERMINAL_DEFAULT) return NULL;
+            return ansiColorCode(settingsColor(s, color_syntax_normal));
+        case HL_COMMENT:      return ansiColorCode(settingsColor(s, color_syntax_comment));
         case HL_EMPHASIS:
-        case HL_KEYWORD:      return ansiColorCode(s->color_syntax_keyword);
-        case HL_JSON_KEY:     return ansiColorCode(s->color_syntax_json_key);
-        case HL_STRING:       return ansiColorCode(s->color_syntax_string);
-        case HL_NUMBER:       return ansiColorCode(s->color_syntax_number);
-        case HL_PREPROCESSOR: return ansiColorCode(s->color_syntax_preprocessor);
-        case HL_EMPHASIS_STRONG: return ansiColorCode(s->color_syntax_emphasis_strong);
-        case HL_MATH:          return ansiColorCode(s->color_syntax_math);
-        case HL_FUNCTION:      return ansiColorCode(s->color_syntax_function);
+        case HL_KEYWORD:      return ansiColorCode(settingsColor(s, color_syntax_keyword));
+        case HL_JSON_KEY:     return ansiColorCode(settingsColor(s, color_syntax_json_key));
+        case HL_STRING:       return ansiColorCode(settingsColor(s, color_syntax_string));
+        case HL_NUMBER:       return ansiColorCode(settingsColor(s, color_syntax_number));
+        case HL_PREPROCESSOR: return ansiColorCode(settingsColor(s, color_syntax_preprocessor));
+        case HL_EMPHASIS_STRONG: return ansiColorCode(settingsColor(s, color_syntax_emphasis_strong));
+        case HL_MATH:          return ansiColorCode(settingsColor(s, color_syntax_math));
+        case HL_FUNCTION:      return ansiColorCode(settingsColor(s, color_syntax_function));
         default:              return NULL;
     }
 }

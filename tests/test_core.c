@@ -822,6 +822,87 @@ static void testNewDocument(void) {
     else unsetenv("HOME");
 }
 
+static void testColorSettings(void) {
+    settingsDefaults(&S);
+    editorResetDocument();
+    E.view.screencols = 80; E.view.screenrows = 20;
+    struct editorSettings edited = S;
+    settings_page = SETTINGS_MAIN;
+    int32_t main_count = editorSettingsVisibleCount(&edited);
+    check(editorSettingsDescriptorAt(&edited, main_count - 1) == -1, "main ends with Colors");
+    for (int32_t i = 0; i < main_count - 1; i++)
+        check(!editorSettingsIsColor(&settingDescriptors[editorSettingsDescriptorAt(&edited, i)]),
+            "main hides color settings");
+    settings_page = SETTINGS_COLORS;
+    check(editorSettingsVisibleCount(&edited) == 4 && editorSettingsDescriptorAt(&edited, 0) == -4,
+        "Colors contains Back, mode and two groups");
+    edited.color_mode = COLOR_MODE_RGB;
+    check(editorSettingsVisibleCount(&edited) == 5, "RGB adds output choice");
+    settings_page = SETTINGS_SYNTAX;
+    edited.syntax_highlight = 0;
+    check(editorSettingsVisibleCount(&edited) > 10, "syntax palette editable while highlighting disabled");
+    for (int32_t i = 1; i < editorSettingsVisibleCount(&edited); i++)
+        check(settingDescriptors[editorSettingsDescriptorAt(&edited, i)].type == SETTING_RGB,
+            "RGB page contains RGB descriptors only");
+    edited.rgb_color_background = 0x010203;
+    edited.rgb_color_syntax_keyword = 0x040506;
+    struct abuf frame = ABUF_INIT;
+    editorSettingsRender(&frame, &edited, 1, 0, "");
+    check(memcmp(frame.b, "\x1b[m", 3) == 0, "Settings starts in terminal default colors");
+    check(memmem(frame.b, (size_t)frame.len, "\x1b[48;2;1;2;3m\x1b[38;2;4;5;6mprintf\x1b[m",
+        strlen("\x1b[48;2;1;2;3m\x1b[38;2;4;5;6mprintf\x1b[m")) != NULL,
+        "RGB syntax preview resets immediately");
+    abFree(&frame);
+    settings_page = SETTINGS_MAIN;
+    int saved_output = dup(STDOUT_FILENO), sink = open("/dev/null", O_WRONLY);
+    check(saved_output >= 0 && sink >= 0 && dup2(sink, STDOUT_FILENO) >= 0, "Settings sink"); close(sink);
+    /* Unsupported Super shortcut decodes as Escape without eating the next event. */
+    const char cancel[] = "\x1b[110;9u";
+    char keys[512];
+    size_t length = 0;
+    keys[length++] = '\x1b'; keys[length++] = 'O'; keys[length++] = 'Q';
+    for (int32_t i = 0; i < main_count - 1; i++) {
+        memcpy(keys + length, "\x1b[B", 3); length += 3;
+    }
+    keys[length++] = '\r';
+    memcpy(keys + length, "\x1b[B\r", 4); length += 4; /* RGB */
+    memcpy(keys + length, cancel, sizeof(cancel)-1); length += sizeof(cancel)-1; /* Back */
+    memcpy(keys + length, cancel, sizeof(cancel)-1); length += sizeof(cancel)-1; /* exit confirmation */
+    memcpy(keys + length, cancel, sizeof(cancel)-1); length += sizeof(cancel)-1; /* cancel exit */
+    memcpy(keys + length, cancel, sizeof(cancel)-1); length += sizeof(cancel)-1;
+    keys[length++] = 'n';
+    struct editorSettings original = S;
+    runInputBurst(keys, length, 1);
+    check(memcmp(&original, &S, sizeof(S)) == 0, "back, cancel exit and discard preserve live settings");
+    settings_page = SETTINGS_SYNTAX;
+    edited = S; edited.color_mode = COLOR_MODE_RGB;
+    const struct settingDescriptor *rgb_descriptor = settingsFind("rgb_syntax_keyword");
+    const char *rgb_inputs[] = {"\x7f\x7f\x7f\x7f\x7f\x7f\x7f#gggggg\r"
+        "\x7f\x7f\x7f\x7f\x7f\x7f\x7f#123456\r",
+        "\x7f\x7f\x7f\x7f\x7f\x7f\x7f#010203\x1b[110;9u"};
+    for (size_t i = 0; i < 2; i++) {
+        int input[2], saved_input = dup(STDIN_FILENO);
+        check(pipe(input) == 0 && saved_input >= 0, "RGB editing input pipe");
+        size_t bytes = strlen(rgb_inputs[i]);
+        check(write(input[1], rgb_inputs[i], bytes) == (ssize_t)bytes &&
+            dup2(input[0], STDIN_FILENO) >= 0, "RGB editing input"); close(input[0]);
+        editorSettingsEditRgb(&edited, 1, 0, rgb_descriptor);
+        check(edited.rgb_color_syntax_keyword == 0x123456, i ? "Escape restores RGB field" :
+            "invalid RGB cannot be accepted; corrected RGB accepted");
+        check(dup2(saved_input, STDIN_FILENO) >= 0, "restore RGB input");
+        close(saved_input); close(input[1]);
+    }
+    char *home = getenv("HOME") ? teStrdup(getenv("HOME")) : NULL;
+    check(setenv("HOME", "/nonexistent-tinyedit-directory", 1) == 0, "save failure home");
+    edited = S; edited.color_mode = COLOR_MODE_RGB;
+    check(!editorSettingsSave(&edited) && memcmp(&original, &S, sizeof(S)) == 0,
+        "failed settings save leaves live settings unchanged");
+    if (home) { setenv("HOME", home, 1); free(home); } else unsetenv("HOME");
+    check(dup2(saved_output, STDOUT_FILENO) >= 0, "restore Settings output"); close(saved_output);
+    settings_page = SETTINGS_MAIN;
+    settingsDefaults(&S);
+}
+
 static void testMouseDispatch(void) {
     settingsDefaults(&S);
     S.show_menu = S.show_top_bar = S.show_line_numbers = 0;
@@ -1467,6 +1548,7 @@ int main(void) {
     testUnicodeTabs();
     testDocumentTransactions();
     testNewDocument();
+    testColorSettings();
     testMouseDispatch();
     testSharedAutoClose();
     testEditBatches();

@@ -8,6 +8,7 @@ import pty
 import re
 import select
 import struct
+import sys
 import subprocess
 import tempfile
 import termios
@@ -926,33 +927,43 @@ def test_eol_after_trailing_tab(home):
         finish(process, master)
 
 
-def setting_index(key):
-    """Row index of a setting in the F2 panel, read from settings.c.
-
-    The panel is driven by the descriptor table, so its order is that
-    table's order. Looking the row up by key keeps these tests working
-    when a new setting is inserted above it -- hardcoded indices
-    silently start editing the wrong row instead.
-    """
+def setting_navigation(key):
+    """Navigate the actual descriptor groups, including Colors and Back rows."""
     source = (ROOT / "src" / "settings.c").read_text(encoding="utf-8")
     table = source.split("settingDescriptors[] = {", 1)[1].split("\n};", 1)[0]
     keys = re.findall(r'\{\s*"([^"]+)"', table)
-    assert key in keys, f"setting {key!r} not found in settings.c"
-    return keys.index(key)
+    # The platform-only descriptor remains conditional in the C table.
+    if sys.platform != "darwin":
+        keys = [k for k in keys if k != "mac_command_keys"]
+    general = [k for k in keys if not k.startswith(("color_", "rgb_"))]
+    down = b"\x1b[B"
+    if key in general:
+        return down * general.index(key), 0
+    colors = down * len(general) + b"\r"
+    if key == "color_mode":
+        return colors + down, 1
+    # Default ANSI page: Back, Mode, Interface, Syntax highlighting.
+    syntax = key.startswith("color_syntax_")
+    palette = [k for k in keys if k.startswith("color_") and k != "color_mode"
+               and k.startswith("color_syntax_") == syntax]
+    return colors + down * (3 if syntax else 2) + b"\r" + down * (palette.index(key) + 1), 2
 
 
 def edit_setting(master, key, keys, save):
     """Edit one F2 setting, exercising either save path or discard."""
-    index = setting_index(key)
+    navigation, depth = setting_navigation(key)
     os.write(master, b"\x1bOQ")  # F2
     assert b"Settings" in read_until(master, b"Settings")
-    os.write(master, b"\x1b[B" * index + keys)
+    os.write(master, navigation + keys)
     read_available(master, 0.2)
     if save == "ctrl-s":
         os.write(master, b"\x13")
     elif save == "f2":
         os.write(master, b"\x1bOQ")
     else:
+        for _ in range(depth):
+            os.write(master, b"\x1b")
+            read_available(master, 0.1)
         os.write(master, b"\x1b")
         assert b"Save changes before leaving?" in read_until(
             master, b"Save changes before leaving?"
@@ -998,7 +1009,7 @@ def test_settings_refresh_rows(home, save, initially_visible):
     target.write_text(source, encoding="utf-8")
     process, master = spawn_editor([str(target)], case_home)
     try:
-        expect_rendered_rows(read_available(master), source, initially_visible)
+        expect_rendered_rows(read_until(master, b"\x1b[?25h"), source, initially_visible)
         os.write(master, b"X")  # snapshot under the original settings
         expect_rendered_rows(read_available(master), "X" + source, initially_visible)
 
@@ -1059,7 +1070,7 @@ def test_settings_syntax_color_preview(home):
     process, master = spawn_editor([str(target)], case_home)
     try:
         read_available(master)
-        os.write(master, b"\x1bOQ" + b"\x1b[B" * setting_index("color_syntax_keyword"))
+        os.write(master, b"\x1bOQ" + setting_navigation("color_syntax_keyword")[0])
         output = read_available(master)
         assert b"\x1b[44m\x1b[96mprintf\x1b[m" in output, (
             "keyword preview does not use its foreground and editor background"
@@ -1082,12 +1093,90 @@ def test_settings_status_bar_preview(home):
     process, master = spawn_editor([str(target)], case_home)
     try:
         read_available(master)
-        os.write(master, b"\x1bOQ" + b"\x1b[B" * setting_index("color_statusbar"))
+        os.write(master, b"\x1bOQ" + setting_navigation("color_statusbar")[0])
         output = read_available(master)
         assert b"\x1b[44m\x1b[97m status \x1b[m" in output, (
             "status preview does not use the separate text color"
         )
         os.write(master, b"\x1b")
+    finally:
+        finish(process, master)
+
+
+def test_build_displays(home):
+    version = subprocess.check_output([str(BINARY), "--version"]).strip().removeprefix(b"tinyedit ")
+    process, master = spawn_editor([], home)
+    try:
+        output = read_available(master)
+        assert version in output, "splash omits complete build version"
+        os.write(master, b"\x1bOR")
+        output = read_available(master)
+        assert version in output, "F3 omits complete build version"
+    finally:
+        finish(process, master)
+
+
+def test_rgb_settings_mouse(home):
+    case_home = pathlib.Path(home) / "rgb-settings-mouse"
+    case_home.mkdir()
+    (case_home / ".tinyeditrc").write_text(
+        "mouse_enabled = true\ncolor_mode = rgb\nrgb_background = #010203\n"
+        "rgb_statusbar = #102030\nrgb_statusbar_text = #A0B0C0\n"
+        "show_top_bar = true\n", encoding="utf-8")
+    process, master = spawn_editor([], case_home)
+    try:
+        output = read_available(master)
+        assert b"\x1b[48;2;160;176;192m\x1b[38;2;16;32;48m" in output, "RGB top bar swap"
+        assert b"\x1b[48;2;16;32;48m\x1b[38;2;160;176;192m" in output, "RGB status/menu colors"
+        os.write(master, b"\x1bOQ")
+        output = read_available(master)
+        frame = output.rsplit(b"\x1b[?25l", 1)[-1]
+        assert b";2;" not in frame, "Settings root inherits custom colors"
+        # Move to Colors using wheel; excessive downward events clamp at the end.
+        os.write(master, b"\x1b[<65;2;5M" * 60)
+        output = read_available(master)
+        assert b"\x1b[7m Colors >" in output, "wheel does not reach Colors"
+        os.write(master, b"\r")
+        assert b"Settings > Colors" in read_available(master), "open Colors"
+        # Back row click, then re-enter and click Interface (Back, Mode, Output, Interface).
+        os.write(master, b"\x1b[<0;3;3M\x1b[<0;3;3m")
+        output = read_available(master)
+        assert b"\x1b[7m Settings " in output, "Back click does not return to root"
+        os.write(master, b"\r")
+        read_available(master)
+        os.write(master, b"\x1b[<0;3;6M\x1b[<0;3;6m")
+        output = read_available(master)
+        assert b"Settings > Colors > Interface" in output, "mouse cannot open Interface"
+        assert b"\x1b[48;2;1;2;3m" in output, "RGB background preview missing"
+        # Leave submenus without losing the session, then discard at root.
+        for _ in range(3):
+            os.write(master, b"\x1b")
+            read_available(master, 0.15)
+    finally:
+        finish(process, master)
+
+
+def test_settings_failed_save(home):
+    case_home = pathlib.Path(home) / "settings-failed-save"
+    case_home.mkdir()
+    (case_home / ".tinyeditrc").mkdir()  # Atomic replacement must fail.
+    target = case_home / "document.txt"
+    target.write_text("keep\n", encoding="utf-8")
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1bOQ")
+        read_available(master)
+        os.write(master, b"\r\x13")
+        output = read_available(master)
+        assert b"Could not save; draft kept" in output, "failed save closes Settings"
+        assert b"off" in output, "failed save loses edited draft"
+        os.write(master, b"\x1b")
+        assert b"Save changes before leaving?" in read_available(master), "draft not retained"
+        os.write(master, b"n")
+        output = read_available(master)
+        assert b"keep" in output and b"\x1b[90m" in output, "discard changes live line-number setting"
+        assert (case_home / ".tinyeditrc").is_dir(), "failed save changed config target"
     finally:
         finish(process, master)
 
@@ -1569,6 +1658,9 @@ def main():
         test_block_indent(home)
         test_no_save_prompt_when_undone(home)
         test_xml_tag_autoclose(home)
+        test_build_displays(home)
+        test_rgb_settings_mouse(home)
+        test_settings_failed_save(home)
         test_settings_syntax_color_preview(home)
         test_settings_status_bar_preview(home)
         for save in ("ctrl-s", "f2", "esc-y"):

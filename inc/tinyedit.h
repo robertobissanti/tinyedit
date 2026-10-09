@@ -47,6 +47,11 @@ struct editorPathCompletion {
     size_t count, capacity, next;
 };
 
+enum settingsPage {
+    SETTINGS_MAIN, SETTINGS_COLORS, SETTINGS_INTERFACE, SETTINGS_SYNTAX,
+    SETTINGS_PAGE_COUNT
+};
+
 enum editorKey {
     BACKSPACE = 127,
     ARROW_LEFT = 1000,

@@ -1,5 +1,5 @@
 /* syntax.h -- syntax highlighting: keywords, strings, comments, numbers,
- * tokenized per row and mapped to colors from the same ANSI palette
+ * tokenized per row and mapped to colors from the active ANSI/RGB palette
  * (enum settingColor, see settings.h) used everywhere else in the
  * editor.
  *
@@ -163,7 +163,7 @@ uint8_t syntaxIsMarkdownExtension(const char *ext);
  * @brief Get the configured foreground sequence for a syntax class.
  *
  * @details s supplies live or draft settings.
- * @return a borrowed ANSI literal, or NULL when no color should be emitted,
+ * @return a borrowed color escape (see settings.h for RGB lifetime), or NULL when no color should be emitted,
  * including terminal-default normal text.
  */
 const char *syntaxColorFor(enum syntaxHighlight hl, const struct editorSettings *s);

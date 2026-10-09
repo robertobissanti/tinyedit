@@ -4,16 +4,24 @@
 
 ### New features
 
+- Choose optional RGB colors with validated #RRGGBB input, live samples and
+  independent ANSI/RGB palettes; select true color or an explicit ANSI fallback.
+- Configure colors in F2 Colors → Interface / Syntax highlighting submenus,
+  with shared drafts, Back navigation, mouse interaction and scroll. Settings
+  labels always use terminal defaults, keeping color mistakes recoverable.
+
 - Create an empty unnamed document with File → New or Ctrl-N, with the shared
   save/discard/cancel protection and preserved sidebar tree. Cmd-N is available
   in the opt-in experimental Ghostty Command-key mode; real-terminal validation
   of the new shortcuts remains required.
 
-
 - Show the source build identifier with --version, in the startup splash and F3;
   distinguish Git commits, local changes and source archives, with a packaging override.
 
 ### Important fixes
+
+- Keep the Settings draft open and live settings unchanged when saving fails,
+  allowing retry or discard instead of applying an unsaved configuration.
 
 - Navigate into directory symlinks from the sidebar with double-click or Right,
   instead of failing with “Can't open file: Is a directory”. Linked directories

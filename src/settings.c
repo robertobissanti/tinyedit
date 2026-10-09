@@ -16,6 +16,17 @@
 #include <string.h>
 #include <unistd.h>
 
+static const char *const colorModeNames[] = { "ansi", "rgb", NULL };
+static const char *const rgbOutputNames[] = { "truecolor", "ansi-fallback", NULL };
+static const int32_t rgbPalette[] = {
+    0x808080, 0x000000, 0x404040, 0x5555ff, 0x0000aa, 0x000055,
+    0x55ff55, 0x00aa00, 0x005500, 0xffff55, 0xaaaa00, 0x555500,
+    0x55ffff, 0x00aaaa, 0x005555, 0xff55ff, 0xaa00aa, 0x550055,
+    0xff5555, 0xaa0000, 0x550000, 0xffffff, 0xaaaaaa, 0x555555
+};
+static char rgbForeground[8][32], rgbBackground[8][32];
+static uint8_t rgbForegroundIndex, rgbBackgroundIndex;
+
 static const char *const redoKeyNames[] = { "ctrl-y", "ctrl-shift-z", NULL };
 static const char *const cursorStyleNames[] = { "block", "bar", NULL };
 static const char *const lineEndingNames[] = { "auto", "lf", "crlf", NULL };
@@ -93,6 +104,26 @@ static int32_t filetypeOverrideCount = 0;
  * ~/.tinyeditrc parser and the F2 settings screen walk this table
  * instead of hardcoding each option. */
 const struct settingDescriptor settingDescriptors[] = {
+    { "color_mode", "Mode", SETTING_ENUM, offsetof(struct editorSettings, color_mode), 0, 0, colorModeNames, 2 },
+    { "rgb_output", "RGB output", SETTING_ENUM, offsetof(struct editorSettings, rgb_output), 0, 0, rgbOutputNames, 2 },
+    { "rgb_gutter", "Gutter color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_gutter), 0, 0, NULL, 0 },
+    { "rgb_selection", "Selection color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_selection), 0, 0, NULL, 0 },
+    { "rgb_statusbar", "Status bar color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_statusbar), 0, 0, NULL, 0 },
+    { "rgb_statusbar_text", "Status bar text color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_statusbar_text), 0, 0, NULL, 0 },
+    { "rgb_invisibles", "Invisibles color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_invisibles), 0, 0, NULL, 0 },
+    { "rgb_syntax_normal", "Syntax: normal text color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_normal), 0, 0, NULL, 0 },
+    { "rgb_syntax_keyword", "Syntax: keyword color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_keyword), 0, 0, NULL, 0 },
+    { "rgb_syntax_string", "Syntax: string color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_string), 0, 0, NULL, 0 },
+    { "rgb_syntax_json_key", "Syntax: JSON key color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_json_key), 0, 0, NULL, 0 },
+    { "rgb_syntax_bracket", "Syntax: bracket color (all files)", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_bracket), 0, 0, NULL, 0 },
+    { "rgb_syntax_comment", "Syntax: comment color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_comment), 0, 0, NULL, 0 },
+    { "rgb_syntax_number", "Syntax: number color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_number), 0, 0, NULL, 0 },
+    { "rgb_syntax_preprocessor", "Syntax: preprocessor color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_preprocessor), 0, 0, NULL, 0 },
+    { "rgb_syntax_emphasis_strong", "Markdown: bold text color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_emphasis_strong), 0, 0, NULL, 0 },
+    { "rgb_syntax_math", "Markdown: LaTeX math color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_math), 0, 0, NULL, 0 },
+    { "rgb_syntax_function", "Syntax: function name color (C/C++)", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_function), 0, 0, NULL, 0 },
+    { "rgb_background", "Editor background color (off=terminal default)", SETTING_RGB, offsetof(struct editorSettings, rgb_color_background), 0, 0, NULL, 0 },
+
     { "show_line_numbers", "Show line numbers", SETTING_BOOL,
       offsetof(struct editorSettings, show_line_numbers), 0, 0, NULL, 0 },
     { "tab_stop", "Tab width", SETTING_INT,
@@ -248,6 +279,8 @@ uint8_t settingsToggleBool(struct editorSettings *settings, const char *key) {
  * written and filetype overrides are untouched.
  */
 void settingsDefaults(struct editorSettings *out) {
+    out->color_mode = COLOR_MODE_ANSI;
+    out->rgb_output = RGB_OUTPUT_TRUECOLOR;
     out->show_line_numbers = 1;
     out->tab_stop = 4;
     out->redo_key = REDO_KEY_CTRL_Y;
@@ -284,6 +317,23 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_syntax_math = COLOR_CYAN_LIGHT;
     out->color_syntax_function = COLOR_YELLOW_LIGHT;
     out->color_background = COLOR_TERMINAL_DEFAULT;
+    out->rgb_color_gutter = out->color_gutter == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_gutter];
+    out->rgb_color_selection = out->color_selection == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_selection];
+    out->rgb_color_statusbar = out->color_statusbar == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_statusbar];
+    out->rgb_color_statusbar_text = out->color_statusbar_text == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_statusbar_text];
+    out->rgb_color_invisibles = out->color_invisibles == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_invisibles];
+    out->rgb_color_syntax_normal = out->color_syntax_normal == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_normal];
+    out->rgb_color_syntax_keyword = out->color_syntax_keyword == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_keyword];
+    out->rgb_color_syntax_string = out->color_syntax_string == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_string];
+    out->rgb_color_syntax_json_key = out->color_syntax_json_key == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_json_key];
+    out->rgb_color_syntax_bracket = out->color_syntax_bracket == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_bracket];
+    out->rgb_color_syntax_comment = out->color_syntax_comment == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_comment];
+    out->rgb_color_syntax_number = out->color_syntax_number == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_number];
+    out->rgb_color_syntax_preprocessor = out->color_syntax_preprocessor == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_preprocessor];
+    out->rgb_color_syntax_emphasis_strong = out->color_syntax_emphasis_strong == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_emphasis_strong];
+    out->rgb_color_syntax_math = out->color_syntax_math == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_math];
+    out->rgb_color_syntax_function = out->color_syntax_function == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_function];
+    out->rgb_color_background = out->color_background == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_background];
     out->mouse_enabled = 0;
 #ifdef __APPLE__
     out->mac_command_keys = 0;
@@ -450,7 +500,16 @@ void settingsLoad(struct editorSettings *out) {
 
     char line[256];
     while (fgets(line, sizeof(line), fp)) {
+        char *key_start = line;
+        while (isspace((unsigned char)*key_start)) key_start++;
         char *hash = strchr(line, '#');
+        char *assignment = strchr(line, '=');
+        if (hash && assignment && hash > assignment) {
+            char *value_start = assignment + 1;
+            while (isspace((unsigned char)*value_start)) value_start++;
+            if (value_start == hash && strncmp(key_start, "rgb_", 4) == 0 &&
+                strncmp(key_start, "rgb_output", 10) != 0) hash = strchr(hash + 1, '#');
+        }
         if (hash) *hash = '\0';
 
         char *eq = strchr(line, '=');
@@ -474,7 +533,9 @@ void settingsLoad(struct editorSettings *out) {
             if (strcmp(d->key, key) != 0) continue;
 
             int32_t *slot = settingSlot(out, d);
-            if (d->type == SETTING_BOOL) {
+            if (d->type == SETTING_RGB) {
+                settingsParseRgb(value, slot);
+            } else if (d->type == SETTING_BOOL) {
                 if (strcmp(value, "true") == 0 || strcmp(value, "1") == 0)
                     *slot = 1;
                 else if (strcmp(value, "false") == 0 || strcmp(value, "0") == 0)
@@ -524,13 +585,17 @@ uint8_t settingsSave(const struct editorSettings *s) {
     }
 
     fprintf(fp, "# tinyedit configuration -- edit with F2 inside the editor,\n");
-    fprintf(fp, "# or by hand (key = value, '#' starts a comment).\n\n");
+    fprintf(fp, "# or by hand (key = value; RGB accepts #RRGGBB or terminal-default).\n\n");
 
     for (int32_t i = 0; i < settingDescriptorCount; i++) {
         const struct settingDescriptor *d = &settingDescriptors[i];
         const int32_t *slot = settingSlotConst(s, d);
 
-        if (d->type == SETTING_BOOL) {
+        if (d->type == SETTING_RGB) {
+            char value[17];
+            settingsFormatRgb(*slot, value, sizeof(value));
+            fprintf(fp, "%s = %s\n", d->key, value);
+        } else if (d->type == SETTING_BOOL) {
             fprintf(fp, "%s = %s\n", d->key, *slot ? "true" : "false");
         } else if (d->type == SETTING_INT) {
             fprintf(fp, "%s = %" PRId32 "\n", d->key, *slot);
@@ -586,6 +651,63 @@ const char *filetypeForExtension(const char *ext) {
     return NULL;
 }
 
+/** @brief Parse only complete six-digit RGB values or the terminal default sentinel. */
+uint8_t settingsParseRgb(const char *text, int32_t *out) {
+    if (strcmp(text, "terminal-default") == 0) { *out = RGB_TERMINAL_DEFAULT; return 1; }
+    if (strlen(text) != 7 || text[0] != '#') return 0;
+    int32_t value = 0;
+    for (size_t i = 1; i < 7; i++) {
+        uint8_t c = (uint8_t)text[i];
+        int32_t digit;
+        if (c >= '0' && c <= '9') digit = c - '0';
+        else if (c >= 'a' && c <= 'f') digit = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') digit = c - 'A' + 10;
+        else return 0;
+        value = value * 16 + digit;
+    }
+    *out = value;
+    return 1;
+}
+
+/** @brief Write the canonical uppercase RGB spelling or terminal-default. */
+void settingsFormatRgb(int32_t value, char *out, size_t size) {
+    if (value == RGB_TERMINAL_DEFAULT) snprintf(out, size, "terminal-default");
+    else snprintf(out, size, "#%06" PRIX32, (uint32_t)value);
+}
+
+/** @brief Select true color or the closest of sixteen fixed ANSI reference colors. */
+int32_t settingsResolveColor(const struct editorSettings *s, int32_t ansi, int32_t rgb) {
+    if (s->color_mode != COLOR_MODE_RGB) return ansi;
+    if (rgb < 0 || rgb > 0xffffff) return COLOR_TERMINAL_DEFAULT;
+    if (s->rgb_output == RGB_OUTPUT_TRUECOLOR) return RGB_COLOR_BASE + rgb;
+    int32_t best = 0, distance = INT32_MAX;
+    for (int32_t i = 0; i < SETTING_HUE_COLOR_COUNT; i++) {
+        if (settingColorIsDim(i)) continue;
+        int32_t r = (rgb >> 16) - (rgbPalette[i] >> 16);
+        int32_t g = ((rgb >> 8) & 255) - ((rgbPalette[i] >> 8) & 255);
+        int32_t b = (rgb & 255) - (rgbPalette[i] & 255);
+        int32_t candidate = r*r + g*g + b*b;
+        if (candidate < distance) { best = i; distance = candidate; }
+    }
+    return best;
+}
+
+/**
+ * @brief Format RGB escapes in a rotating borrowed buffer.
+ * @details Each foreground/background result survives seven subsequent calls
+ * of the same kind. Rendering is single-threaded; no heap storage is needed.
+ */
+static const char *rgbColorCode(int32_t c, uint8_t background) {
+    uint8_t *index = background ? &rgbBackgroundIndex : &rgbForegroundIndex;
+    char (*buffers)[32] = background ? rgbBackground : rgbForeground;
+    char *buffer = buffers[*index];
+    *index = (uint8_t)((*index + 1) % 8);
+    int32_t rgb = c - RGB_COLOR_BASE;
+    snprintf(buffer, 32, "\x1b[%d;2;%d;%d;%dm", background ? 48 : 38,
+        rgb >> 16, (rgb >> 8) & 255, rgb & 255);
+    return buffer;
+}
+
 /**
  * @brief Get the foreground escape sequence for a palette entry.
  *
@@ -599,6 +721,7 @@ const char *filetypeForExtension(const char *ext) {
  * palette already worked on.
  */
 const char *ansiColorCode(int32_t c) {
+    if (c >= RGB_COLOR_BASE && c <= RGB_COLOR_BASE + 0xffffff) return rgbColorCode(c, 0);
     switch (c) {
         case COLOR_GRAY_LIGHT:    return "\x1b[90m";
         case COLOR_GRAY_DARK:     return "\x1b[30m";
@@ -661,6 +784,7 @@ const char *ansiColorCode(int32_t c) {
  * dark/etc. for a visibly distinct editor background instead.
  */
 const char *ansiBgColorCode(int32_t c) {
+    if (c >= RGB_COLOR_BASE && c <= RGB_COLOR_BASE + 0xffffff) return rgbColorCode(c, 1);
     switch (c) {
         case COLOR_GRAY_LIGHT:                        return "\x1b[100m";
         case COLOR_GRAY_DARK: case COLOR_GRAY_DIM:     return "\x1b[40m";

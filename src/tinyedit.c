@@ -25,7 +25,7 @@
  *   menu.c         UTF-8 menu layout, viewport clipping and input navigation
  *   render.c       shared layout calculations for rows and wrapped text
  *   search.c       compiled queries, text search and source-coordinate results
- *   settings.c     persistent configuration parsing and serialization
+ *   settings.c     persistent configuration, ANSI/RGB palettes and color escapes
  *   syntax.c       filetype detection and syntax highlighting
  *   terminal.c     raw terminal setup, input decoding, and terminal I/O
  *   tree.c         owned filesystem tree and lazy directory expansion
@@ -70,6 +70,7 @@
 
 static struct editorConfig E;
 static struct editorSettings S;
+static enum settingsPage settings_page;
 static struct editorMenu M;
 static struct editorTree T;
 static struct timespec tree_click_time;
@@ -179,7 +180,8 @@ static const struct helpEntry helpEntries[] = {
     { "Ctrl-N", "New empty unnamed document (offers to save first)" },
     { "Ctrl-W", "Close current file without quitting" },
     { "Ctrl-Q", "Quit (offers to save first if unsaved)" },
-    { "F2", "Settings panel (Ctrl-D inside it resets to defaults)" },
+    { "F2", "Settings; Colors submenus, Esc goes back, Ctrl-S/F2 saves" },
+    { "Ctrl-D (Settings)", "Reset all draft settings; Esc at root offers save/discard/cancel" },
     { "F1", "This help screen" },
     { "F3", "Info screen: version, author, current file stats" },
     { NULL, "Configuration files (see README.md for details)" },
@@ -1774,10 +1776,10 @@ static void abFree(struct abuf *ab) { free(ab->b); }
  */
 static void abAppendReset(struct abuf *ab) {
     abAppend(ab, "\x1b[m", 3);
-    const char *bg = ansiBgColorCode(S.color_background);
+    const char *bg = ansiBgColorCode(settingsColor(&S, color_background));
     if (bg[0]) abAppend(ab, bg, (int32_t)strlen(bg));
     if (drawing_heading) {
-        const char *fg = ansiColorCode(S.color_syntax_preprocessor);
+        const char *fg = ansiColorCode(settingsColor(&S, color_syntax_preprocessor));
         abAppend(ab, fg, (int32_t)strlen(fg));
         abAppend(ab, "\x1b[7m", 4);
     }
@@ -2112,7 +2114,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
         uint8_t should_highlight = should_sel || should_pair;
         if (should_highlight && !in_sel) {
             abAppendReset(ab);
-            const char *sel_color = ansiColorCode(S.color_selection);
+            const char *sel_color = ansiColorCode(settingsColor(&S, color_selection));
             abAppend(ab, sel_color, (int32_t)strlen(sel_color));
             abAppend(ab, "\x1b[7m", 4);
             in_sel = 1;
@@ -2136,7 +2138,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
                 (row->chars[source_byte] == ' ' || row->chars[source_byte] == '\t');
         }
         if (is_invisible_glyph) {
-            const char *inv_color = ansiColorCode(S.color_invisibles);
+            const char *inv_color = ansiColorCode(settingsColor(&S, color_invisibles));
             abAppend(ab, inv_color, (int32_t)strlen(inv_color));
         }
 
@@ -2152,15 +2154,15 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
                 decoded.codepoint > 0 && decoded.codepoint < 128 && strchr("()[]{}", (char)decoded.codepoint) &&
                 (!row->hl || (rendercol < row->rsize && row->hl[rendercol] == HL_NORMAL));
             if (plain_bracket) {
-                syn_color = ansiColorCode(S.color_syntax_bracket);
+                syn_color = ansiColorCode(settingsColor(&S, color_syntax_bracket));
             } else if (row->hl && rendercol < row->rsize) {
                 syn_color = syntaxColorFor((enum syntaxHighlight)row->hl[rendercol], &S);
-            } else if (S.color_syntax_normal != COLOR_TERMINAL_DEFAULT) {
+            } else if (settingsColor(&S, color_syntax_normal) != COLOR_TERMINAL_DEFAULT) {
                 /* An unknown extension (and syntax highlighting turned
                  * off) has no hl array, but its text is still normal
                  * text. Do not make the user's normal-text color depend
                  * on filetype detection. */
-                syn_color = ansiColorCode(S.color_syntax_normal);
+                syn_color = ansiColorCode(settingsColor(&S, color_syntax_normal));
             }
         }
         if (syn_color) abAppend(ab, syn_color, (int32_t)strlen(syn_color));
@@ -2214,7 +2216,7 @@ static uint8_t editorRowTerminatorHighlighted(int32_t filerow, uint8_t has_sel,
  */
 static void editorDrawHighlightedTerminator(struct abuf *ab) {
     abAppendReset(ab);
-    const char *sel_color = ansiColorCode(S.color_selection);
+    const char *sel_color = ansiColorCode(settingsColor(&S, color_selection));
     abAppend(ab, sel_color, (int32_t)strlen(sel_color));
     abAppend(ab, "\x1b[7m", 4);
     abAppend(ab, S.show_invisibles ? "$" : " ", 1);
@@ -2242,7 +2244,7 @@ static void editorDrawGutter(struct abuf *ab, int32_t gutter, int32_t filerow, u
     } else {
         snprintf(numbuf, sizeof(numbuf), "%*s ", safe_gutter - 1, "");
     }
-    const char *gutter_color = ansiColorCode(S.color_gutter);
+    const char *gutter_color = ansiColorCode(settingsColor(&S, color_gutter));
     abAppend(ab, gutter_color, (int32_t)strlen(gutter_color));
     abAppend(ab, numbuf, safe_gutter);
     abAppendReset(ab);
@@ -2484,7 +2486,7 @@ static void editorDrawRows(struct abuf *ab) {
              * trailing tab makes '$' appear immediately after '>'. */
             int32_t hidden_tab_fill = row->rsize - seg_to;
             while (hidden_tab_fill-- > 0) abAppend(ab, " ", 1);
-            const char *eol_color = ansiColorCode(S.color_invisibles);
+            const char *eol_color = ansiColorCode(settingsColor(&S, color_invisibles));
             abAppend(ab, eol_color, (int32_t)strlen(eol_color));
             abAppend(ab, "$", 1);
             abAppendReset(ab);
@@ -2583,10 +2585,10 @@ static char *editorDisplayText(const char *text) {
 static void editorDrawTopBar(struct abuf *ab) {
     if (!S.show_top_bar) return;
 
-    if (S.color_background != COLOR_TERMINAL_DEFAULT) abAppend(ab, "\x1b[49m", 5);
-    const char *bar_bg = ansiBgColorCode(S.color_statusbar_text);
-    const char *bar_fg = ansiColorCode(S.color_statusbar);
-    if (bar_bg[0]) abAppend(ab, bar_bg, (int32_t)strlen(bar_bg));
+    if (settingsColor(&S, color_background) != COLOR_TERMINAL_DEFAULT) abAppend(ab, "\x1b[49m", 5);
+    const char *bar_bg = ansiBgColorCode(settingsColor(&S, color_statusbar_text));
+    const char *bar_fg = ansiColorCode(settingsColor(&S, color_statusbar));
+    abAppend(ab, bar_bg[0] ? bar_bg : "\x1b[49m", bar_bg[0] ? (int32_t)strlen(bar_bg) : 5);
     abAppend(ab, bar_fg, (int32_t)strlen(bar_fg));
 
 
@@ -2642,10 +2644,10 @@ static void editorDrawTopBar(struct abuf *ab) {
  * restores the document background.
  */
 static void editorDrawStatusBar(struct abuf *ab) {
-    if (S.color_background != COLOR_TERMINAL_DEFAULT) abAppend(ab, "\x1b[49m", 5);
-    const char *bar_bg = ansiBgColorCode(S.color_statusbar);
-    const char *bar_fg = ansiColorCode(S.color_statusbar_text);
-    if (bar_bg[0]) abAppend(ab, bar_bg, (int32_t)strlen(bar_bg));
+    if (settingsColor(&S, color_background) != COLOR_TERMINAL_DEFAULT) abAppend(ab, "\x1b[49m", 5);
+    const char *bar_bg = ansiBgColorCode(settingsColor(&S, color_statusbar));
+    const char *bar_fg = ansiColorCode(settingsColor(&S, color_statusbar_text));
+    abAppend(ab, bar_bg[0] ? bar_bg : "\x1b[49m", bar_bg[0] ? (int32_t)strlen(bar_bg) : 5);
     abAppend(ab, bar_fg, (int32_t)strlen(bar_fg));
     char status[96], rstatus[80];
     /* Filename only shown here when the top bar is off -- otherwise
@@ -2822,15 +2824,15 @@ static void editorDrawSidebar(struct abuf *ab) {
             int32_t indent = depth > (width - 4) / 2 ? width - 4 : depth * 2;
             for (; columns < indent; columns++) abAppend(ab, " ", 1);
             const char *color = ansiColorCode(entry->symlink || index == 0 ?
-                S.color_syntax_preprocessor : (entry->directory ?
-                S.color_syntax_keyword : S.color_syntax_normal));
+                settingsColor(&S, color_syntax_preprocessor) : (entry->directory ?
+                settingsColor(&S, color_syntax_keyword) : settingsColor(&S, color_syntax_normal)));
             abAppend(ab, color, (int32_t)strlen(color));
             const char *marker = entry->directory ? (entry->expanded ? "▾ " : "▸ ") : "  ";
             abAppend(ab, marker, (int32_t)strlen(marker));
             columns += 2;
         } else if (y == 1) {
             label = ".. (up a dir)";
-            const char *color = ansiColorCode(S.color_syntax_keyword);
+            const char *color = ansiColorCode(settingsColor(&S, color_syntax_keyword));
             abAppend(ab, color, (int32_t)strlen(color));
         } else if (y > 1) label = "";
         columns += editorTreeLabel(ab, label, width - 1 - columns - (y == 0 ? 3 : 0));
@@ -2879,7 +2881,7 @@ static void editorRefreshScreen(void) {
      * pick up this background too, not just the rows/gutter text
      * drawn below -- \x1b[2J fills erased cells with whatever SGR
      * background is currently active, same as \x1b[K per line. */
-    const char *bg = ansiBgColorCode(S.color_background);
+    const char *bg = ansiBgColorCode(settingsColor(&S, color_background));
     if (bg[0]) abAppend(&ab, bg, (int32_t)strlen(bg));
     if (need_full_clear) abAppend(&ab, "\x1b[2J", 4);
     abAppend(&ab, "\x1b[H", 3);
@@ -3771,7 +3773,8 @@ static int32_t *settingsScreenSlot(struct editorSettings *s, const struct settin
  * @return 1 when its key has the color_syntax_ prefix.
  */
 static uint8_t editorSettingsIsSyntaxColor(const struct settingDescriptor *d) {
-    return strncmp(d->key, "color_syntax_", strlen("color_syntax_")) == 0;
+    return strncmp(d->key, "color_syntax_", 13) == 0 ||
+        strncmp(d->key, "rgb_syntax_", 11) == 0;
 }
 
 /**
@@ -3781,17 +3784,17 @@ static uint8_t editorSettingsIsSyntaxColor(const struct settingDescriptor *d) {
  * unfamiliar syntax keys.
  */
 static const char *editorSettingsSyntaxColorSample(const struct settingDescriptor *d) {
-    if (strcmp(d->key, "color_syntax_normal") == 0) return "text";
-    if (strcmp(d->key, "color_syntax_keyword") == 0) return "printf";
-    if (strcmp(d->key, "color_syntax_json_key") == 0) return "\"title\":";
-    if (strcmp(d->key, "color_syntax_bracket") == 0) return "() [] {}";
-    if (strcmp(d->key, "color_syntax_string") == 0) return "\"hello\"";
-    if (strcmp(d->key, "color_syntax_comment") == 0) return "// note";
-    if (strcmp(d->key, "color_syntax_number") == 0) return "42";
-    if (strcmp(d->key, "color_syntax_preprocessor") == 0) return "#include";
-    if (strcmp(d->key, "color_syntax_emphasis_strong") == 0) return "**bold**";
-    if (strcmp(d->key, "color_syntax_math") == 0) return "$x^2$";
-    if (strcmp(d->key, "color_syntax_function") == 0) return "main()";
+    if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_normal") == 0) return "text";
+    if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_keyword") == 0) return "printf";
+    if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_json_key") == 0) return "\"title\":";
+    if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_bracket") == 0) return "() [] {}";
+    if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_string") == 0) return "\"hello\"";
+    if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_comment") == 0) return "// note";
+    if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_number") == 0) return "42";
+    if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_preprocessor") == 0) return "#include";
+    if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_emphasis_strong") == 0) return "**bold**";
+    if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_math") == 0) return "$x^2$";
+    if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_function") == 0) return "main()";
     return "sample";
 }
 
@@ -3802,8 +3805,8 @@ static const char *editorSettingsSyntaxColorSample(const struct settingDescripto
  * otherwise NULL.
  */
 static const char *editorSettingsPlainColorSample(const struct settingDescriptor *d) {
-    if (strcmp(d->key, "color_gutter") == 0) return " 42 ";
-    if (strcmp(d->key, "color_invisibles") == 0) return ". > $";
+    if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "gutter") == 0) return " 42 ";
+    if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "invisibles") == 0) return ". > $";
     return NULL;
 }
 
@@ -3818,56 +3821,54 @@ static const char *editorSettingsPlainColorSample(const struct settingDescriptor
  * to settings.c.
  */
 static uint8_t editorSettingsIsColor(const struct settingDescriptor *d) {
-    return d->type == SETTING_ENUM &&
-        strncmp(d->key, "color_", strlen("color_")) == 0;
+    return d->type == SETTING_RGB || (d->type == SETTING_ENUM &&
+        strncmp(d->key, "color_", 6) == 0 && strcmp(d->key, "color_mode") != 0);
 }
 
 /**
- * @brief Count options currently available in the settings panel.
- *
- * @details edited is the draft settings copy. Syntax-color options are hidden
- * when its highlighting switch is off.
+ * @brief Filter descriptors by submenu and the active draft palette.
  */
+static uint8_t editorSettingsOnPage(const struct editorSettings *edited,
+    const struct settingDescriptor *d) {
+    uint8_t color = editorSettingsIsColor(d);
+    uint8_t mode = strcmp(d->key, "color_mode") == 0 || strcmp(d->key, "rgb_output") == 0;
+    if (settings_page == SETTINGS_MAIN) return !color && !mode;
+    if (settings_page == SETTINGS_COLORS)
+        return mode && (strcmp(d->key, "rgb_output") != 0 || edited->color_mode == COLOR_MODE_RGB);
+    if (!color || (d->type == SETTING_RGB) != (edited->color_mode == COLOR_MODE_RGB)) return 0;
+    return editorSettingsIsSyntaxColor(d) == (settings_page == SETTINGS_SYNTAX);
+}
+
+/** @brief Count rows, including submenu links and Back, in the current page. */
 static int32_t editorSettingsVisibleCount(const struct editorSettings *edited) {
-    int32_t count = 0;
-    for (int32_t i = 0; i < settingDescriptorCount; i++) {
-        if (edited->syntax_highlight || !editorSettingsIsSyntaxColor(&settingDescriptors[i]))
-            count++;
-    }
+    int32_t count = settings_page == SETTINGS_COLORS ? 3 : 1;
+    for (int32_t i = 0; i < settingDescriptorCount; i++)
+        if (editorSettingsOnPage(edited, &settingDescriptors[i])) count++;
     return count;
 }
 
-/**
- * @brief Resolve a visible panel index to the descriptor table.
- *
- * @details visible_idx is zero-based and uses the current edited settings.
- * @return the descriptor index, or -1 if no visible entry exists.
- */
+/** @brief Map a page row to a descriptor or a negative navigation sentinel. */
 static int32_t editorSettingsDescriptorAt(const struct editorSettings *edited, int32_t visible_idx) {
+    if (settings_page != SETTINGS_MAIN && visible_idx-- == 0) return -4;
     for (int32_t i = 0; i < settingDescriptorCount; i++) {
-        if (!edited->syntax_highlight && editorSettingsIsSyntaxColor(&settingDescriptors[i]))
-            continue;
+        if (!editorSettingsOnPage(edited, &settingDescriptors[i])) continue;
         if (visible_idx-- == 0) return i;
     }
-    return -1;
+    if (settings_page == SETTINGS_MAIN) return -1;
+    return visible_idx == 0 ? -2 : -3;
 }
 
-/**
- * @brief Measure the alignment width for visible option labels.
- *
- * @return the width used by the settings panel, including indentation for
- * grouped syntax colors.
- */
+/** @brief Measure labels on this page without counting terminal escapes. */
 static int32_t editorSettingsLabelWidth(const struct editorSettings *edited) {
     int32_t widest = 0;
     for (int32_t i = 0; i < settingDescriptorCount; i++) {
         const struct settingDescriptor *d = &settingDescriptors[i];
-        if (!edited->syntax_highlight && editorSettingsIsSyntaxColor(d)) continue;
-        uint8_t markdown_child = strncmp(d->label, "Markdown: ", 10) == 0;
-        const char *label = editorSettingsIsSyntaxColor(d) ?
-            d->label + strlen("Syntax: ") : markdown_child ? d->label + 10 : d->label;
-        int32_t width = (int32_t)strlen(label) +
-            (editorSettingsIsSyntaxColor(d) || markdown_child ? 3 : 1);
+        if (!editorSettingsOnPage(edited, d)) continue;
+        uint8_t syntax = editorSettingsIsSyntaxColor(d);
+        uint8_t markdown = strncmp(d->label, "Markdown: ", 10) == 0;
+        const char *label = markdown ? d->label + 10 :
+            syntax ? d->label + strlen("Syntax: ") : d->label;
+        int32_t width = (int32_t)strlen(label) + (syntax ? 3 : 1);
         if (width > widest) widest = width;
     }
     return widest;
@@ -3916,13 +3917,23 @@ static void editorSettingsCycleEnum(const struct settingDescriptor *d, int32_t *
  */
 static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected,
     const struct editorSettings *edited, char scroll_indicator, int32_t label_width) {
+    if (idx < 0) {
+        const char *label = idx == -1 ? " Colors >" : idx == -2 ? " Interface >" :
+            idx == -3 ? " Syntax highlighting >" : " Back";
+        if (selected) abAppend(ab, "\x1b[7m", 4);
+        abAppend(ab, label, (int32_t)strlen(label));
+        abAppend(ab, "\x1b[m\x1b[K\r\n", 8);
+        return;
+    }
     const struct settingDescriptor *d = &settingDescriptors[idx];
     const int32_t *slot = (const int32_t *)((const char *)edited + d->offset);
 
     char line[96];
     char valuebuf[48];
 
-    if (d->type == SETTING_BOOL) {
+    if (d->type == SETTING_RGB) {
+        settingsFormatRgb(*slot, valuebuf, sizeof(valuebuf));
+    } else if (d->type == SETTING_BOOL) {
         snprintf(valuebuf, sizeof(valuebuf), "%s", *slot ? "on" : "off");
     } else if (d->type == SETTING_INT) {
         snprintf(valuebuf, sizeof(valuebuf), "%d", *slot);
@@ -3932,8 +3943,8 @@ static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected
 
     uint8_t syntax_color = editorSettingsIsSyntaxColor(d);
     uint8_t markdown_child = strncmp(d->label, "Markdown: ", 10) == 0;
-    const char *label = syntax_color ? d->label + strlen("Syntax: ") :
-        markdown_child ? d->label + 10 : d->label;
+    const char *label = markdown_child ? d->label + 10 :
+        syntax_color ? d->label + strlen("Syntax: ") : d->label;
     int32_t indent = syntax_color || markdown_child ? 3 : 1;
     int32_t len = 0;
     line[len++] = scroll_indicator ? scroll_indicator : ' ';
@@ -3949,69 +3960,35 @@ static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected
     abAppend(ab, line, len);
     if (selected) abAppend(ab, "\x1b[m", 3);
 
-    /* Live preview after the value name: the palette has 24 hues whose
-     * names differ only by a "-light"/"-dark"/"-dim" suffix, and
-     * stepping through them by name alone gives no way to tell what
-     * you actually picked (or to notice you skipped past the variant
-     * you wanted) until you leave the panel. color_background is shown
-     * as an actual background block since that's how it will be used;
-     * every other color setting paints the foreground, matching how it
-     * renders in the editor. Drawn outside `line` because the escapes
-     * around it aren't printable columns and must not count toward the
-     * field widths above. */
     if (editorSettingsIsColor(d)) {
-        if (editorSettingsIsSyntaxColor(d)) {
-            const char *fg = ansiColorCode(*slot);
-            const char *bg = ansiBgColorCode(edited->color_background);
-            const char *sample = editorSettingsSyntaxColorSample(d);
+        int32_t value = d->type == SETTING_RGB ? settingsResolveColor(edited, 0, *slot) : *slot;
+        int32_t bg_value = settingsColor(edited, color_background);
+        int32_t fg_value = value;
+        uint8_t background = strcmp(d->key, "color_background") == 0 || strcmp(d->key, "rgb_background") == 0;
+        uint8_t bar = strstr(d->key, "statusbar") != NULL;
+        const char *sample = editorSettingsIsSyntaxColor(d) ? editorSettingsSyntaxColorSample(d) :
+            editorSettingsPlainColorSample(d);
+        if (!sample) sample = " sample ";
+        if (background) { bg_value = value; fg_value = settingsColor(edited, color_syntax_normal); }
+        if (bar) {
+            bg_value = settingsColor(edited, color_statusbar);
+            fg_value = settingsColor(edited, color_statusbar_text);
+            sample = " status ";
+        }
+        const char *bg = ansiBgColorCode(bg_value);
+        const char *fg = ansiColorCode(fg_value);
+        abAppend(ab, "  ", 2);
+        abAppend(ab, bg[0] ? bg : "\x1b[49m", bg[0] ? (int32_t)strlen(bg) : 5);
+        abAppend(ab, fg, (int32_t)strlen(fg));
+        if (strstr(d->key, "selection")) abAppend(ab, "\x1b[7m", 4);
+        abAppend(ab, sample, (int32_t)strlen(sample));
+        abAppend(ab, "\x1b[m", 3);
+        if (bar) {
+            bg = ansiBgColorCode(fg_value); fg = ansiColorCode(bg_value);
             abAppend(ab, "  ", 2);
-            if (bg[0]) abAppend(ab, bg, (int32_t)strlen(bg));
+            abAppend(ab, bg[0] ? bg : "\x1b[49m", bg[0] ? (int32_t)strlen(bg) : 5);
             abAppend(ab, fg, (int32_t)strlen(fg));
-            abAppend(ab, sample, (int32_t)strlen(sample));
-            abAppend(ab, "\x1b[m", 3);
-        } else if (strcmp(d->key, "color_selection") == 0) {
-            const char *fg = ansiColorCode(*slot);
-            const char *bg = ansiBgColorCode(edited->color_background);
-            abAppend(ab, "  ", 2);
-            if (bg[0]) abAppend(ab, bg, (int32_t)strlen(bg));
-            abAppend(ab, fg, (int32_t)strlen(fg));
-            abAppend(ab, "\x1b[7mselected\x1b[m", 15);
-        } else if (strcmp(d->key, "color_statusbar") == 0 ||
-            strcmp(d->key, "color_statusbar_text") == 0) {
-            int32_t bg_color = strcmp(d->key, "color_statusbar") == 0 ?
-                *slot : edited->color_statusbar;
-            int32_t fg_color = strcmp(d->key, "color_statusbar") == 0 ?
-                edited->color_statusbar_text : *slot;
-            const char *bg = ansiBgColorCode(bg_color);
-            const char *fg = ansiColorCode(fg_color);
-            abAppend(ab, "  ", 2);
-            if (bg[0]) abAppend(ab, bg, (int32_t)strlen(bg));
-            abAppend(ab, fg, (int32_t)strlen(fg));
-            abAppend(ab, " status ", 8);
-            abAppend(ab, "\x1b[m", 3);
-        } else if (editorSettingsPlainColorSample(d)) {
-            const char *fg = ansiColorCode(*slot);
-            const char *bg = ansiBgColorCode(edited->color_background);
-            const char *sample = editorSettingsPlainColorSample(d);
-            abAppend(ab, "  ", 2);
-            if (bg[0]) abAppend(ab, bg, (int32_t)strlen(bg));
-            abAppend(ab, fg, (int32_t)strlen(fg));
-            abAppend(ab, sample, (int32_t)strlen(sample));
-            abAppend(ab, "\x1b[m", 3);
-        } else if (strcmp(d->key, "color_background") == 0) {
-            const char *bg = ansiBgColorCode(*slot);
-            if (bg[0]) {
-                abAppend(ab, "  ", 2);
-                abAppend(ab, bg, (int32_t)strlen(bg));
-                abAppend(ab, "      ", 6);
-                abAppend(ab, "\x1b[m", 3);
-            }
-        } else {
-            const char *fg = ansiColorCode(*slot);
-            abAppend(ab, "  ", 2);
-            abAppend(ab, fg, (int32_t)strlen(fg));
-            abAppend(ab, "\xe2\x96\x88\xe2\x96\x88\xe2\x96\x88", 9); /* ███ */
-            abAppend(ab, "\x1b[m", 3);
+            abAppend(ab, " top \x1b[m", 8);
         }
     }
 
@@ -4265,8 +4242,37 @@ static void editorInfoScreen(void) {
  * many rows are visible.
  */
 static int32_t editorSettingsVisibleRows(void) {
-    int32_t visible = E.view.screenrows - 3;
+    int32_t visible = E.view.screenrows + 2 + S.show_top_bar + S.show_menu - 6;
     return visible > 0 ? visible : 1;
+}
+
+/** @brief Clip panel output to terminal columns without splitting UTF-8 or SGR. */
+static void editorSettingsClip(struct abuf *ab) {
+    struct abuf clipped = ABUF_INIT;
+    int32_t column = 0;
+    size_t offset = 0, length = (size_t)ab->len;
+    while (offset < length) {
+        if (ab->b[offset] == '\x1b' && offset + 1 < length && ab->b[offset + 1] == '[') {
+            size_t end = offset + 2;
+            while (end < length && (ab->b[end] < '@' || ab->b[end] > '~')) end++;
+            if (end < length) end++;
+            abAppend(&clipped, ab->b + offset, (int32_t)(end - offset));
+            offset = end;
+        } else if (ab->b[offset] == '\r' || ab->b[offset] == '\n') {
+            column = 0;
+            abAppend(&clipped, ab->b + offset, 1); offset++;
+        } else {
+            size_t bytes = utf8NextCharLen(ab->b, offset, length);
+            if (!bytes) bytes = 1;
+            size_t width = utf8StrWidth(ab->b + offset, bytes);
+            if (column <= E.view.screencols && width <= (size_t)(E.view.screencols - column))
+                abAppend(&clipped, ab->b + offset, (int32_t)bytes);
+            column += (int32_t)width;
+            offset += bytes;
+        }
+    }
+    abFree(ab);
+    *ab = clipped;
 }
 
 /**
@@ -4277,10 +4283,15 @@ static int32_t editorSettingsVisibleRows(void) {
  */
 static void editorSettingsRender(struct abuf *ab, const struct editorSettings *edited,
     int32_t cursor, int32_t scroll, const char *msg) {
-    abAppend(ab, "\x1b[?25l\x1b[H", 9);
+    abAppend(ab, "\x1b[m\x1b[?25l\x1b[H", 12);
     int32_t rows_used = 0;
-
-    abAppend(ab, "\x1b[7m Settings \x1b[m\x1b[K\r\n\x1b[K\r\n", 27);
+    const char *title = settings_page == SETTINGS_MAIN ? "Settings" :
+        settings_page == SETTINGS_COLORS ? "Settings > Colors" :
+        settings_page == SETTINGS_INTERFACE ? "Settings > Colors > Interface" :
+        "Settings > Colors > Syntax highlighting";
+    abAppend(ab, "\x1b[7m ", 5);
+    abAppend(ab, title, (int32_t)strlen(title));
+    abAppend(ab, " \x1b[m\x1b[K\r\n\x1b[K\r\n", 14);
     rows_used += 2;
 
     int32_t visible = editorSettingsVisibleRows();
@@ -4327,13 +4338,14 @@ static void editorSettingsRender(struct abuf *ab, const struct editorSettings *e
      * blank/note/help + this padding) must equal the terminal height
      * exactly -- one \r\n too many scrolls the screen and desyncs
      * \x1b[H from the top of the visible viewport on every frame. */
-    int32_t total_rows = E.view.screenrows + 2;
+    int32_t total_rows = E.view.screenrows + 2 + S.show_top_bar + S.show_menu;
     for (; rows_used < total_rows - 1; rows_used++)
         abAppend(ab, "\x1b[K\r\n", 5);
     if (rows_used < total_rows)
         abAppend(ab, "\x1b[K", 3); /* last row: no trailing newline */
 
     abAppend(ab, "\x1b[H\x1b[?25h", 9);
+    editorSettingsClip(ab);
 }
 
 /**
@@ -4376,9 +4388,38 @@ static uint8_t editorSettingsEditInt(struct editorSettings *edited, int32_t curs
             if (v > d->int_max) v = d->int_max;
             *out = v;
             return 1;
-        } else if ((c == '-' || isdigit(c)) && buflen < sizeof(buf) - 1) {
+        } else if ((c == '-' || (c >= '0' && c <= '9')) && buflen < sizeof(buf) - 1) {
             buf[buflen++] = (char)c;
             buf[buflen] = '\0';
+        }
+    }
+}
+
+/** @brief Edit a hex color with live swatches; Esc restores the original field. */
+static void editorSettingsEditRgb(struct editorSettings *edited, int32_t cursor,
+    int32_t scroll, const struct settingDescriptor *d) {
+    int32_t *slot = settingsScreenSlot(edited, d), original = *slot;
+    char text[32];
+    settingsFormatRgb(original, text, sizeof(text));
+    size_t length = strlen(text);
+    while (1) {
+        int32_t candidate;
+        uint8_t valid = settingsParseRgb(text, &candidate);
+        *slot = valid ? candidate : original;
+        char message[120];
+        snprintf(message, sizeof(message), "RGB: %s%s", text,
+            valid ? " [Enter accept, Esc cancel]" : " [use #RRGGBB or terminal-default]");
+        struct abuf ab = ABUF_INIT;
+        editorSettingsRender(&ab, edited, cursor, scroll, message);
+        if (!terminalWrite(ab.b, (size_t)ab.len)) terminalDie("write");
+        abFree(&ab);
+        int32_t c = editorReadKey();
+        if (c == '\x1b') { *slot = original; return; }
+        if (c == '\r' && valid) return;
+        if (c == BACKSPACE || c == CTRL_KEY('h') || c == DEL_KEY) {
+            if (length) text[--length] = '\0';
+        } else if (c >= 32 && c < 127 && length < sizeof(text) - 1) {
+            text[length++] = (char)c; text[length] = '\0';
         }
     }
 }
@@ -4386,18 +4427,22 @@ static uint8_t editorSettingsEditInt(struct editorSettings *edited, int32_t curs
 /**
  * @brief Apply draft settings to the live editor and persist them.
  *
- * @details Updates row caches, terminal modes and layout as needed. Live
- * changes are applied even if writing ~/.tinyeditrc fails; the result is
- * reported in the status bar.
+ * @details Updates row caches, terminal modes and layout after durable save.
+ * Failure keeps the draft editable and leaves live settings unchanged.
+ * @return 1 after saving and applying, 0 on persistence failure.
  */
-static void editorSettingsSave(const struct editorSettings *edited) {
+static uint8_t editorSettingsSave(const struct editorSettings *edited) {
+    if (!settingsSave(edited)) {
+        editorSetStatusMessage("Could not write ~/.tinyeditrc");
+        return 0;
+    }
     struct editorSettings previous = S;
 #ifdef __APPLE__
     uint8_t ghostty_bindings_ok = 1;
 #endif
     S = *edited;
-    if (previous.color_background != COLOR_TERMINAL_DEFAULT &&
-        S.color_background == COLOR_TERMINAL_DEFAULT)
+    if (settingsColor(&previous, color_background) != COLOR_TERMINAL_DEFAULT &&
+        settingsColor(&S, color_background) == COLOR_TERMINAL_DEFAULT)
         if (!terminalWrite("\x1b[49m", 5)) terminalDie("write");
     if (S.show_top_bar != previous.show_top_bar || S.show_menu != previous.show_menu)
         winsize_changed = 1;
@@ -4420,7 +4465,7 @@ static void editorSettingsSave(const struct editorSettings *edited) {
         }
     }
 #endif
-    if (settingsSave(&S)) {
+    {
 #ifdef __APPLE__
         if (ghostty_bindings_ok) {
             editorSetStatusMessage("Settings saved to ~/.tinyeditrc");
@@ -4430,9 +4475,8 @@ static void editorSettingsSave(const struct editorSettings *edited) {
 #else
         editorSetStatusMessage("Settings saved to ~/.tinyeditrc");
 #endif
-    } else {
-        editorSetStatusMessage("Could not write ~/.tinyeditrc");
     }
+    return 1;
 }
 
 /**
@@ -4444,6 +4488,9 @@ static void editorSettingsSave(const struct editorSettings *edited) {
  */
 static void editorSettingsScreen(void) {
     struct editorSettings edited = S;
+    settings_page = SETTINGS_MAIN;
+    int32_t parent_cursor[SETTINGS_PAGE_COUNT] = {0};
+    int32_t parent_scroll[SETTINGS_PAGE_COUNT] = {0};
     int32_t cursor = 0;
     int32_t scroll = 0;
     char msg[80] = "";
@@ -4468,8 +4515,28 @@ static void editorSettingsScreen(void) {
         msg[0] = '\0';
 
         int32_t c = editorReadKey();
-        const struct settingDescriptor *d = &settingDescriptors[editorSettingsDescriptorAt(&edited, cursor)];
-        int32_t *slot = settingsScreenSlot(&edited, d);
+        if (c == MOUSE_EVENT_KEY && S.mouse_enabled) {
+            if (mouseEventButton == 64 || mouseEventButton == 65) {
+                if (mouseEventButton == 64 && cursor > 0) cursor--;
+                if (mouseEventButton == 65 && cursor + 1 < count) cursor++;
+                continue;
+            } else if (mouseEventButton == 0 && mouseEventPress && mouseEventRow >= 3 &&
+                mouseEventRow < 3 + visible && scroll + mouseEventRow - 3 < count) {
+                cursor = scroll + mouseEventRow - 3; c = '\r';
+            } else continue;
+        }
+        int32_t idx = editorSettingsDescriptorAt(&edited, cursor);
+        if ((c == '\x1b' && settings_page != SETTINGS_MAIN) ||
+            (idx < 0 && (c == '\r' || c == ' ' || c == ARROW_RIGHT))) {
+            parent_cursor[settings_page] = cursor; parent_scroll[settings_page] = scroll;
+            if (c == '\x1b' || idx == -4)
+                settings_page = settings_page == SETTINGS_COLORS ? SETTINGS_MAIN : SETTINGS_COLORS;
+            else settings_page = idx == -1 ? SETTINGS_COLORS : idx == -2 ? SETTINGS_INTERFACE : SETTINGS_SYNTAX;
+            cursor = parent_cursor[settings_page]; scroll = parent_scroll[settings_page];
+            continue;
+        }
+        const struct settingDescriptor *d = idx >= 0 ? &settingDescriptors[idx] : NULL;
+        int32_t *slot = d ? settingsScreenSlot(&edited, d) : NULL;
 
         switch (c) {
             case ARROW_UP:
@@ -4489,17 +4556,20 @@ static void editorSettingsScreen(void) {
              * this doesn't take anything away from BOOL/INT rows --
              * it's simply a no-op there. */
             case ARROW_LEFT:
-                if (d->type == SETTING_ENUM)
+                if (d && d->type == SETTING_ENUM)
                     editorSettingsCycleEnum(d, slot, -1);
                 break;
             case ARROW_RIGHT:
-                if (d->type == SETTING_ENUM)
+                if (d && d->type == SETTING_ENUM)
                     editorSettingsCycleEnum(d, slot, +1);
                 break;
 
             case '\r':
             case ' ':
-                if (d->type == SETTING_BOOL) {
+                if (!d) break;
+                if (d->type == SETTING_RGB) {
+                    editorSettingsEditRgb(&edited, cursor, scroll, d);
+                } else if (d->type == SETTING_BOOL) {
                     *slot = !*slot;
                 } else if (d->type == SETTING_ENUM) {
                     editorSettingsCycleEnum(d, slot, +1);
@@ -4512,8 +4582,9 @@ static void editorSettingsScreen(void) {
 
             case CTRL_KEY('s'):
             case F2_KEY:
-                editorSettingsSave(&edited);
-                return;
+                if (editorSettingsSave(&edited)) return;
+                snprintf(msg, sizeof(msg), "Could not save; draft kept. Retry or Esc to discard.");
+                break;
 
             case CTRL_KEY('d'):
                 /* Resets only the local edited copy, same as any
@@ -4537,8 +4608,8 @@ static void editorSettingsScreen(void) {
 
                 int32_t confirm = editorReadKey();
                 if (confirm == 'y' || confirm == 'Y') {
-                    editorSettingsSave(&edited);
-                    return;
+                    if (editorSettingsSave(&edited)) return;
+                    snprintf(msg, sizeof(msg), "Could not save; draft kept.");
                 } else if (confirm == 'n' || confirm == 'N') {
                     return; /* discard edited, live settings (S) untouched */
                 }

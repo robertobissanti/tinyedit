@@ -302,11 +302,11 @@ enum editorCommand menuHandleMouse(struct editorMenu *menu, int32_t row,
 void menuDrawBar(const struct editorMenu *menu,
     const struct editorSettings *settings, int32_t screencols,
     menuAppendFn append, void *context) {
-    if (settings->color_background != COLOR_TERMINAL_DEFAULT)
+    if (settingsColor(settings, color_background) != COLOR_TERMINAL_DEFAULT)
         append(context, "\x1b[49m", 5);
-    const char *bg = ansiBgColorCode(settings->color_statusbar);
-    const char *fg = ansiColorCode(settings->color_statusbar_text);
-    if (bg[0]) append(context, bg, (int32_t)strlen(bg));
+    const char *bg = ansiBgColorCode(settingsColor(settings, color_statusbar));
+    const char *fg = ansiColorCode(settingsColor(settings, color_statusbar_text));
+    append(context, bg[0] ? bg : "\x1b[49m", bg[0] ? (int32_t)strlen(bg) : 5);
     append(context, fg, (int32_t)strlen(fg));
     int32_t remaining = screencols;
     for (int32_t i = 0; i < menu_count && remaining > 0; i++) {
@@ -317,7 +317,7 @@ void menuDrawBar(const struct editorMenu *menu,
         if (menu->open && i == menu->selected_menu) append(context, "\x1b[27m", 5);
     }
     append(context, "\x1b[K\x1b[m\r\n", 8);
-    const char *editor_bg = ansiBgColorCode(settings->color_background);
+    const char *editor_bg = ansiBgColorCode(settingsColor(settings, color_background));
     if (editor_bg[0]) append(context, editor_bg, (int32_t)strlen(editor_bg));
 }
 
@@ -335,9 +335,9 @@ void menuDrawPopup(const struct editorMenu *menu,
     int32_t width = menuPopupWidth(menu->selected_menu, screencols);
     if (!width) return;
 
-    const char *bg = ansiBgColorCode(settings->color_statusbar);
-    const char *fg = ansiColorCode(settings->color_statusbar_text);
-    if (bg[0]) append(context, bg, (int32_t)strlen(bg));
+    const char *bg = ansiBgColorCode(settingsColor(settings, color_statusbar));
+    const char *fg = ansiColorCode(settingsColor(settings, color_statusbar_text));
+    append(context, bg[0] ? bg : "\x1b[49m", bg[0] ? (int32_t)strlen(bg) : 5);
     append(context, fg, (int32_t)strlen(fg));
     const struct menuDefinition *definition = &menus[menu->selected_menu];
     int32_t start = menuPopupStart(menu->selected_menu, width, screencols);

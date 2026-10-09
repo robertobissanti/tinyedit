@@ -78,3 +78,30 @@ al confronto dei costi del journal, non alla previsione della latenza UI.
 SIZE_MAX, rifiuto prima dell'allocazione mediante processi figli, clipboard
 interna vuota, NUL finale e copie indipendenti con byte malformati/NUL interni.
 Non accede alla clipboard di sistema e non provoca esaurimento reale di RAM.
+
+## Colors, Settings, build identity and New
+
+The settings tests cover old ANSI/legacy configurations, independent RGB
+palette round trips, strict hex validation, explicit foreground/background
+escapes and the manual ANSI fallback. Core tests exercise nested Settings
+navigation, cancelling exit, discarding a draft, cancelling/correcting RGB
+input and failed-save isolation. PTY tests verify terminal-default Settings
+labels, RGB/swapped bars, samples, mouse wheel/click navigation and complete
+build identifiers in splash and F3.
+
+`test_build.py` builds temporary source copies and covers clean/dirty Git,
+archives (including inside unrelated repositories), override validation and
+commit changes followed by make without clean. It also checks --version with
+no terminal input. The source checksum is not a binary or cryptographic ID.
+
+New tests exercise cancellation, failed and successful saves, backup removal,
+selection/view/history preservation on cancellation, reset of all document
+state and the experimental macOS Cmd-N decoder mapping. These simulated bytes
+are not evidence that a particular real terminal emits them.
+
+Real-terminal checks remain required on Ghostty/macOS and Konsole/ArchLinux:
+verify actual Ctrl-N bytes and, for Ghostty's opt-in Command-key mode, Cmd-N
+passthrough and restoration of the terminal binding on exit. Check RGB output
+and manual fallback, Settings readability with equal foreground/background
+colors, mouse/back navigation, scroll and save/discard/cancel. This session's
+automatic PTY checks do not certify those terminal-specific behaviors.

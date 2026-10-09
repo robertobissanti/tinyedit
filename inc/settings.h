@@ -13,19 +13,24 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define RGB_COLOR_BASE 0x1000000
+#define RGB_TERMINAL_DEFAULT (-1)
+#define settingsColor(s, field) settingsResolveColor((s), (s)->field, (s)->rgb_##field)
+
 #define FILETYPE_KEY_PREFIX "filetype."
+
+enum settingsColorMode { COLOR_MODE_ANSI, COLOR_MODE_RGB };
+enum settingsRgbOutput { RGB_OUTPUT_TRUECOLOR, RGB_OUTPUT_ANSI_FALLBACK };
 
 enum settingRedoKey {
     REDO_KEY_CTRL_Y = 0,
     REDO_KEY_CTRL_SHIFT_Z
 };
 
-/* A small fixed palette of ANSI foreground colors, enough to
- * distinguish editor UI elements without pulling in 256-color/truecolor
- * handling. See ansiColorCode() for the escape sequence each maps to.
- * Each of the 8 base hues has three variants, all standard ANSI (not
- * 256-color/truecolor) so this doesn't relax the "no 256-color/
- * truecolor" constraint above:
+/* The legacy ANSI palette remains the default. RGB uses separate int32_t
+ * slots (0x000000..0xffffff, or RGB_TERMINAL_DEFAULT). settingsColor()
+ * resolves an active role before foreground/background formatting.
+ * Each of the 8 ANSI base hues has three variants:
  *   - "light": bright, \x1b[9Xm
  *   - "dark": normal-intensity, \x1b[3Xm
  *   - "dim": faint/dim, \x1b[2;3Xm -- a step darker/muted than "dark".
@@ -100,6 +105,27 @@ struct filetypeEntry {
  * e.g. uint8_t for the bools here would make that generic accessor
  * read/write the wrong width. */
 struct editorSettings {
+    /* The two palettes retain independent values when switching modes. */
+    int32_t color_mode;
+    int32_t rgb_output;
+    int32_t rgb_color_gutter;
+    int32_t rgb_color_selection;
+    int32_t rgb_color_statusbar;
+    int32_t rgb_color_statusbar_text;
+    int32_t rgb_color_invisibles;
+    int32_t rgb_color_syntax_normal;
+    int32_t rgb_color_syntax_keyword;
+    int32_t rgb_color_syntax_string;
+    int32_t rgb_color_syntax_json_key;
+    int32_t rgb_color_syntax_bracket;
+    int32_t rgb_color_syntax_comment;
+    int32_t rgb_color_syntax_number;
+    int32_t rgb_color_syntax_preprocessor;
+    int32_t rgb_color_syntax_emphasis_strong;
+    int32_t rgb_color_syntax_math;
+    int32_t rgb_color_syntax_function;
+    int32_t rgb_color_background;
+
     int32_t show_line_numbers;
     int32_t tab_stop;
     int32_t redo_key;
@@ -227,7 +253,8 @@ struct editorSettings {
 enum settingType {
     SETTING_BOOL,
     SETTING_INT,
-    SETTING_ENUM
+    SETTING_ENUM,
+    SETTING_RGB
 };
 
 /* Describes one configurable setting: its key in the config file, its
@@ -247,6 +274,13 @@ struct settingDescriptor {
 
 extern const struct settingDescriptor settingDescriptors[];
 extern const int32_t settingDescriptorCount;
+
+/** @brief Validate #RRGGBB or terminal-default, leaving out unchanged on failure. */
+uint8_t settingsParseRgb(const char *text, int32_t *out);
+/** @brief Format a valid RGB value into a caller-owned buffer of at least 17 bytes. */
+void settingsFormatRgb(int32_t value, char *out, size_t size);
+/** @brief Resolve the active palette; fallback uses a documented fixed ANSI approximation. */
+int32_t settingsResolveColor(const struct editorSettings *s, int32_t ansi, int32_t rgb);
 
 /**
  * @brief Look up an option by its configuration key.
@@ -318,7 +352,8 @@ uint8_t settingsSave(const struct editorSettings *s);
  *
  * @details Default or unsupported values reset the terminal foreground;
  * callers wanting no output must check that case separately.
- * @return a borrowed literal.
+ * RGB_COLOR_BASE + RGB emits true color. RGB results use rotating
+ * storage, valid for seven subsequent foreground calls; ANSI returns literals.
  */
 const char *ansiColorCode(int32_t c);
 
@@ -327,8 +362,9 @@ const char *ansiColorCode(int32_t c);
  *
  * @details Default or unsupported values return an empty string to leave the
  * background alone.
- * @return a borrowed literal; dim variants use the corresponding dark
- * background.
+ * RGB_COLOR_BASE + RGB emits true color. RGB results use rotating
+ * storage, valid for seven subsequent background calls; ANSI returns literals.
+ * Dim ANSI variants use the corresponding dark background.
  */
 const char *ansiBgColorCode(int32_t c);
 
