@@ -25,6 +25,7 @@ PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
 INSTALL ?= install
 SYNTAX_DIR ?= $(HOME)/.tinyedit/syntax
+COLORSCHEME_DIR ?= $(HOME)/.tinyedit/color-scheme
 DOCS_DIR ?= $(HOME)/.tinyedit
 
 $(TARGET): FORCE $(BIN_DIR)/build_info.h $(SOURCES) $(HEADERS) | $(BIN_DIR)
@@ -39,6 +40,9 @@ $(BIN_DIR):
 install: $(TARGET)
 	$(INSTALL) -d $(DESTDIR)$(BINDIR)
 	$(INSTALL) -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/tinyedit
+	@echo "Installed the binary only. Per-user resources are separate (they live in"
+	@echo "the invoking user's home, which sudo may change): run 'make install-resources'"
+	@echo "as your normal user for color schemes and syntax definitions."
 
 # Preserve the relative layout used by the documentation links. These are
 # reference copies, separate from the user's active syntax and theme folders.
@@ -68,6 +72,29 @@ install-syntax:
 			cp "$$f" "$$target" && echo "copy  $$target"; \
 		fi; \
 	done
+
+# The editor reads presets from ~/.tinyedit/color-scheme/ (F2 -> Colors). Like
+# install-syntax, this is opt-in, never overwrites existing files, and stays out
+# of 'make install' so a root-owned install cannot write into the wrong home.
+install-colorschemes:
+	@mkdir -p "$(COLORSCHEME_DIR)"
+	@for f in colorschemes/*.conf; do \
+		target="$(COLORSCHEME_DIR)/$$(basename $$f)"; \
+		if [ -e "$$target" ]; then \
+			echo "skip  $$target (already exists)"; \
+		else \
+			cp "$$f" "$$target" || exit $$?; \
+			echo "copy  $$target"; \
+		fi; \
+	done
+
+install-colorschemes-force:
+	@mkdir -p "$(COLORSCHEME_DIR)"
+	@cp colorschemes/*.conf "$(COLORSCHEME_DIR)/" && echo "overwrote $(COLORSCHEME_DIR) with shipped color schemes"
+
+# Everything the editor looks for in the invoking user's home (not the guides:
+# those have their own install-docs).
+install-resources: install-syntax install-colorschemes
 
 install-syntax-force:
 	@mkdir -p $(SYNTAX_DIR)
@@ -134,7 +161,7 @@ test: $(TARGET) $(TEST_BINS)
 clean:
 	rm -f $(TARGET) $(TEST_BINS) $(TEST_DIR)/benchmark_core
 
-.PHONY: clean test install install-docs install-syntax install-syntax-force
+.PHONY: clean test install install-docs install-syntax install-syntax-force install-colorschemes install-colorschemes-force install-resources
 
 $(TEST_DIR)/benchmark_core: $(TEST_DIR)/benchmark_core.c $(SOURCES) $(HEADERS)
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Wno-format-nonliteral -o $@ $(TEST_DIR)/benchmark_core.c $(filter-out $(SRC_DIR)/tinyedit.c,$(SOURCES))

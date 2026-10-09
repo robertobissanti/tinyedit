@@ -154,6 +154,17 @@ For an installation without administrator privileges, use
 A permission error for `/usr/local/bin` is an installation failure; the compiled
 binary remains available as `bin/tinyedit`.
 
+`make install` installs only the binary. Color schemes and syntax definitions
+belong to the user's home (`~/.tinyedit/`), which `sudo` may redirect to root's,
+so install them separately as your normal user:
+
+```sh
+make install-resources      # color schemes + syntax definitions, never overwrites
+make install-docs           # guides for Help → Documentation
+```
+
+Without the schemes, F2 → Colors reports `No schemes in ~/.tinyedit/color-scheme/`.
+
 ## Quick reference
 
 | Key | Action |

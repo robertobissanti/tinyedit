@@ -16,8 +16,8 @@ highlight group. One uses its own status-line colors, not an Airline theme.
 ## Install and select
 
 ```sh
-mkdir -p ~/.tinyedit/color-scheme
-cp colorschemes/*.conf ~/.tinyedit/color-scheme/
+make install-colorschemes   # from the repository root; never overwrites existing files
+# or: mkdir -p ~/.tinyedit/color-scheme && cp colorschemes/*.conf ~/.tinyedit/color-scheme/
 ```
 
 ANSI files are `one-dark-ansi.conf` and `catppuccin-mocha-ansi.conf`.

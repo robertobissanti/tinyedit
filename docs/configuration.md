@@ -74,9 +74,12 @@ coordinated blue-gray heading background (`#354151`); it does not reproduce an
 Airline theme or every Vim highlight group.
 
 ```sh
-mkdir -p ~/.tinyedit/color-scheme
-cp colorschemes/*.conf ~/.tinyedit/color-scheme/
+make install-colorschemes   # copies missing files; install-colorschemes-force overwrites
 ```
+
+(equivalent to copying `colorschemes/*.conf` into `~/.tinyedit/color-scheme/`;
+`make install-resources` also installs the syntax definitions). `make install`
+installs only the binary.
 
 Choose **Mode**, then activate **Choose Color Scheme >** with Enter or Right.
 The same row becomes **Choose Color Scheme (use < > to change) name**.

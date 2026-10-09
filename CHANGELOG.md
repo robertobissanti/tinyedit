@@ -117,6 +117,12 @@
 
 - Record the future ideas for unified fatal-error handling and a general CSI key
   parser in `IDEAS.md`.
+- Add `make install-colorschemes` (never overwrites; `-force` variant),
+  `COLORSCHEME_DIR`, and `make install-resources` for color schemes plus syntax
+  definitions. Stop and report failure if a preset cannot be copied, even when
+  later files could be installed. `make install` still installs only the binary,
+  because per-user files belong to the invoking user's home, and now says so. This fixes
+  "No schemes in ~/.tinyedit/color-scheme/" after installing.
 - Correct the contracts of `historyInsertRow` and `historyDeleteRow`: 1 means
   "handled", even when a recorded failure left the buffer unchanged.
   Clarify separately that `historyPrepareRow` returns permission to mutate.
