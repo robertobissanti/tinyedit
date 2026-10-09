@@ -90,7 +90,7 @@ for real editing rather than just demonstrating how a terminal works.
 | Area | What you get |
 |---|---|
 | [Editing](#keyboard-shortcuts) | Familiar cursor movement, word jumps, selection, cut/copy/paste, automatic indentation, block indent/outdent with Tab, configurable pair and XML/HTML tag closing, matching-bracket highlighting, and an undo history of up to 2,000 steps (200 by default). |
-| [Files](#opening-and-closing-files) | Open or switch files without restarting tinyedit, complete file paths with Tab, start a named file before it exists, save atomically, and recover unsaved work from automatic backups after a crash. |
+| [Files](#opening-and-closing-files) | Start an empty document with File → New / Ctrl-N, open or switch files without restarting tinyedit, complete file paths with Tab, start a named file before it exists, save atomically, and recover unsaved work from automatic backups after a crash. |
 | [Sidebar](#file-tree-sidebar) | Browse a persistent filesystem tree with keyboard or mouse, expand folders lazily, change its root, and open files with protection for unsaved edits. |
 | [Search](#find-and-replace) | Incremental literal or POSIX regular-expression search, match navigation, and interactive search and replace. |
 | [Syntax highlighting](#syntax-highlighting) | Built-in support for C/C++, Python, Shell, JavaScript/TypeScript, Markdown, HTML/XML, CSS, and JSON, including function names. Simple C-like languages and HTML-based templates (Nunjucks, Jinja, Liquid, Twig) can be added with a user configuration file; ready-made ones ship in `syntax-configs/`. |
@@ -100,7 +100,9 @@ for real editing rather than just demonstrating how a terminal works.
 | [Terminal input](#fast-terminal-paste) | Fast bracketed paste, optional mouse selection and scrolling, and key-sequence handling for common macOS and Linux terminals. |
 | [Menus](#menus) | A persistent menu bar with TinyEdit, File, Edit, View, and Help menus; keyboard and optional mouse navigation; shortcuts beside commands; and checked View settings. |
 | [Interface](#top-and-status-bars) | Optional line numbers and top bar, visible whitespace, file statistics, in-editor help, and a settings panel. |
-| [Configuration](#settings-and-appearance) | Settings live in `~/.tinyeditrc`; colors, tabs, wrapping, mouse behavior, interface elements, and editing assists can all be changed from `F2`. |
+| [Configuration](#settings-and-appearance) | Settings live in `~/.tinyeditrc`; tabs, wrapping, mouse behavior, cursor shape and blinking, interface elements, and editing assists can all be changed from `F2`. |
+| [Colors and themes](#colors-page-and-rgb) | ANSI by default or optional RGB with validated hex colors, previews, separate palettes, and One Dark / Catppuccin Mocha presets selected from one Colors page. |
+| [Build identification](#build-identification) | The same release and source build identifier appears in `--version`, the startup splash, and F3. |
 | [Portability](#build) | One C99 binary and no third-party runtime libraries. The supported targets are POSIX systems such as macOS and Linux. |
 | [Testing](#code-layout) | Syntax, settings, backup, terminal-input, key-binding, and very-long-line behavior are covered by `make test`; sample files are included for hands-on checks. |
 
@@ -154,6 +156,7 @@ the accuracy and uniqueness of this override.
 
 ```sh
 bin/tinyedit [file]
+bin/tinyedit --version  # print version and build ID without starting the editor
 ```
 
 ### Optional command installation
@@ -354,7 +357,7 @@ click an item to run it; clicking outside closes the open menu.
 `TinyEdit` contains Info, Settings, and Quit; `File` has file operations;
 `Edit` has editing commands and Find; `View` has checked switches for line
 numbers, the top bar, the menu itself, invisible characters, syntax
-highlighting, and automatic indentation; and `Help`
+highlighting, automatic indentation, and cursor blinking; and `Help`
 opens the shortcut reference. Existing keyboard shortcuts appear beside
 commands, with `^` meaning Ctrl (for example, `^S` means `Ctrl-S`). The
 `F10 Menu` hint in the bottom message bar also opens the menu when clicked.
@@ -370,44 +373,91 @@ on.
 ### Settings and appearance
 
 Line numbers (gutter), tab width, interface colors, soft-wrap, the top bar,
-auto-indent, auto-close pairs, tabs-as-spaces, and invisible characters are
-configurable from the `F2` panel and saved to `~/.tinyeditrc`. See the file
-itself, created automatically on first launch, for configuration details.
+cursor shape and blinking, auto-indent, auto-close pairs, tabs-as-spaces,
+and invisible characters are configurable from the `F2` panel and saved to
+`~/.tinyeditrc`. See the file itself, created automatically on first launch,
+for configuration details.
 Inside `F2`, `Ctrl-D` resets every setting back to its
 default (still needs `Ctrl-S` to actually take effect). Upgrading
 tinyedit never requires touching an existing `~/.tinyeditrc`: keys
 that aren't in the file (because they were introduced by a newer
 version) simply stay at their default until set explicitly.
 
-![tinyedit settings panel](imgs/settings-panel.png)
+![tinyedit settings panel](imgs/settings-panel-01.png)
 
 *The built-in `F2` panel exposes the same options stored in `~/.tinyeditrc`,
-including undo depth, wrapping, backup, colors, and mouse support.*
+including undo depth, wrapping, backup, and mouse support. Colors opens a
+separate page sharing the same settings draft.*
+
+**Cursor blinking** is available beside **Cursor shape** in F2 and as a checked
+switch in **View**. It is off by default, works with block and bar shapes, and
+is saved as `cursor_blink = true` when enabled. The screenshot above predates
+this additional row.
 
 ### Colors page and RGB
 
-In Colors, **Choose Color Scheme >** is directly below **Mode** and offers only
-valid presets for the selected ANSI/RGB mode. Separate ANSI adaptations of
-One Dark and Catppuccin Mocha are included; their shades follow the terminal palette.
+**F2 → Colors** keeps every color setting on one page, grouped into
+**Interface** and **Syntax highlighting**. **Mode** selects ANSI or RGB;
+**Choose Color Scheme >** sits immediately below it. RGB also exposes
+**RGB output** for truecolor or ANSI fallback.
 
-Complete RGB presets are available in [`colorschemes/`](colorschemes/README.md),
-including One Dark and Catppuccin Mocha. Install the `.conf` files in
-`~/.tinyedit/color-scheme/`, then select **F2 → Colors → Choose Color Scheme >**.
-Enter/Right activates the inline selector, Left/Right previews schemes, Enter
-confirms and Esc cancels. Save Settings to update
-`~/.tinyeditrc`; cancelling or discarding keeps the previous colors.
-Terminal truecolor/fallback and non-color settings are preserved.
+Interface contains the editor background, gutter, selection, invisible
+characters and status-bar text/background. Syntax highlighting contains the
+same token roles in the same order in both modes, including function names,
+Markdown bold text and LaTeX math. ANSI offers **reverse heading colors**;
+RGB offers a separate **heading background color**, with heading text using
+`rgb_syntax_preprocessor`. Colors remain editable when highlighting is off.
 
-F2 → Colors contains **Mode**, **RGB output** (in RGB mode), **Interface** and
-**Syntax highlighting** groups on the same page. Interface groups the
-background, gutter, selection,
-invisibles and the status bar's text/background. Syntax highlighting groups
-all token colors, including normal text and brackets, plus the Markdown
-reverse heading colors toggle; the palette remains
-editable when syntax highlighting is off. Up/Down select rows; Enter/Space
-edits a value (group headings are skipped). Left/Right cycle enum choices.
-**Back** or Esc returns to the
-parent, remembering its position and retaining the same draft.
+![ANSI color settings and previews](imgs/settings-panel-color-ansi.png)
+
+*ANSI uses named colors from the terminal palette, with light, dark and dim
+variants and previews for interface elements and syntax tokens.*
+
+![RGB color settings and previews](imgs/settings-panel-color-rgb.png)
+
+*RGB exposes hexadecimal colors and an explicit Markdown heading background.
+Labels and navigation retain the terminal's default colors.*
+
+Up/Down selects rows, skipping group headings. Enter/Space edits a value;
+Left/Right cycles choices. **Back** or Esc returns to the parent, remembering
+its position and retaining the same draft.
+
+Complete presets are included in [`colorschemes/`](colorschemes/README.md):
+
+| Scheme | RGB file | ANSI file |
+|---|---|---|
+| One Dark, adapted from Vim One with `background=dark` | `one-dark.conf` | `one-dark-ansi.conf` |
+| Catppuccin Mocha | `catppuccin-mocha.conf` | `catppuccin-mocha-ansi.conf` |
+
+RGB presets use explicit colors; ANSI presets are approximations whose actual
+shades depend on the terminal palette. One Dark includes the customized
+Markdown heading background shipped with tinyedit; it does not reproduce an
+Airline theme or every Vim highlight group.
+
+```sh
+mkdir -p ~/.tinyedit/color-scheme
+cp colorschemes/*.conf ~/.tinyedit/color-scheme/
+```
+
+Choose **Mode**, then activate **Choose Color Scheme >** with Enter or Right.
+The same row becomes **Choose Color Scheme (use < > to change) name**.
+Left/Right previews compatible schemes, Enter applies one to the draft, and
+Esc cancels the choice. Invalid presets and presets for the other mode are
+excluded. Changing Mode preserves both palettes and changes the available
+schemes; it does not automatically apply a theme.
+
+Save Settings to write the confirmed colors to `~/.tinyeditrc`. Discarding
+Settings preserves the previous colors. The terminal truecolor/fallback
+preference and non-color settings are preserved when applying a scheme.
+
+![One Dark colorscheme editing Markdown](imgs/color-scheme-one-dark.png)
+
+*One Dark with syntax colors, interface colors and a separate Markdown heading
+background.*
+
+![Catppuccin Mocha colorscheme editing C](imgs/color-scheme-catppuccin-mocha.png)
+
+*Catppuccin Mocha applied to the document, gutter, menu and status bars.*
 
 With mouse support already enabled, click a row to edit/open it and use the
 wheel to move through rows. Ctrl-S or F2 saves all draft settings and closes
@@ -831,7 +881,18 @@ from an external file; they need a dedicated tokenizer in `syntax.c`.
 The [`syntax-configs/`](syntax-configs/) directory includes a Bash override
 for `.sh`/`.bash` and shell startup files such as `.bashrc`, `.profile` and
 `.zshrc`, with extended builtin keywords (generic tokenizer; no full
-heredoc or expansion parsing). It also ships configuration
+heredoc or expansion parsing). The basic `vimrc.conf` definition covers
+`.vim`, `.vimrc` and `.gvimrc`: commands, single-quoted strings and comments.
+Double quotes are treated as comments; context-dependent strings, command
+abbreviations and full Vim9 syntax need a more complete parser. Startup
+dotfiles match with relative names (`.vimrc`, `./.zshrc`) and absolute paths
+alike; `extensions` values omit the leading dot.
+
+The personal `zshrc.conf` example is retained verbatim for reference and is
+ignored by the current loader; install `bash.conf` for working `.zshrc`
+highlighting. `base_tokenizer = bash` is not supported.
+
+The directory also ships configuration
 files for a few languages that aren't compiled in, so they can be used
 without writing one from scratch: LaTeX (`.tex`, `.latex`, `.sty`,
 `.cls`), Matlab/Octave (`.m`, `.mat`), and the markup templates

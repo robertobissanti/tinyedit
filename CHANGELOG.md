@@ -63,6 +63,10 @@
 
 ### Other minor fixing
 
+- Refresh the README feature overview, Settings and color scheme walkthrough
+  with new screenshots, retaining the previous Settings image. Document cursor
+  blinking, mode-specific presets and startup-dotfile syntax support.
+
 - Simplify color scheme selection to an inline Left/Right picker in Colors,
   with Enter to accept and Esc to cancel, removing the separate list and
   second confirmation.
