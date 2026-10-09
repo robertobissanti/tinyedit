@@ -246,7 +246,8 @@ static void testFilesystemTree(void) {
     struct abuf parent_frame = ABUF_INIT;
     editorDrawSidebar(&parent_frame);
     abAppend(&parent_frame, "\0", 1);
-    check(strstr(parent_frame.b, "\x1b[7m\x1b[36m.. (up a dir)") != NULL,
+    check(strstr(parent_frame.b, ansiColorCode(S.color_syntax_keyword)) != NULL &&
+        strstr(parent_frame.b, ".. (up a dir)") != NULL,
         "parent entry is visibly selected");
     abFree(&parent_frame);
     editorTreeKey(ARROW_DOWN);
@@ -292,11 +293,15 @@ static void testFilesystemTree(void) {
         "clicking different directories is not a double click");
     check(treeSetRoot(&T, root), "restore root for symlink navigation");
     T.visible = T.focused = 1;
+    S.color_syntax_keyword = COLOR_GREEN_LIGHT;
+    S.color_syntax_preprocessor = COLOR_RED_LIGHT;
     struct abuf link_frame = ABUF_INIT;
     editorDrawSidebar(&link_frame);
     abAppend(&link_frame, "\0", 1);
-    check(strstr(link_frame.b, "\x1b[35m▸ link") != NULL,
-        "directory symlink retains link color and displays expansion triangle");
+    check(strstr(link_frame.b, ansiColorCode(COLOR_RED_LIGHT)) != NULL &&
+        strstr(link_frame.b, ansiColorCode(COLOR_GREEN_LIGHT)) != NULL &&
+        strstr(link_frame.b, "▸ link") != NULL,
+        "sidebar reuses configured highlight colors and directory triangle");
     abFree(&link_frame);
     T.selected = 2;
     editorTreeKey(ARROW_RIGHT);

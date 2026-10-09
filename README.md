@@ -246,6 +246,9 @@ files. Expansion loads one level at a time on request. Symlinks to directories u
 the same triangle, expansion and navigation as folders, while keeping the
 distinct symlink color.
 Double-click or Right on a directory symlink makes its target the new root.
+Sidebar colors reuse the configured syntax palette: keyword for directories
+and the parent entry, preprocessor for symlinks and the root, and normal text
+for files, even when syntax highlighting is disabled.
 The sidebar grows up to half the terminal width, shifts deep indentation left,
 and abbreviates long names in the middle while retaining their extensions.
 The top bar shows the selected path while the tree has focus, within the available

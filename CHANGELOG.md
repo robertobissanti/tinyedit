@@ -11,6 +11,9 @@
 
 ### Other minor fixing
 
+- Reuse configured syntax colors in the sidebar instead of fixed ANSI colors:
+  keyword for folders, preprocessor for links and the root, normal text for files.
+
 - Update the README contents, give the sidebar its own feature row, and link
   every feature area to the relevant README section.
 
