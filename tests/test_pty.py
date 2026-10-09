@@ -1609,6 +1609,26 @@ def test_save_and_open_home_path(home):
         finish(process, master)
 
 
+def test_bash_syntax_config(home):
+    case_home = pathlib.Path(home) / "bash-syntax"
+    syntax_dir = case_home / ".tinyedit" / "syntax"
+    syntax_dir.mkdir(parents=True)
+    (syntax_dir / "bash.conf").write_bytes((ROOT / "syntax-configs" / "bash.conf").read_bytes())
+    (case_home / ".tinyeditrc").write_text(
+        "color_mode = rgb\nrgb_syntax_keyword = #010203\n", encoding="utf-8")
+    for extension in ("sh", "bash", "bashrc", "profile", "zshrc"):
+        target = case_home / (("example." if extension in ("sh", "bash") else ".") + extension)
+        target.write_text('printf "hello" # comment\n', encoding="utf-8")
+        process, master = spawn_editor([str(target)], case_home)
+        try:
+            output = read_available(master)
+            for char in b"printf":
+                assert b"\x1b[38;2;1;2;3m" + bytes([char]) in output, "Bash builtin not highlighted"
+            assert b"\x1b[38;2;64;64;64m#" in output, "escaped comment delimiter not loaded"
+        finally:
+            finish(process, master)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="tinyedit-tests-") as tmp:
         home = pathlib.Path(tmp)
@@ -1658,6 +1678,7 @@ def main():
         test_block_indent(home)
         test_no_save_prompt_when_undone(home)
         test_xml_tag_autoclose(home)
+        test_bash_syntax_config(home)
         test_build_displays(home)
         test_rgb_settings_mouse(home)
         test_settings_failed_save(home)

@@ -31,6 +31,7 @@ it wins.
 
 | File | Languages | Extensions |
 | --- | --- | --- |
+| `bash.conf` | Bash (overrides built-in Shell; generic tokenizer) | `.sh` `.bash`, Bash/Zsh startup dotfiles |
 | `latex.conf` | LaTeX | `.tex` `.latex` `.sty` `.cls` |
 | `matlab.conf` | Matlab / Octave | `.m` `.mat` |
 | `json.conf` | JSON (also built in; keys and string values use separate colors) | `.json` |
@@ -38,6 +39,14 @@ it wins.
 | `jinja.conf` | Jinja2 (Flask, Ansible) | `.jinja` `.jinja2` `.j2` |
 | `liquid.conf` | Liquid (Shopify, Jekyll) | `.liquid` |
 | `twig.conf` | Twig (Symfony) | `.twig` |
+
+Bash covers reserved words, builtins, quoted strings, comments and function
+declarations. It uses the generic tokenizer: heredocs, nested expansions and
+shell-specific quoting/comment edge cases are not fully parsed. Zsh keeps its
+built-in definition. The override also recognizes `.bashrc`, `.bash_profile`,
+`.bash_login`, `.bash_logout`, `.profile`, `.zshrc`, `.zshenv`, `.zprofile`,
+`.zlogin` and `.zlogout`. `.vimrc` is Vimscript and is not claimed. Other
+files without an extension are not detected by shebang.
 
 The last four are markup templates: they set `base_tokenizer = xml`, so
 HTML tags and attributes highlight as in an `.html` file, plus

@@ -4,6 +4,9 @@
 
 ### New features
 
+- Add an installable Bash syntax definition for `.sh`, `.bash` and Bash/Zsh startup dotfiles with reserved
+  words, builtin commands, strings, comments and function declarations.
+
 - Choose optional RGB colors with validated #RRGGBB input, live samples and
   independent ANSI/RGB palettes; select true color or an explicit ANSI fallback.
 - Configure colors in one F2 Colors page with Interface / Syntax highlighting groups,

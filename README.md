@@ -805,7 +805,10 @@ from an external file; they need a dedicated tokenizer in `syntax.c`.
 
 ### Ready-made syntax configurations
 
-The [`syntax-configs/`](syntax-configs/) directory ships configuration
+The [`syntax-configs/`](syntax-configs/) directory includes a Bash override
+for `.sh`/`.bash` and shell startup files such as `.bashrc`, `.profile` and
+`.zshrc`, with extended builtin keywords (generic tokenizer; no full
+heredoc or expansion parsing). It also ships configuration
 files for a few languages that aren't compiled in, so they can be used
 without writing one from scratch: LaTeX (`.tex`, `.latex`, `.sty`,
 `.cls`), Matlab/Octave (`.m`, `.mat`), and the markup templates
