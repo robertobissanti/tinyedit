@@ -160,7 +160,11 @@ Ctrl-C/X/V use external clipboard tools when available: `wl-copy` and `wl-paste`
 on Wayland, or `xclip` on X11. On Arch Linux with KDE/Wayland, install
 `wl-clipboard` with `sudo pacman -S wl-clipboard`, then restart tinyedit.
 For X11, install `xclip` instead. These are optional runtime tools; compiling
-tinyedit does not require them.
+tinyedit does not require them. Installation does not require them either:
+`make install` installs only tinyedit and never invokes `pacman` or another
+package manager. Install the appropriate clipboard tool yourself if you want
+Ctrl-C/X/V to share text with other applications. Without it, these shortcuts
+use only tinyedit’s internal clipboard.
 
 If no tool is available, or access to the display fails, tinyedit falls back
 to its internal clipboard, shared only within the current editor session.

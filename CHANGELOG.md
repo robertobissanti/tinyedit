@@ -18,6 +18,8 @@
   results, resolving fortified Linux build warnings.
 - Document installation permissions, user-local installation, and the optional
   Linux clipboard tools, including wl-clipboard for Arch Linux on Wayland.
+  Clarify that make install never runs a package manager and clipboard tools
+  must be installed separately for sharing text with other applications.
 
 - Show the Ctrl-E shortcut beside “Show/hide file tree” in the View menu.
 
