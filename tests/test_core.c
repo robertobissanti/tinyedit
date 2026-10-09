@@ -502,13 +502,16 @@ static void testTopBar(void) {
         }
         abFree(&ab);
     }
+    S.color_statusbar = COLOR_BLUE_DARK;
+    S.color_statusbar_text = COLOR_WHITE_DARK;
     for (int32_t menu = 0; menu < 2; menu++) {
         S.show_menu = menu;
         ab = (struct abuf)ABUF_INIT;
         editorDrawTopBar(&ab);
         abAppend(&ab, "", 1);
-        check(strstr(ab.b, "\x1b[7m") != NULL && strstr(ab.b, "\x1b[m") != NULL,
-            "top bar reverses colors and restores attributes with or without menu");
+        check(strstr(ab.b, "\x1b[47m") != NULL && strstr(ab.b, "\x1b[34m") != NULL &&
+            strstr(ab.b, "\x1b[107m") == NULL && strstr(ab.b, "\x1b[7m") == NULL,
+            "top bar explicitly swaps dark colors with or without menu");
         abFree(&ab);
         ab = (struct abuf)ABUF_INIT;
         editorDrawStatusBar(&ab);

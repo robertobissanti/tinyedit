@@ -2569,11 +2569,11 @@ static void editorDrawTopBar(struct abuf *ab) {
     if (!S.show_top_bar) return;
 
     if (S.color_background != COLOR_TERMINAL_DEFAULT) abAppend(ab, "\x1b[49m", 5);
-    const char *bar_bg = ansiBgColorCode(S.color_statusbar);
-    const char *bar_fg = ansiColorCode(S.color_statusbar_text);
+    const char *bar_bg = ansiBgColorCode(S.color_statusbar_text);
+    const char *bar_fg = ansiColorCode(S.color_statusbar);
     if (bar_bg[0]) abAppend(ab, bar_bg, (int32_t)strlen(bar_bg));
     abAppend(ab, bar_fg, (int32_t)strlen(bar_fg));
-    abAppend(ab, "\x1b[7m", 4);
+
 
     const char *name = E.document.file.filename;
     if (name) {

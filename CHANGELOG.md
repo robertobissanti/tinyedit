@@ -11,6 +11,9 @@
 
 ### Other minor fixing
 
+- Apply swapped top bar colors explicitly so dark palette choices are sent
+  as dark backgrounds instead of relying on terminal reverse-video rendering.
+
 - Handle interrupted and partial terminal writes instead of ignoring their
   results, resolving fortified Linux build warnings.
 - Document installation permissions, user-local installation, and the optional
