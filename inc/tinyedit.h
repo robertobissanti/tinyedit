@@ -345,6 +345,7 @@ struct editorUi {
      * startup shortcut hint, which should stay until the user does
      * something that produces a real status update (e.g. saving). */
     uint8_t statusmsg_sticky;
+    uint8_t statusmsg_error;
 };
 
 struct editorSearch {

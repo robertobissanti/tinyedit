@@ -127,6 +127,14 @@ Relative paths, absolute paths, `~/`, spaces, and UTF-8 names are supported.
 Hidden names are offered when the last component starts with `.`. You can
 still type a new filename when saving.
 
+### Missing symbolic-link targets
+
+Opening or saving through a symbolic link whose target does not exist reports
+an error. tinyedit preserves the link and does not create its missing target;
+a failed save preserves the document and its unsaved state. Links to existing
+files continue to save through to the real target. Editor message-bar errors
+are shown in red; ordinary prompts and successful results use the normal color.
+
 ## File tree sidebar
 
 ![tinyedit file tree sidebar](../imgs/sidebar.png)

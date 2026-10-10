@@ -21,8 +21,8 @@ char *fileioExpandHomePath(const char *path);
 /** @brief Read all rows into an empty candidate; no active editor state is changed.
  * On failure, returns 0 with errno and releases candidate-owned storage.
  * Only regular files are accepted; pipes/devices are rejected without blocking.
- * A missing path becomes an empty named document. NUL-containing binary input
- * is rejected with EILSEQ; malformed UTF-8 text is preserved. */
+ * A missing ordinary path becomes an empty named document; dangling symlinks fail.
+ * NUL-containing binary input is rejected with EILSEQ; malformed UTF-8 text is preserved. */
 uint8_t fileioLoadDocument(const char *filename, struct editorDocument *candidate);
 /** @brief Read a stream into an empty candidate, checking read errors separately
  * from EOF. NUL bytes are rejected with EILSEQ. The caller owns and closes
@@ -39,8 +39,8 @@ uint8_t fileioSyncDirectory(const char *directory);
  * The caller removes any remaining temporary file and preserves errno. */
 enum fileSaveResult fileioReplace(const char *temporary, const char *target);
 /** @brief Write beside the target, sync, replace and sync its directory. Existing
- * symlinks are followed and target permissions preserved. Returns a precise
- * replacement outcome; failures before replacement leave the target intact. */
+ * symlinks are followed and target permissions preserved; dangling symlinks fail.
+ * Returns a precise replacement outcome; failures before replacement leave the target intact. */
 enum fileSaveResult fileioAtomicSave(const char *filename, const char *bytes, size_t len);
 
 #endif /* __TE_FILEIO_H */

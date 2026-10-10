@@ -207,6 +207,38 @@ static void testSaving(const char *path, const char *directory) {
     checkFile(path, content);
     check(lstat(link, &st) == 0 && S_ISLNK(st.st_mode), "symlink preserved");
     check(unlink(link) == 0, "remove symlink");
+    check(symlink("missing-target", link) == 0, "create dangling relative symlink");
+    struct editorDocument candidate;
+    check(!fileioLoadDocument(link, &candidate) && errno == ENOENT &&
+        !candidate.file.filename && !candidate.buffer.rows,
+        "opening a dangling symlink reports an error without a candidate");
+    errno = 0;
+    check(fileioAtomicSave(link, content, sizeof(content) - 1) == FILE_SAVE_FAILED &&
+        errno == ENOENT, "dangling symlink reports missing target");
+    check(lstat(link, &st) == 0 && S_ISLNK(st.st_mode), "dangling symlink preserved");
+    char destination[1024];
+    ssize_t link_length = readlink(link, destination, sizeof(destination));
+    check(link_length == 14 && memcmp(destination, "missing-target", 14) == 0,
+        "dangling symlink destination unchanged");
+    check(unlink(link) == 0, "remove dangling symlink");
+    char missing[1024];
+    snprintf(missing, sizeof(missing), "%s/missing-absolute-target", directory);
+    check(symlink(missing, link) == 0, "create dangling absolute symlink");
+    check(fileioAtomicSave(link, content, sizeof(content) - 1) == FILE_SAVE_FAILED &&
+        errno == ENOENT, "absolute dangling symlink fails");
+    check(lstat(link, &st) == 0 && S_ISLNK(st.st_mode) && access(missing, F_OK) == -1,
+        "absolute link preserved without creating target");
+    char chain[1024];
+    snprintf(chain, sizeof(chain), "%s/chain", directory);
+    check(symlink(link, chain) == 0, "create dangling symlink chain");
+    check(fileioAtomicSave(chain, content, sizeof(content) - 1) == FILE_SAVE_FAILED &&
+        errno == ENOENT && lstat(chain, &st) == 0 && S_ISLNK(st.st_mode),
+        "dangling chain fails and remains a link");
+    check(unlink(chain) == 0 && unlink(link) == 0, "remove dangling chain");
+    check(fileioAtomicSave(link, content, sizeof(content) - 1) == FILE_SAVE_DURABLE,
+        "ordinary new file remains supported");
+    checkFile(link, content);
+    check(unlink(link) == 0, "remove ordinary new file");
 }
 
 static void testRecoveryAndSettings(const char *directory, const char *path) {

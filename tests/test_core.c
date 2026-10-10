@@ -1903,10 +1903,41 @@ static void testSecondReviewRegressions(void) {
     rmdir(directory);
 }
 
+static void testErrorMessages(void) {
+    editorResetDocument();
+    E.view.screencols = 80;
+    S.show_menu = 0;
+    char directory[] = "/tmp/tinyedit-link-error-XXXXXX";
+    check(mkdtemp(directory) != NULL, "isolated dangling save directory");
+    char link[256];
+    snprintf(link, sizeof(link), "%s/link", directory);
+    check(symlink("missing", link) == 0, "dangling editor save link");
+    editorInsertRow(0, "unsaved", 7);
+    E.document.file.dirty = 1;
+    check(editorSaveToPath(link) == FILE_SAVE_FAILED && E.ui.statusmsg_error &&
+        E.document.file.dirty && !E.document.file.filename &&
+        !strcmp(E.document.buffer.rows[0].chars, "unsaved"),
+        "failed dangling save reports an error and preserves document state");
+    check(unlink(link) == 0 && rmdir(directory) == 0, "remove dangling save fixture");
+    editorSetErrorMessage("Can't save: %s", "missing target");
+    struct abuf frame = ABUF_INIT;
+    editorDrawMessageBar(&frame);
+    abAppend(&frame, "", 1);
+    check(strstr(frame.b, "\x1b[31mCan't save: missing target\x1b[39m") != NULL,
+        "error text rendered in red and foreground restored");
+    abFree(&frame);
+    editorSetStatusMessage("Saved");
+    check(!E.ui.statusmsg_error, "normal message clears error severity");
+    editorSetErrorMessage("failed");
+    editorSetStatusMessageSticky("hint");
+    check(!E.ui.statusmsg_error, "sticky hint clears error severity");
+}
+
 int main(void) {
     settingsDefaults(&S);
     E.search.search_match_y = -1;
     E.search.search_match_end_y = -1;
+    testErrorMessages();
     testAuditRegressions();
     testControlBytes();
     testSecondReviewRegressions();

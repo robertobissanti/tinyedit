@@ -108,7 +108,8 @@ uint8_t fileioLoadStream(FILE *stream, struct editorDocument *candidate) {
 /**
  * @brief Read a separate named document without touching application state.
  * @details candidate receives owned text and name only after a complete read
- * and successful close; ENOENT creates a named empty document.
+ * and successful close; a missing ordinary path creates a named empty document.
+ * Dangling symlinks fail rather than becoming new documents.
  * @return 0 with errno and no owned candidate storage on I/O failure.
  */
 uint8_t fileioLoadDocument(const char *filename, struct editorDocument *candidate) {
@@ -118,6 +119,9 @@ uint8_t fileioLoadDocument(const char *filename, struct editorDocument *candidat
     if (filename[0] == '\0') { errno = EINVAL; return 0; }
     int fd = open(filename, O_RDONLY | O_NONBLOCK);
     if (fd == -1) {
+        if (errno != ENOENT) return 0;
+        struct stat entry;
+        if (lstat(filename, &entry) == 0) { errno = ENOENT; return 0; }
         if (errno != ENOENT) return 0;
         candidate->file.filename = teStrdup(filename);
         return 1;
@@ -237,6 +241,15 @@ static uint8_t fileioWriteAll(int fd, const char *bytes, size_t len) {
 enum fileSaveResult fileioAtomicSave(const char *filename, const char *bytes, size_t len) {
     char *resolved = realpath(filename, NULL);
     if (!resolved && errno != ENOENT) return FILE_SAVE_FAILED;
+    if (!resolved) {
+        struct stat entry;
+        if (lstat(filename, &entry) == 0) {
+            /* ENOENT from realpath can mean a dangling link, not a new file. */
+            errno = ENOENT;
+            return FILE_SAVE_FAILED;
+        }
+        if (errno != ENOENT) return FILE_SAVE_FAILED;
+    }
     const char *target = resolved ? resolved : filename;
     const char suffix[] = ".tinyedit.XXXXXX";
     size_t target_len = strlen(target);

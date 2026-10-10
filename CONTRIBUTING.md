@@ -64,6 +64,13 @@ Keep proposals consistent with tinyedit's focused scope. In particular:
 - a small feature specific to the editor core does not automatically need a
   new module.
 
+All user-visible errors must be reported in red, with an explicit explanation.
+In the editor message bar use `editorSetErrorMessage()`, not a normal status
+message; keep confirmations, prompts and successful results distinct. Do not
+insert color escapes into stored message text. A save through a symlink must
+preserve the link and operate on its real target; if the target is missing,
+report an error and leave both the link and document unchanged.
+
 Recovery backups are deliberately opt-in (`backup_interval = 0` by default)
 and apply only to named documents. Do not classify the absence of a recovery
 copy for disabled backups or an unnamed document as a bug, or add implicit

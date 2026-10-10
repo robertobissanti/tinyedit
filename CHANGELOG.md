@@ -6,12 +6,18 @@
 
 ### Important fixes
 
+- Reject opening or saving through a symlink whose target is missing, preserving
+  the link and unsaved document instead of replacing the link with a new file.
+
 - Make `make install` include color schemes, additional syntax definitions and
   guides for every user, including installations through `sudo`. Load shared
   resources from `PREFIX/share/tinyedit` with personal resources taking priority;
   retain `make install-binary` for executable-only installations.
 
 ### Other minor fixing
+
+- Display editor message-bar errors in red, keeping normal prompts and success
+  messages distinct; document the error-color and missing-symlink policies.
 
 - Clarify that recovery backups are opt-in and exclude unnamed documents by
   design. Explain the input/edit/display/save flow, how to read function

@@ -30,7 +30,8 @@ relative Open/Save and inaccessible-folder errors.
 `test_fileio.c` compiles the actual I/O implementation with controlled syscall
 failures: partial reads, close errors, short/interrupted/failed writes, file
 sync, rename and directory sync. It verifies exact content, cleanup, symlinks
-and modes. Core tests check transaction state and backup ownership; PTY tests
+and modes. Missing-target symlinks (relative, absolute and chained) are rejected
+without replacing the link; ordinary new paths remain supported. Core tests check transaction state and backup ownership; PTY tests
 check that failed Open/Save as retain text, undo and the next save destination.
 
 Mouse dispatch regressions feed real queued bytes through the terminal decoder
@@ -144,3 +145,6 @@ command isolate these checks from the user's installed resources.
 Shared installation regression: `test_install.py` checks binary-only and full
 installation, custom prefixes with spaces, DESTDIR staging, an untouched HOME,
 shared theme/syntax loading and personal syntax precedence.
+
+Core tests check red error rendering, foreground restoration and failed
+dangling-link saves preserving document identity and unsaved text.

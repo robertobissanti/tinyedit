@@ -530,6 +530,7 @@ static void editorUpdateRow(erow *row) {
 }
 
 static void editorSetStatusMessage(const char *fmt, ...);
+static void editorSetErrorMessage(const char *fmt, ...);
 
 /**
  * @brief Finish the grouped action and rebuild affected derived rows.
@@ -555,7 +556,7 @@ static void editorEndEdit(void) {
             E.document.file.final_newline = edit_saved_final_newline;
         }
         editorInvalidateDocumentCaches();
-        editorSetStatusMessage(edit_last_error == HISTORY_LIMIT ?
+        editorSetErrorMessage(edit_last_error == HISTORY_LIMIT ?
             "Undo memory limit: edit cancelled" : "Not enough memory: edit cancelled");
         E.document.history.error = HISTORY_OK;
         editorRehighlightFrom(0, 1);
@@ -702,7 +703,7 @@ static uint8_t editorPrepareReplay(struct historyAction *action) {
             historyReleaseDisplay(action);
             replay_preparing = 0;
             E.document.history.error = HISTORY_OK;
-            editorSetStatusMessage("Not enough memory: undo/redo cancelled");
+            editorSetErrorMessage("Not enough memory: undo/redo cancelled");
             return 0;
         }
     }
@@ -716,7 +717,7 @@ static uint8_t editorPrepareReplay(struct historyAction *action) {
 static void editorReplay(uint8_t reverse) {
     if (historyFinishEdit(&E.document) != HISTORY_OK) {
         E.document.history.error = HISTORY_OK;
-        editorSetStatusMessage("Not enough memory: edit cancelled");
+        editorSetErrorMessage("Not enough memory: edit cancelled");
         return;
     }
     struct historyAction *action = reverse ? E.document.history.undo_stack :
@@ -1444,7 +1445,7 @@ static void editorOfferBackupRecovery(void) {
     size_t len;
     char *content = backupRead(E.document.file.filename, &len);
     if (!content) {
-        editorSetStatusMessage("Could not read recovery backup.");
+        editorSetErrorMessage("Could not read recovery backup.");
         return;
     }
 
@@ -1462,7 +1463,7 @@ static void editorOfferBackupRecovery(void) {
 static enum fileSaveResult editorSaveToPath(const char *filename) {
     char *path = fileioExpandHomePath(filename);
     if (!path) {
-        editorSetStatusMessage("Can't save! Path error: %s", strerror(errno));
+        editorSetErrorMessage("Can't save! Path error: %s", strerror(errno));
         return FILE_SAVE_FAILED;
     }
     size_t len;
@@ -1487,11 +1488,12 @@ static enum fileSaveResult editorSaveToPath(const char *filename) {
         E.document.file.save_uncertain = 1;
         uint8_t renamed = !E.document.file.filename ||
             strcmp(path, E.document.file.filename) != 0;
-        editorSetStatusMessageSticky(
+        editorSetErrorMessage(
             "Target written, durability unconfirmed; name unchanged. Retry %s: %s",
             renamed ? "Save as" : "save", strerror(saved_errno));
+        E.ui.statusmsg_sticky = 1;
     } else {
-        editorSetStatusMessage("Can't save! I/O error: %s", strerror(saved_errno));
+        editorSetErrorMessage("Can't save! I/O error: %s", strerror(saved_errno));
     }
     free(path);
     errno = saved_errno;
@@ -1758,7 +1760,7 @@ static void editorOpenFile(void) {
 
     struct stat st;
     if (!editorOpen(name)) {
-        editorSetStatusMessage("Can't open file: %s",
+        editorSetErrorMessage("Can't open file: %s",
             errno == EILSEQ ? "binary files are not supported" : strerror(errno));
         free(name);
         return;
@@ -1816,7 +1818,7 @@ static void editorLinkAnchor(const char *anchor) {
             return;
         }
     }
-    editorSetStatusMessage("Heading not found: %s", anchor);
+    editorSetErrorMessage("Heading not found: %s", anchor);
 }
 
 /**
@@ -1831,14 +1833,14 @@ static void editorLinkAnchor(const char *anchor) {
 static void editorFollowLink(const char *target) {
     if (linksIsWeb(target)) {
         if (linksOpenWeb(target)) editorSetStatusMessage("Opened link in browser");
-        else editorSetStatusMessage("Can't open browser: %s", strerror(errno));
+        else editorSetErrorMessage("Can't open browser: %s", strerror(errno));
         return;
     }
     /* Reject URI schemes rather than interpreting them as local filenames. */
     const char *colon = strchr(target, ':');
     const char *slash = strchr(target, '/');
     if (colon && (!slash || colon < slash)) {
-        editorSetStatusMessage("Unsupported link type");
+        editorSetErrorMessage("Unsupported link type");
         return;
     }
     char *name = teStrdup(target);
@@ -1850,7 +1852,7 @@ static void editorFollowLink(const char *target) {
     free(name);
     if (!decoded || (has_fragment && !anchor)) {
         free(decoded); free(anchor);
-        editorSetStatusMessage("Invalid link target");
+        editorSetErrorMessage("Invalid link target");
         return;
     }
     if (!*decoded) {
@@ -1876,14 +1878,14 @@ static void editorFollowLink(const char *target) {
         memcpy(path + length, "/README.md", sizeof("/README.md"));
     }
     if (!path || stat(path, &st) < 0 || !S_ISREG(st.st_mode)) {
-        editorSetStatusMessage("Link is not an accessible file");
+        editorSetErrorMessage("Link is not an accessible file");
     } else if (editorConfirmDocumentChange("opening a link")) {
         if (editorOpen(path)) {
             T.focused = 0;
             editorOfferBackupRecovery();
             editorSetStatusMessage("Opened %s", E.document.file.filename);
             editorLinkAnchor(anchor);
-        } else editorSetStatusMessage("Can't open link: %s",
+        } else editorSetErrorMessage("Can't open link: %s",
             errno == EILSEQ ? "binary files are not supported" : strerror(errno));
     }
     free(path); free(anchor);
@@ -1899,7 +1901,7 @@ static void editorOpenCursorLink(void) {
     if (!editorCursorLink(&link)) { editorSetStatusMessage("No link under cursor"); return; }
     char *target = linksTarget(E.document.buffer.rows[E.document.cursor.cy].chars, &link);
     if (target) { editorFollowLink(target); free(target); }
-    else editorSetStatusMessage("Invalid link target");
+    else editorSetErrorMessage("Invalid link target");
 }
 
 /**
@@ -1919,7 +1921,7 @@ static void editorDocumentation(void) {
         path = teStrdup(TE_DATADIR "/docs/README.md");
     }
     if (access(path, R_OK) < 0) {
-        editorSetStatusMessage("Documentation missing: run make install-docs");
+        editorSetErrorMessage("Documentation missing: run make install-docs");
         free(path);
         return;
     }
@@ -3024,7 +3026,8 @@ static void editorDrawMessageBar(struct abuf *ab) {
         msglen = (int32_t)strlen(msg);
     }
     struct textLink link;
-    if ((default_hint || E.ui.statusmsg_sticky) && editorCursorLink(&link)) msg = "Alt+Enter open link";
+    if ((default_hint || (E.ui.statusmsg_sticky && !E.ui.statusmsg_error)) &&
+        editorCursorLink(&link)) msg = "Alt+Enter open link";
     char *safe_message = editorDisplayText(msg);
     size_t bytes = strlen(safe_message), offset = bytes;
     int32_t columns = 0;
@@ -3035,7 +3038,10 @@ static void editorDrawMessageBar(struct abuf *ab) {
         columns += width;
         offset -= step;
     }
+    uint8_t error = !default_hint && E.ui.statusmsg_error;
+    if (error) abAppend(ab, "\x1b[31m", 5);
     if (offset < bytes) abAppend(ab, safe_message + offset, (int32_t)(bytes - offset));
+    if (error) abAppend(ab, "\x1b[39m", 5);
     free(safe_message);
     if (S.show_menu && !M.open && E.view.screencols >= 8) {
         char position[32];
@@ -3248,6 +3254,20 @@ static void editorSetStatusMessage(const char *fmt, ...) {
     va_end(ap);
     E.ui.statusmsg_time = time(NULL);
     E.ui.statusmsg_sticky = 0;
+    E.ui.statusmsg_error = 0;
+}
+
+/**
+ * @brief Report an error in the message bar using a distinct red foreground.
+ */
+static void editorSetErrorMessage(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(E.ui.statusmsg, sizeof(E.ui.statusmsg), fmt, ap);
+    va_end(ap);
+    E.ui.statusmsg_time = time(NULL);
+    E.ui.statusmsg_sticky = 0;
+    E.ui.statusmsg_error = 1;
 }
 
 /**
@@ -3269,6 +3289,7 @@ static void editorSetStatusMessageSticky(const char *fmt, ...) {
     va_end(ap);
     E.ui.statusmsg_time = time(NULL);
     E.ui.statusmsg_sticky = 1;
+    E.ui.statusmsg_error = 0;
 }
 
 /* ---- input ------------------------------------------------------------------ */
@@ -4875,7 +4896,7 @@ static void editorSettingsEditRgb(struct editorSettings *edited, int32_t cursor,
  */
 static uint8_t editorSettingsSave(const struct editorSettings *edited) {
     if (!settingsSave(edited)) {
-        editorSetStatusMessage("Could not write ~/.tinyeditrc");
+        editorSetErrorMessage("Could not write ~/.tinyeditrc");
         return 0;
     }
     struct editorSettings previous = S;
@@ -4912,7 +4933,7 @@ static uint8_t editorSettingsSave(const struct editorSettings *edited) {
         if (ghostty_bindings_ok) {
             editorSetStatusMessage("Settings saved to ~/.tinyeditrc");
         } else {
-            editorSetStatusMessage("Settings saved; Ghostty config/reload failed");
+            editorSetErrorMessage("Settings saved; Ghostty config/reload failed");
         }
 #else
         editorSetStatusMessage("Settings saved to ~/.tinyeditrc");
@@ -5563,7 +5584,7 @@ static uint8_t editorTreeDoubleClick(const struct timespec *now, int32_t index) 
  */
 static uint8_t editorTreeRoot(const char *path) {
     if (treeSetRoot(&T, path)) { tree_click_pending = 0; editorTreeEditorHint(); return 1; }
-    editorSetStatusMessage("Can't read folder: %s", strerror(errno));
+    editorSetErrorMessage("Can't read folder: %s", strerror(errno));
     return 0;
 }
 
@@ -5614,7 +5635,7 @@ static void editorTreeActivate(void) {
     if (T.entries[index].directory) {
         if (T.entries[index].expanded) treeCollapse(&T, index);
         else if (!treeExpand(&T, index))
-            editorSetStatusMessage("Can't read folder: %s", strerror(errno));
+            editorSetErrorMessage("Can't read folder: %s", strerror(errno));
         return;
     }
     char *path = teStrdup(T.entries[index].path);
@@ -5623,7 +5644,7 @@ static void editorTreeActivate(void) {
             T.focused = 0;
             editorOfferBackupRecovery();
             editorSetStatusMessage("Opened %s", E.document.file.filename);
-        } else editorSetStatusMessage("Can't open file: %s",
+        } else editorSetErrorMessage("Can't open file: %s",
             errno == EILSEQ ? "binary files are not supported" : strerror(errno));
     }
     free(path);
@@ -5646,7 +5667,7 @@ static uint8_t editorTreeKey(int32_t c) {
             size_t capacity = 128;
             char *cwd = teMalloc(capacity);
             while (!getcwd(cwd, capacity)) {
-                if (errno != ERANGE) { free(cwd); editorSetStatusMessage("Can't read current directory"); return 1; }
+                if (errno != ERANGE) { free(cwd); editorSetErrorMessage("Can't read current directory"); return 1; }
                 capacity = teSizeAdd(capacity, capacity);
                 cwd = teRealloc(cwd, capacity);
             }
@@ -5656,7 +5677,7 @@ static uint8_t editorTreeKey(int32_t c) {
         }
         T.visible = !T.visible;
         T.focused = T.visible;
-        if (T.visible && !editorSidebarWidth()) editorSetStatusMessage("Sidebar needs at least 40 columns");
+        if (T.visible && !editorSidebarWidth()) editorSetErrorMessage("Sidebar needs at least 40 columns");
         else if (T.visible && T.focused) editorTreeEditorHint();
         else if (!T.visible) editorTreeClose();
         else editorTreeEditorHint();
@@ -6411,6 +6432,7 @@ static void initEditor(void) {
     E.ui.statusmsg[0] = '\0';
     E.ui.statusmsg_time = 0;
     E.ui.statusmsg_sticky = 0;
+    E.ui.statusmsg_error = 0;
     E.document.selection.active = 0;
     E.document.selection.anchor_x = 0;
     E.document.selection.anchor_y = 0;
