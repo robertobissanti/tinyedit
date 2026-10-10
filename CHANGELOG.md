@@ -19,6 +19,8 @@
 
 ### Other minor fixing
 
+- Add an Ask DeepWiki badge to the README for repository documentation access.
+
 - Display editor message-bar errors in red, keeping normal prompts and success
   messages distinct; document the error-color and missing-symlink policies.
 
