@@ -11,6 +11,10 @@ comments, numbers).
 Copy the ones you want into `~/.tinyedit/syntax/`, which tinyedit scans
 at startup:
 
+`make install` includes shared resources under `$(PREFIX)/share/tinyedit`.
+Personal files in `~/.tinyedit/` take precedence. The following commands are
+optional for personal copies and should be run without `sudo`.
+
 ```bash
 mkdir -p ~/.tinyedit/syntax && cp syntax-configs/*.conf ~/.tinyedit/syntax/
 ```

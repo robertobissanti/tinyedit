@@ -207,13 +207,15 @@ right away, no restart needed.
 
 ## Links and installed documentation
 
-Run `make install-docs` from the source directory, then choose
-**Help → Documentation**. This opens `~/.tinyedit/docs/README.md` as an ordinary,
+`make install` includes the guides. Choose **Help → Documentation** to open
+`$(PREFIX)/share/tinyedit/docs/README.md`, or the personal copy at
+`~/.tinyedit/docs/README.md` if present, as an ordinary,
 editable Markdown document. The installer includes linked images, reference
 syntax/color scheme files, and contributor/test guides in the same relative
-layout. It updates these reference copies; your active `syntax/` and
-`color-scheme/` directories are separate. Packaging can set `DOCS_DIR` to a
-staging directory; the installed editor looks under `$HOME/.tinyedit`.
+layout. For optional personal guides run `make install-docs` without `sudo`;
+that target updates reference copies without changing personal `syntax/` or
+`color-scheme/` files. Packagers can set `DATADIR` for shared resources and
+`DESTDIR` for staging; only `DATADIR` is compiled into the editor.
 
 Place the cursor on the label or destination of an inline Markdown link and
 press **Alt+Enter**, or double-click it with mouse support enabled. Bare

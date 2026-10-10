@@ -80,7 +80,10 @@ make install-colorschemes   # copies missing files; install-colorschemes-force o
 
 (equivalent to copying `colorschemes/*.conf` into `~/.tinyedit/color-scheme/`;
 `make install-resources` also installs the syntax definitions). `make install`
-installs only the binary.
+installs the binary, shared presets, syntax definitions and guides under
+`$(PREFIX)/share/tinyedit`. Personal presets take precedence over shared presets
+with the same filename; compatible presets from both locations appear together.
+Use `make install-binary` to install just the executable.
 
 Choose **Mode**, then activate **Choose Color Scheme >** with Enter or Right.
 The same row becomes **Choose Color Scheme (use < > to change) name**.

@@ -47,6 +47,7 @@
 #include "history.h"
 #include "links.h"
 #include "render.h"
+#include "resources.h"
 #include "clipboard.h"
 #include "command.h"
 #include "syntax.h"
@@ -1902,18 +1903,21 @@ static void editorOpenCursorLink(void) {
 }
 
 /**
- * @brief Open the installed guide at $HOME/.tinyedit/docs/README.md.
- * @details Reports a missing HOME or missing installation without changing the
+ * @brief Open personal documentation, falling back to the shared installation.
+ * @details Reports a missing installation without changing the
  * document. The path is escaped so editorFollowLink() cannot reinterpret a
  * literal '#' or '%' in HOME as a fragment or percent escape.
  */
 static void editorDocumentation(void) {
     const char *home = getenv("HOME");
-    if (!home || !*home) { editorSetStatusMessage("HOME is not set"); return; }
     const char suffix[] = "/.tinyedit/docs/README.md";
-    char *path = teMalloc(teSizeAdd(strlen(home), sizeof(suffix)));
-    strcpy(path, home);
+    char *path = teMalloc(teSizeAdd(home ? strlen(home) : 0, sizeof(suffix)));
+    strcpy(path, home ? home : "");
     strcat(path, suffix);
+    if (!home || !*home || access(path, R_OK) < 0) {
+        free(path);
+        path = teStrdup(TE_DATADIR "/docs/README.md");
+    }
     if (access(path, R_OK) < 0) {
         editorSetStatusMessage("Documentation missing: run make install-docs");
         free(path);
@@ -4696,45 +4700,53 @@ static void editorSettingsRender(struct abuf *ab, const struct editorSettings *e
 /** @brief Choose and confirm a preset without committing the Settings draft. */
 static void editorSettingsChooseScheme(struct editorSettings *edited, int32_t scroll, char *msg, size_t msg_size) {
     const char *home = getenv("HOME");
-    char directory[1024];
-    int32_t n = snprintf(directory, sizeof(directory), "%s/.tinyedit/color-scheme", home ? home : "");
-    if (!home || n < 0 || (size_t)n >= sizeof(directory)) {
-        snprintf(msg, msg_size, "Color scheme directory unavailable"); return;
-    }
-    DIR *dir = opendir(directory);
-    if (!dir) { snprintf(msg, msg_size, "No schemes in ~/.tinyedit/color-scheme/"); return; }
+    char personal[1024];
+    int32_t n = snprintf(personal, sizeof(personal), "%s/.tinyedit/color-scheme", home ? home : "");
+    const char *directories[] = { personal, TE_DATADIR "/color-scheme" };
     char **names = NULL;
     int32_t count = 0;
-    struct dirent *entry;
-    while ((entry = readdir(dir))) {
-        size_t len = strlen(entry->d_name);
-        if (len < 6 || strcmp(entry->d_name + len - 5, ".conf")) continue;
-        uint8_t safe = 1;
-        for (size_t i = 0; i < len; i++)
-            if ((uint8_t)entry->d_name[i] < 32 || entry->d_name[i] == 127) safe = 0;
-        if (!safe || count == INT32_MAX) continue;
-        char filepath[2048];
-        struct stat st;
-        int32_t pathlen = snprintf(filepath, sizeof(filepath), "%s/%s", directory, entry->d_name);
-        if (pathlen < 0 || (size_t)pathlen >= sizeof(filepath) || stat(filepath, &st) || !S_ISREG(st.st_mode)) continue;
-        struct editorSettings candidate = *edited;
-        char error[128];
-        if (!settingsLoadColorScheme(filepath, &candidate, error, sizeof(error)) ||
-            candidate.color_mode != edited->color_mode) continue;
-        names = teRealloc(names, teArrayBytes((size_t)count + 1, sizeof(*names)));
-        int32_t at = count;
-        while (at > 0 && strcmp(names[at - 1], entry->d_name) > 0) {
-            names[at] = names[at - 1]; at--;
+    for (int32_t d = 0; d < 2; d++) {
+        if (d == 0 && (!home || !*home || n < 0 || (size_t)n >= sizeof(personal))) continue;
+        const char *directory = directories[d];
+        DIR *dir = opendir(directory);
+        if (!dir) continue;
+        struct dirent *entry;
+        while ((entry = readdir(dir))) {
+            size_t len = strlen(entry->d_name);
+            if (len < 6 || strcmp(entry->d_name + len - 5, ".conf")) continue;
+            uint8_t safe = 1;
+            for (size_t i = 0; i < len; i++)
+                if ((uint8_t)entry->d_name[i] < 32 || entry->d_name[i] == 127) safe = 0;
+            if (!safe || count == INT32_MAX) continue;
+            char filepath[2048];
+            struct stat st;
+            int32_t pathlen = snprintf(filepath, sizeof(filepath), "%s/%s", directory, entry->d_name);
+            if (pathlen < 0 || (size_t)pathlen >= sizeof(filepath) || stat(filepath, &st) || !S_ISREG(st.st_mode)) continue;
+            uint8_t duplicate = 0;
+            for (int32_t i = 0; i < count; i++) {
+                const char *base = strrchr(names[i], '/');
+                if (strcmp(base ? base + 1 : names[i], entry->d_name) == 0) duplicate = 1;
+            }
+            if (duplicate) continue;
+            struct editorSettings candidate = *edited;
+            char error[128];
+            if (!settingsLoadColorScheme(filepath, &candidate, error, sizeof(error)) ||
+                candidate.color_mode != edited->color_mode) continue;
+            names = teRealloc(names, teArrayBytes((size_t)count + 1, sizeof(*names)));
+            int32_t at = count;
+            while (at > 0 && strcmp(strrchr(names[at - 1], '/') + 1, entry->d_name) > 0) {
+                names[at] = names[at - 1]; at--;
+            }
+            names[at] = teStrdup(filepath); count++;
         }
-        names[at] = teStrdup(entry->d_name); count++;
+        closedir(dir);
     }
-    closedir(dir);
-    if (!count) { free(names); snprintf(msg, msg_size, "No valid schemes for this mode in ~/.tinyedit/color-scheme/"); return; }
+    if (!count) { free(names); snprintf(msg, msg_size, "No valid schemes for this mode; run make install"); return; }
     int32_t cursor = 0;
     for (int32_t i = 0; i < count; i++) {
         struct editorSettings candidate = *edited;
         char path[2048], error[128];
-        n = snprintf(path, sizeof(path), "%s/%s", directory, names[i]);
+        n = snprintf(path, sizeof(path), "%s", names[i]);
         if (n >= 0 && (size_t)n < sizeof(path) &&
             settingsLoadColorScheme(path, &candidate, error, sizeof(error)) &&
             memcmp(&candidate, edited, sizeof(candidate)) == 0) { cursor = i; break; }
@@ -4742,7 +4754,7 @@ static void editorSettingsChooseScheme(struct editorSettings *edited, int32_t sc
     while (1) {
         struct editorSettings candidate = *edited;
         char path[2048], error[128];
-        n = snprintf(path, sizeof(path), "%s/%s", directory, names[cursor]);
+        n = snprintf(path, sizeof(path), "%s", names[cursor]);
         uint8_t valid = n >= 0 && (size_t)n < sizeof(path) &&
             settingsLoadColorScheme(path, &candidate, error, sizeof(error));
         if (n < 0 || (size_t)n >= sizeof(path)) snprintf(error, sizeof(error), "Path too long");
@@ -4750,7 +4762,7 @@ static void editorSettingsChooseScheme(struct editorSettings *edited, int32_t sc
             valid = 0;
             snprintf(error, sizeof(error), "Scheme no longer matches Mode");
         }
-        settings_scheme_preview = names[cursor];
+        settings_scheme_preview = strrchr(names[cursor], '/') + 1;
         struct abuf ab = ABUF_INIT;
         editorSettingsRender(&ab, valid ? &candidate : edited, 2, scroll, valid ? "" : error);
         if (!terminalWrite(ab.b, (size_t)ab.len)) terminalDie("write");

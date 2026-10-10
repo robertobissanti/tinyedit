@@ -158,16 +158,23 @@ For an installation without administrator privileges, use
 A permission error for `/usr/local/bin` is an installation failure; the compiled
 binary remains available as `bin/tinyedit`.
 
-`make install` installs only the binary. Color schemes and syntax definitions
-belong to the user's home (`~/.tinyedit/`), which `sudo` may redirect to root's,
-so install them separately as your normal user:
+`make install` installs the binary, shipped color schemes, syntax definitions,
+and documentation. Shared resources live in `$(PREFIX)/share/tinyedit` (by
+default `/usr/local/share/tinyedit`), so `sudo` never writes into a user's home.
+Personal themes and syntax definitions in `~/.tinyedit/` take precedence.
+Help → Documentation uses the shared guides unless personal guides are installed.
+
+Use `make install-binary` for just the executable. For a custom prefix, pass the
+same `PREFIX` when building and installing: the resource path is compiled into
+the binary. Packagers can override `DATADIR` and stage files with `DESTDIR`;
+`DESTDIR` is never part of the runtime path.
+
+These optional commands still install personal copies; run them without `sudo`:
 
 ```sh
 make install-resources      # color schemes + syntax definitions, never overwrites
-make install-docs           # guides for Help → Documentation
+make install-docs           # personal guides for Help → Documentation
 ```
-
-Without the schemes, F2 → Colors reports `No schemes in ~/.tinyedit/color-scheme/`.
 
 ## Quick reference
 
@@ -190,9 +197,11 @@ and configuration.
 
 ## Documentation
 
-Install the guides and their linked resources with `make install-docs`, then
-open **Help → Documentation** inside tinyedit. The index lives at
-`~/.tinyedit/docs/README.md`. Use **Alt+Enter** on a link, or double-click it
+`make install` includes the guides and their linked resources. Open
+**Help → Documentation** inside tinyedit to read them. Optional personal guides
+installed with `make install-docs` at `~/.tinyedit/docs/README.md` take precedence
+over the shared index in `$(PREFIX)/share/tinyedit/docs/README.md`.
+Use **Alt+Enter** on a link, or double-click it
 with mouse support enabled. Double-clicking ordinary text selects a word.
 
 

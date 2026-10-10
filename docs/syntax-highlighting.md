@@ -205,7 +205,12 @@ or, equivalently, from the repository root:
 make install-syntax
 ```
 
-To install both syntax definitions and color schemes, run `make install-resources`
+`make install` installs shared syntax definitions and color schemes under
+`$(PREFIX)/share/tinyedit`, together with the binary and guides. Definitions in
+`~/.tinyedit/syntax/` take precedence when claiming the same extension.
+`make install-binary` installs only the executable.
+
+To install personal copies of both syntax definitions and color schemes, run `make install-resources`
 as your normal user. It preserves existing files in both resource directories.
 
 That syntax target never overwrites a file you already have (it prints

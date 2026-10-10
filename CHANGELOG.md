@@ -6,6 +6,11 @@
 
 ### Important fixes
 
+- Make `make install` include color schemes, additional syntax definitions and
+  guides for every user, including installations through `sudo`. Load shared
+  resources from `PREFIX/share/tinyedit` with personal resources taking priority;
+  retain `make install-binary` for executable-only installations.
+
 ### Other minor fixing
 
 ## 0.3.8 — 2026-10-09

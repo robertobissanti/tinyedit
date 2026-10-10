@@ -23,6 +23,8 @@ TEST_BINS := $(TEST_DIR)/test_syntax $(TEST_DIR)/test_settings_backup \
 
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
+DATADIR ?= $(PREFIX)/share/tinyedit
+CPPFLAGS += -D'TE_DATADIR="$(DATADIR)"'
 INSTALL ?= install
 SYNTAX_DIR ?= $(HOME)/.tinyedit/syntax
 COLORSCHEME_DIR ?= $(HOME)/.tinyedit/color-scheme
@@ -37,12 +39,18 @@ $(BIN_DIR):
 # This is intentionally opt-in: building never modifies the user's shell or
 # PATH. Choose a BINDIR already present in PATH, for example /opt/homebrew/bin
 # on Apple Silicon Homebrew or /usr/local/bin on many POSIX systems.
-install: $(TARGET)
-	$(INSTALL) -d $(DESTDIR)$(BINDIR)
-	$(INSTALL) -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/tinyedit
-	@echo "Installed the binary only. Per-user resources are separate (they live in"
-	@echo "the invoking user's home, which sudo may change): run 'make install-resources'"
-	@echo "as your normal user for color schemes and syntax definitions."
+install: install-binary install-system-resources
+
+install-binary: $(TARGET)
+	$(INSTALL) -d "$(DESTDIR)$(BINDIR)"
+	$(INSTALL) -m 755 $(TARGET) "$(DESTDIR)$(BINDIR)/tinyedit"
+
+# Shared defaults are available to every user; never write to HOME under sudo.
+install-system-resources:
+	$(MAKE) install-docs DOCS_DIR="$(DESTDIR)$(DATADIR)"
+	$(INSTALL) -d "$(DESTDIR)$(DATADIR)/syntax" "$(DESTDIR)$(DATADIR)/color-scheme"
+	$(INSTALL) -m 644 syntax-configs/*.conf "$(DESTDIR)$(DATADIR)/syntax/"
+	$(INSTALL) -m 644 colorschemes/*.conf "$(DESTDIR)$(DATADIR)/color-scheme/"
 
 # Preserve the relative layout used by the documentation links. These are
 # reference copies, separate from the user's active syntax and theme folders.
@@ -63,19 +71,20 @@ install-docs:
 # startup. Building is not consent to write into the user's home, and existing
 # files stay untouched unless the force target is requested.
 install-syntax:
-	@mkdir -p $(SYNTAX_DIR)
+	@mkdir -p "$(SYNTAX_DIR)"
 	@for f in syntax-configs/*.conf; do \
-		target=$(SYNTAX_DIR)/$$(basename $$f); \
+		target="$(SYNTAX_DIR)/$$(basename "$$f")"; \
 		if [ -e "$$target" ]; then \
 			echo "skip  $$target (already exists)"; \
 		else \
-			cp "$$f" "$$target" && echo "copy  $$target"; \
+			cp "$$f" "$$target" || exit $$?; \
+			echo "copy  $$target"; \
 		fi; \
 	done
 
 # The editor reads presets from ~/.tinyedit/color-scheme/ (F2 -> Colors). Like
 # install-syntax, this is opt-in, never overwrites existing files, and stays out
-# of 'make install' so a root-owned install cannot write into the wrong home.
+# of the shared resource installation to preserve personal customizations.
 install-colorschemes:
 	@mkdir -p "$(COLORSCHEME_DIR)"
 	@for f in colorschemes/*.conf; do \
@@ -97,8 +106,8 @@ install-colorschemes-force:
 install-resources: install-syntax install-colorschemes
 
 install-syntax-force:
-	@mkdir -p $(SYNTAX_DIR)
-	@cp syntax-configs/*.conf $(SYNTAX_DIR)/ && echo "overwrote $(SYNTAX_DIR) with shipped configs"
+	@mkdir -p "$(SYNTAX_DIR)"
+	@cp syntax-configs/*.conf "$(SYNTAX_DIR)/" && echo "overwrote $(SYNTAX_DIR) with shipped configs"
 
 $(TEST_DIR)/test_syntax: $(TEST_DIR)/test_syntax.c $(SRC_DIR)/syntax.c $(SRC_DIR)/settings.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(HEADERS)
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_syntax.c $(SRC_DIR)/syntax.c $(SRC_DIR)/settings.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c
@@ -157,11 +166,12 @@ test: $(TARGET) $(TEST_BINS)
 	python3 $(TEST_DIR)/test_pty.py
 	python3 $(TEST_DIR)/test_build.py
 	python3 $(TEST_DIR)/test_docs.py
+	python3 $(TEST_DIR)/test_install.py
 
 clean:
 	rm -f $(TARGET) $(TEST_BINS) $(TEST_DIR)/benchmark_core
 
-.PHONY: clean test install install-docs install-syntax install-syntax-force install-colorschemes install-colorschemes-force install-resources
+.PHONY: clean test install install-binary install-system-resources install-docs install-syntax install-syntax-force install-colorschemes install-colorschemes-force install-resources
 
 $(TEST_DIR)/benchmark_core: $(TEST_DIR)/benchmark_core.c $(SOURCES) $(HEADERS)
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -Wno-format-nonliteral -o $@ $(TEST_DIR)/benchmark_core.c $(filter-out $(SRC_DIR)/tinyedit.c,$(SOURCES))

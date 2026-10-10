@@ -2,6 +2,7 @@
 
 #include "syntax.h"
 #include "alloc.h"
+#include "resources.h"
 #include "utf8.h"
 
 #include <dirent.h>
@@ -492,21 +493,11 @@ static const struct syntaxLang *syntaxParseLangFile(const char *path) {
 }
 
 /**
- * @brief Load usable .conf definitions from the user's syntax directory once.
+ * @brief Append usable .conf definitions from a resource directory.
  *
- * @details Sets the loaded flag even if HOME or the directory is unavailable,
- * preventing repeated scans during editing. Definitions remain module-owned
- * for the process lifetime.
+ * @details Definitions remain module-owned for the process lifetime.
  */
-static void syntaxLoadUserLangs(void) {
-    userLangsLoaded = 1; /* set first: a failed/empty scan should not retry every keystroke */
-
-    const char *home = getenv("HOME");
-    if (!home || !*home) return;
-
-    char dirpath[1024];
-    int32_t dirlen = snprintf(dirpath, sizeof(dirpath), "%s/.tinyedit/syntax", home);
-    if (dirlen < 0 || (size_t)dirlen >= sizeof(dirpath)) return;
+static void syntaxLoadDirectory(const char *dirpath) {
     DIR *dir = opendir(dirpath);
     if (!dir) return;
 
@@ -530,6 +521,18 @@ static void syntaxLoadUserLangs(void) {
         userLangTable[userLangTableCount++] = lang;
     }
     closedir(dir);
+}
+
+/** @brief Load personal definitions first, then shared defaults, once. */
+static void syntaxLoadUserLangs(void) {
+    userLangsLoaded = 1;
+    const char *home = getenv("HOME");
+    if (home && *home) {
+        char dirpath[1024];
+        int32_t n = snprintf(dirpath, sizeof(dirpath), "%s/.tinyedit/syntax", home);
+        if (n >= 0 && (size_t)n < sizeof(dirpath)) syntaxLoadDirectory(dirpath);
+    }
+    syntaxLoadDirectory(TE_DATADIR "/syntax");
 }
 
 /* ---- generic C-like tokenizer --------------------------------------- */

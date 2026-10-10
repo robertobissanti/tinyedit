@@ -140,3 +140,7 @@ preservation of existing presets and forced replacement.
 An injected copy failure on an intermediate preset must make installation fail
 even when later copies could succeed. Temporary directories and a fake copy
 command isolate these checks from the user's installed resources.
+
+Shared installation regression: `test_install.py` checks binary-only and full
+installation, custom prefixes with spaces, DESTDIR staging, an untouched HOME,
+shared theme/syntax loading and personal syntax precedence.
