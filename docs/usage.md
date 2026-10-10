@@ -433,6 +433,13 @@ fixed instructions) is what disappears first.
 
 ## Backup and crash recovery
 
+Recovery backups are deliberately opt-in: `backup_interval = 0` disables
+their creation, including during abnormal termination. An unnamed document
+does not receive a recovery backup, even when the interval is enabled; it
+must first be given a filename. These are intentional choices, not recovery
+bugs. If the process terminates before saving, unsaved text without a recovery
+copy can be lost; an existing saved file is separate from those unsaved edits.
+
 If `backup_interval` (F2 panel, off by default) is set to a nonzero
 value (5 seconds effective minimum), the editor periodically writes a
 recovery copy of the buffer while there are unsaved changes, to

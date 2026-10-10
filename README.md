@@ -69,7 +69,7 @@ for real editing rather than just demonstrating how a terminal works.
 | Area | What you get |
 |---|---|
 | [Editing](docs/usage.md#keyboard-shortcuts) | Familiar cursor movement, word jumps, selection, cut/copy/paste, automatic indentation, block indent/outdent with Tab, configurable pair and XML/HTML tag closing, matching-bracket highlighting, and an undo history of up to 2,000 steps (200 by default). |
-| [Files](docs/usage.md#opening-and-closing-files) | Start an empty document with File → New / Ctrl-N, open or switch files without restarting tinyedit, complete file paths with Tab, start a named file before it exists, save atomically, and recover unsaved work from automatic backups after a crash. |
+| [Files](docs/usage.md#opening-and-closing-files) | Start an empty document with File → New / Ctrl-N, open or switch files without restarting tinyedit, complete file paths with Tab, start a named file before it exists, save atomically, and recover named documents from optional automatic backups after a crash. |
 | [Sidebar](docs/usage.md#file-tree-sidebar) | Browse a persistent filesystem tree with keyboard or mouse, expand folders lazily, change its root, and open files with protection for unsaved edits. |
 | [Search](docs/usage.md#find-and-replace) | Incremental literal or POSIX regular-expression search, match navigation, and interactive search and replace. |
 | [Syntax highlighting](docs/syntax-highlighting.md#syntax-highlighting) | Built-in support for C/C++, Python, Shell, JavaScript/TypeScript, Markdown, HTML/XML, CSS, and JSON, including function names. Simple C-like languages and HTML-based templates (Nunjucks, Jinja, Liquid, Twig) can be added with a user configuration file; ready-made ones ship in `syntax-configs/`. |

@@ -4,8 +4,37 @@
 
 ## Contents
 
+- [How an edit reaches the screen and disk](#how-an-edit-reaches-the-screen-and-disk)
 - [Code layout](#code-layout)
 - [Function documentation](#function-documentation)
+
+## How an edit reaches the screen and disk
+
+The terminal is the window that sends input bytes and displays output. The
+operating system delivers those bytes, manages memory and files, and can notify
+the editor of events through signals. tinyedit interprets the input and owns the
+document being edited; the terminal does not store that document for it.
+
+Follow a normal edit through these steps before reading individual functions:
+
+1. `terminal.c` decodes input bytes into a key or mouse event.
+2. `tinyedit.c` chooses the command and starts an undo recording boundary.
+3. `buffer.c` changes the in-memory rows; `history.c` retains the affected
+   source rows so the action can be reversed, or rolled back on a preparation
+   failure. Editing memory does not itself save the file.
+4. Rendering and syntax helpers derive display data from those rows. The
+   application writes text and escape sequences to the terminal to draw the
+   visible part of the document. Display data can be rebuilt from source text.
+5. On Save, the application serializes the document and `fileio.c` asks the
+   operating system to write and synchronize a temporary file, then replace the
+   destination and synchronize its directory. A recovery copy is a separate,
+   optional operation for named documents, governed by `backup_interval`.
+
+Undo reverses a recorded edit in memory; it does not restore an old disk file.
+A signal is a separate notification from the operating system, not a typed
+character. Terminal cleanup restores the terminal modes changed at startup;
+it is distinct from saving text or creating a backup. Normal-exit cleanup does
+not by itself handle termination signals; SIGTERM/SIGHUP cleanup remains pending.
 
 ## Code layout
 
@@ -87,6 +116,12 @@ historical linenoise code. `@brief` explains the purpose in one sentence;
 describes results and failure values; `@note` preserves useful design rationale.
 Only include tags that add information, rather than restating the signature.
 
+These comments are local reference cards, not a tutorial of the whole editor.
+Read `@brief` as "what is this for?", `@param` as "what must I supply?", and
+`@return` as "what result will I get?". Ownership says who must eventually
+release an allocation; side effects say what else changes. Use the flow above
+to locate a function's role before studying its calling contract.
+
 Benchmark methodology and limits are described in
 [`tests/README.md`](../tests/README.md).
 `make benchmark` measures CPU work without terminal I/O. Wrapped drawing locates
@@ -98,6 +133,13 @@ changes. A one-byte edit retains the affected row, so very long single lines
 still cost their full row size. Undo/redo transfer owned source spans without
 allocating source text; replay display text is prepared before changing the
 history position.
+
+The deltas are at row granularity, not minimal byte-by-byte patches. Unchanged
+rows are not copied for each action; an operation touching every row can still
+retain document-sized source data. `historyMakeSnapshot()` and its companion
+helpers remain for the historical benchmark comparison and are not called by
+the application's editing or undo/redo paths. Full-document temporary copies
+for saving and multiline search are separate from undo storage.
 
 `undo_memory_mb` defaults to **64 MiB** and limits the combined undo/redo
 journal. It is available in F2 and `~/.tinyeditrc`; changes take effect after

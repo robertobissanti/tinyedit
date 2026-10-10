@@ -64,6 +64,11 @@ Keep proposals consistent with tinyedit's focused scope. In particular:
 - a small feature specific to the editor core does not automatically need a
   new module.
 
+Recovery backups are deliberately opt-in (`backup_interval = 0` by default)
+and apply only to named documents. Do not classify the absence of a recovery
+copy for disabled backups or an unnamed document as a bug, or add implicit
+emergency saves that override this policy. Terminal cleanup is a separate duty.
+
 Do not add third-party code or dependencies without prior maintainer
 agreement.
 

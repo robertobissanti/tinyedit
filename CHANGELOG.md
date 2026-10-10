@@ -13,6 +13,10 @@
 
 ### Other minor fixing
 
+- Clarify that recovery backups are opt-in and exclude unnamed documents by
+  design. Explain the input/edit/display/save flow, how to read function
+  contracts, and row-level undo storage separately from save/search copies.
+
 ## 0.3.8 — 2026-10-09
 
 ### New features
