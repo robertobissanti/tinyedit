@@ -174,69 +174,27 @@ static struct utf8DecodeResult utf8DecodePrev(const char *buf, size_t pos) {
 size_t utf8PrevCharLen(const char *buf, size_t pos) {
     if (pos == 0) return 0;
 
-    size_t total = 0;
-    size_t curpos = pos;
-
-    /* First, get the last codepoint. */
-    struct utf8DecodeResult decoded = utf8DecodePrev(buf, curpos);
-    size_t cplen = decoded.consumed;
-    uint32_t cp = decoded.codepoint;
-    if (cplen == 0) return 0;
-    total += cplen;
-    curpos -= cplen;
-
-    /* If we're at an extending character, we need to find what it extends.
-     * Keep going back through the grapheme cluster. */
-    while (curpos > 0) {
-        struct utf8DecodeResult previous = utf8DecodePrev(buf, curpos);
-        size_t prevlen = previous.consumed;
-        uint32_t prevcp = previous.codepoint;
-        if (prevlen == 0) break;
-
-        if (!decoded.valid || !previous.valid) break;
-
-        if (isZWJ(prevcp)) {
-            /* ZWJ joins two emoji. Include the ZWJ and continue to get
-             * the preceding character. */
-            /* Now get the character before ZWJ. */
-            struct utf8DecodeResult before_joiner = utf8DecodePrev(buf, curpos - prevlen);
-            if (!before_joiner.valid) break;
-            total += prevlen;
-            curpos -= prevlen;
-            previous = before_joiner;
-            prevlen = previous.consumed;
-            prevcp = previous.codepoint;
-            total += prevlen;
-            curpos -= prevlen;
-            cp = prevcp;
-            decoded = previous;
-            continue;  /* Check if there's more extending before this. */
-        } else if (isGraphemeExtend(cp)) {
-            /* Current cp is an extending character; include previous. */
-            total += prevlen;
-            curpos -= prevlen;
-            cp = prevcp;
-            decoded = previous;
-            continue;
-        } else if (isRegionalIndicator(cp) && isRegionalIndicator(prevcp)) {
-            /* Pair from the start of the run, consistently with forward
-             * navigation; an odd final indicator is a separate grapheme. */
-            size_t run = 1, scan = curpos;
-            while (scan > 0) {
-                struct utf8DecodeResult indicator = utf8DecodePrev(buf, scan);
-                if (!indicator.valid || !isRegionalIndicator(indicator.codepoint)) break;
-                run++;
-                scan -= indicator.consumed;
-            }
-            if (run % 2 == 0) total += prevlen;
-            break;
-        } else {
-            /* No more extending; we've found the start of the cluster. */
-            break;
+    size_t anchor = pos;
+    while (anchor > 0) {
+        struct utf8DecodeResult current = utf8DecodePrev(buf, anchor);
+        anchor -= current.consumed;
+        if (!current.valid) break;
+        if (!isGraphemeExtend(current.codepoint) &&
+            !isRegionalIndicator(current.codepoint)) {
+            struct utf8DecodeResult previous = utf8DecodePrev(buf, anchor);
+            if (!previous.valid || !isZWJ(previous.codepoint)) break;
         }
     }
 
-    return total;
+    /* Restart where preceding text cannot affect grouping, then reuse the
+     * forward rules. Ordinary base characters need only a local lookbehind;
+     * joiners and indicator runs require their preceding context. */
+    size_t start = anchor;
+    while (anchor < pos) {
+        start = anchor;
+        anchor += utf8NextCharLen(buf, anchor, pos);
+    }
+    return pos - start;
 }
 
 /**

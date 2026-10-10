@@ -29,9 +29,38 @@ static void invalid(const char *bytes, size_t length) {
     check(!result.valid && result.consumed == 1, "invalid boundary");
 }
 
+static void checkRoundTrip(const char *text, size_t length) {
+    size_t at = 0;
+    while (at < length) {
+        size_t step = utf8NextCharLen(text, at, length);
+        check(step > 0 && step <= length - at, "bounded forward step");
+        check(utf8PrevCharLen(text, at + step) == step, "matching grapheme boundaries");
+        at += step;
+    }
+}
+
+static void testBoundaryCombinations(void) {
+    const char *units[] = {"a", "\xcc\x81", "\xe2\x80\x8d", "🇦",
+        "🏻", "\xef\xb8\x8f", "\xff", "\n"};
+    const size_t count = sizeof(units) / sizeof(units[0]);
+    for (size_t sequence = 0; sequence < count * count * count * count; sequence++) {
+        char text[32];
+        size_t length = 0, value = sequence;
+        for (size_t i = 0; i < 4; i++) {
+            const char *unit = units[value % count];
+            size_t bytes = strlen(unit);
+            memcpy(text + length, unit, bytes);
+            length += bytes;
+            value /= count;
+            checkRoundTrip(text, length);
+        }
+    }
+}
+
 /* Exercise the decoder first, then the editor's byte and screen coordinates
  * with malformed bytes next to a valid multibyte character. */
 int main(void) {
+    testBoundaryCombinations();
     const char *flags = "🇦🇧🇨🇩🇪";
     check(utf8NextCharLen(flags, 0, strlen(flags)) == 8, "forward flag pair");
     check(utf8PrevCharLen(flags, 12) == 4, "odd final indicator");

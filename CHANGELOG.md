@@ -6,6 +6,9 @@
 
 ### Important fixes
 
+- Keep backward UTF-8 navigation consistent with forward grapheme boundaries
+  for combining marks, joiner sequences and regional indicators, preventing
+  partial deletion of those editing units.
 - Reject opening or saving through a symlink whose target is missing, preserving
   the link and unsaved document instead of replacing the link with a new file.
 

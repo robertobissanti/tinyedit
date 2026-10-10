@@ -148,3 +148,9 @@ shared theme/syntax loading and personal syntax precedence.
 
 Core tests check red error rendering, foreground restoration and failed
 dangling-link saves preserving document identity and unsaved text.
+
+UTF-8 boundary regressions enumerate four-unit combinations of ordinary bases,
+combining marks, ZWJ, regional indicators, modifiers, selectors, malformed bytes
+and controls, checking every forward boundary against backward navigation.
+These test the editor's supported grouping rules, not full Unicode grapheme
+conformance.
