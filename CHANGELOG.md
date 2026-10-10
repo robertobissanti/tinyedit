@@ -19,7 +19,8 @@
 
 ### Other minor fixing
 
-- Add an Ask DeepWiki badge to the README for repository documentation access.
+- Add an Ask DeepWiki badge to the README for repository documentation access,
+  using Shields.io to avoid DeepWiki image requests blocked by anti-bot checks.
 
 - Display editor message-bar errors in red, keeping normal prompts and success
   messages distinct; document the error-color and missing-symlink policies.
