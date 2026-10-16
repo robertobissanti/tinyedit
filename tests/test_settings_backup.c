@@ -64,12 +64,15 @@ int main(void) {
         settings.color_syntax_bracket != COLOR_MAGENTA_LIGHT) fail("new color parsing");
     if (settings.color_syntax_italic != COLOR_GREEN_DARK || settings.rgb_color_syntax_italic != 0x112233)
         fail("legacy italic colors do not follow customized keywords");
+    if (settings.markdown_live_preview) fail("live preview defaults off for old configurations");
+    settings.markdown_live_preview = 1;
     settings.color_syntax_italic = COLOR_RED_DARK;
     settings.rgb_color_syntax_italic = 0xd19a67;
     if (!settingsSave(&settings)) fail("settingsSave");
     settingsLoad(&settings);
     if (settings.color_syntax_italic != COLOR_RED_DARK || settings.rgb_color_syntax_italic != 0xd19a67)
         fail("independent italic palette persistence");
+    if (!settings.markdown_live_preview) fail("live preview persistence");
     if (settings.undo_memory_mb != 32) fail("undo memory budget persistence");
     if (settings.color_syntax_json_key != COLOR_RED_DARK ||
         settings.color_syntax_bracket != COLOR_MAGENTA_LIGHT) fail("new color persistence");

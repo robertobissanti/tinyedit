@@ -79,7 +79,7 @@ for real editing rather than just demonstrating how a terminal works.
 | [Clipboard](docs/usage.md#keyboard-shortcuts) | Uses the native macOS clipboard or the available Wayland/X11 clipboard tool directly, without sending commands through a shell. |
 | [Terminal input](docs/usage.md#fast-terminal-paste) | Fast bracketed paste, optional mouse selection and scrolling, and key-sequence handling for common macOS and Linux terminals. |
 | [Menus](docs/usage.md#menus) | A persistent menu bar with TinyEdit, File, Edit, View, and Help menus; keyboard and optional mouse navigation; shortcuts beside commands; and checked View settings. |
-| [Interface](docs/usage.md#top-and-status-bars) | Optional line numbers and top bar, visible whitespace, file statistics, in-editor help, and a settings panel. |
+| [Interface](docs/usage.md#top-and-status-bars) | Optional Markdown live preview with cursor expansion, line numbers and top bar, visible whitespace, file statistics, in-editor help, and a settings panel. |
 | [Configuration](docs/configuration.md#settings-and-appearance) | Settings live in `~/.tinyeditrc`; tabs, wrapping, mouse behavior, cursor shape and blinking, interface elements, and editing assists can all be changed from `F2`. |
 | [Colors and themes](docs/configuration.md#colors-page-and-rgb) | ANSI by default or optional RGB with validated hex colors, previews, separate palettes, and One Dark / Catppuccin Mocha presets selected from one Colors page. |
 | [Build identification](#build-identification) | The same release and source build identifier appears in `--version`, the startup splash, and F3. |

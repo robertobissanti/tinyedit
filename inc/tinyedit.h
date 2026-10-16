@@ -123,6 +123,11 @@ struct editorBuffer;
 struct historyAction;
 struct historyChange;
 
+struct markdownSpan {
+    int32_t start, content_start, content_end, end; /* Render-byte offsets. */
+    uint8_t link;
+};
+
 typedef struct erow {
     struct editorBuffer *owner;
     size_t chars_capacity;
@@ -138,6 +143,10 @@ typedef struct erow {
      * default text color in that case, it does not require hl to be
      * populated. */
     uint8_t *hl;
+    struct markdownSpan *markdown_spans; /* Owned, rebuilt with highlighting. */
+    int32_t markdown_count, markdown_capacity;
+    int32_t seg_preview_cursor;
+    uint8_t seg_preview_enabled;
     uint8_t render_dirty;
     /* Whether this row ends inside an unclosed block comment, carried
      * into the next row's syntaxHighlightRow() call as its

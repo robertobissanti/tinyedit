@@ -364,6 +364,24 @@ with bold/italic terminal attributes and headings in bold. Markup remains
 visible and editable; syntax highlighting must be enabled. The option is off
 by default and combines with heading reverse video.
 
+Enable **View → Markdown live preview**, or the same option in F2
+(`markdown_live_preview = true` in `~/.tinyeditrc`), for a compact Markdown
+view. Paired single-line `**bold**` / `__bold__` and `*italic*` / `_italic_`
+keep their terminal styles while hiding their delimiters. Inline `[label](https://example.org)`
+links display an underlined label. Placing the cursor anywhere inside a
+construct, or immediately before its opening delimiter or after its closing
+delimiter, reveals its complete source for editing, including link destinations.
+Moving away compacts it again. This also works with wrapping, Unicode text,
+and mouse positioning; the document and saved bytes are unchanged.
+
+Live preview is off by default and requires syntax highlighting. It enables
+bold and italic attributes independently of **Markdown bold and italic**.
+Selection and active search results temporarily reveal the full source.
+This is a partial view using the existing tokenizer: headings, images, code,
+front matter, math, incomplete or multiline emphasis, and reference-style
+links retain their source markup. Nested Markdown formatting is not parsed.
+Terminal support determines the appearance of bold, italic and underline.
+
 In ANSI mode, for Markdown ATX headings (`#` through `######`), enable **Reverse Markdown
 heading colors** in F2, or set `markdown_heading_reverse = true` in
 `~/.tinyeditrc`. This swaps the existing heading foreground and editor

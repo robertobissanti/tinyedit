@@ -4,6 +4,11 @@
 
 ### New features
 
+- Add optional Markdown live preview in View and F2: hide paired bold/italic
+  delimiters and show inline links as underlined labels. Reveal the complete
+  construct at the cursor for editing while preserving original saved text,
+  Unicode positioning and wrapping; selection and search show full source.
+
 ### Important fixes
 
 - Keep backward UTF-8 navigation consistent with forward grapheme boundaries

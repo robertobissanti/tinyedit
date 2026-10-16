@@ -207,6 +207,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, color_syntax_function), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_background", "Editor background color (off=terminal default)", SETTING_ENUM,
       offsetof(struct editorSettings, color_background), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "markdown_live_preview", "Markdown live preview", SETTING_BOOL,
+      offsetof(struct editorSettings, markdown_live_preview), 0, 0, NULL, 0 },
     { "markdown_text_styles", "Markdown bold and italic", SETTING_BOOL,
       offsetof(struct editorSettings, markdown_text_styles), 0, 0, NULL, 0 },
     { "markdown_heading_reverse", "Markdown: reverse heading colors", SETTING_BOOL,
@@ -313,6 +315,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->markdown_heading_reverse = 0;
     out->rgb_markdown_heading_background = RGB_TERMINAL_DEFAULT;
     out->markdown_text_styles = 0;
+    out->markdown_live_preview = 0;
     out->color_syntax_normal = COLOR_TERMINAL_DEFAULT;
     out->color_syntax_keyword = COLOR_BLUE_LIGHT;
     out->color_syntax_string = COLOR_GREEN_LIGHT;

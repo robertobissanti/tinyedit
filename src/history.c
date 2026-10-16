@@ -119,6 +119,9 @@ void historyRestoreSnapshot(struct editorDocument *document, const undoSnapshot 
 static void historyDiscardDisplay(erow *row) {
     free(row->render); free(row->hl); free(row->seg_start); free(row->seg_start_rx);
     row->render = NULL; row->hl = NULL; row->seg_start = NULL; row->seg_start_rx = NULL;
+    free(row->markdown_spans);
+    row->markdown_spans = NULL;
+    row->markdown_count = row->markdown_capacity = 0;
     row->rsize = 0; row->seg_count = 0; row->seg_wrapcols = -1;
     row->render_dirty = 1;
 }

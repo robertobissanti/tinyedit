@@ -24,10 +24,10 @@
  *   linenoise.c    historical line-editor implementation; not built
  *   links.c        inline links, heading slugs and safe browser dispatch
  *   menu.c         UTF-8 menu layout, viewport clipping and input navigation
- *   render.c       shared layout calculations for rows and wrapped text
+ *   render.c       Markdown presentation and shared row/wrapped-text layout
  *   search.c       compiled queries, text search and source-coordinate results
  *   settings.c     persistent configuration, color scheme loading and color escapes
- *   syntax.c       filetype detection and syntax highlighting
+ *   syntax.c       filetype detection, highlighting and Markdown source spans
  *   terminal.c     raw terminal setup, input decoding, and terminal I/O
  *   tree.c         owned filesystem tree and lazy directory expansion
  *   tinyedit.c     application flow, editor commands, screens, and drawing
@@ -258,6 +258,16 @@ static int32_t editorReadKey(void) {
 }
 
 
+static void editorSyncMarkdownPreview(void) {
+    const char *ext = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
+    uint8_t enabled = S.markdown_live_preview && S.syntax_highlight &&
+        ext && syntaxIsMarkdownExtension(ext + 1) && !E.document.selection.active &&
+        E.search.search_match_y < 0;
+    erow *active = E.document.cursor.cy >= 0 && E.document.cursor.cy < E.document.buffer.row_count ?
+        &E.document.buffer.rows[E.document.cursor.cy] : NULL;
+    renderSetMarkdownPreview(enabled, active, E.document.cursor.cx, S.tab_stop);
+}
+
 /**
  * @brief Translate a source-byte cursor offset into a display column.
  *
@@ -265,7 +275,8 @@ static int32_t editorReadKey(void) {
  * layout, with the current tab width.
  */
 static int32_t editorRowCxToRx(erow *row, int32_t cx) {
-    return bufferRowCxToRx(row, cx, S.tab_stop);
+    editorSyncMarkdownPreview();
+    return renderRowCxToRx(row, cx, S.tab_stop);
 }
 
 /**
@@ -275,7 +286,8 @@ static int32_t editorRowCxToRx(erow *row, int32_t cx) {
  * the text map to the row end.
  */
 static int32_t editorRowRxToCx(erow *row, int32_t target_rx) {
-    return bufferRowRxToCx(row, target_rx, S.tab_stop);
+    editorSyncMarkdownPreview();
+    return renderRowRxToCx(row, target_rx, S.tab_stop);
 }
 
 /**
@@ -2125,6 +2137,7 @@ static int32_t editorSoftWrapCols(void) {
  * display-column offsets.
  */
 static int32_t editorRowSegments(erow *row, int32_t wrapcols) {
+    editorSyncMarkdownPreview();
     return renderRowSegments(row, wrapcols);
 }
 
@@ -2161,6 +2174,7 @@ static int32_t editorSegVisibleEndRx(erow *row, int32_t nseg, const int32_t *seg
  * with wrap active.
  */
 static void editorRxToSegment(erow *row, int32_t wrapcols, int32_t rx, int32_t *seg_idx, int32_t *seg_col) {
+    editorSyncMarkdownPreview();
     renderRxToSegment(row, wrapcols, rx, seg_idx, seg_col);
 }
 
@@ -2171,6 +2185,7 @@ static void editorRxToSegment(erow *row, int32_t wrapcols, int32_t rx, int32_t *
  * preceding wrapped rows.
  */
 static int32_t editorVideoRowOf(int32_t filerow, int32_t seg, int32_t wrapcols) {
+    editorSyncMarkdownPreview();
     return renderVideoRowOf(&E.document.buffer, filerow, seg, wrapcols);
 }
 
@@ -2181,6 +2196,7 @@ static int32_t editorVideoRowOf(int32_t filerow, int32_t seg, int32_t wrapcols) 
  * the last logical row and segment zero.
  */
 static void editorFileRowAtVideoRow(int32_t vy, int32_t wrapcols, int32_t *out_filerow, int32_t *out_seg) {
+    editorSyncMarkdownPreview();
     renderFileRowAtVideoRow(&E.document.buffer, vy, wrapcols, out_filerow, out_seg);
 }
 
@@ -2190,6 +2206,7 @@ static void editorFileRowAtVideoRow(int32_t vy, int32_t wrapcols, int32_t *out_f
  * @details Use to bound viewport scrolling; an empty document returns zero.
  */
 static int32_t editorTotalVideoRows(int32_t wrapcols) {
+    editorSyncMarkdownPreview();
     return renderTotalVideoRows(&E.document.buffer, wrapcols);
 }
 
@@ -2359,7 +2376,8 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
     int32_t len = seg_to - seg_from;
     if (len <= 0) return;
     const char *ext = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
-    uint8_t markdown_styles = S.markdown_text_styles && S.syntax_highlight &&
+    editorSyncMarkdownPreview();
+    uint8_t markdown_styles = (S.markdown_text_styles || S.markdown_live_preview) && S.syntax_highlight &&
         ext && syntaxIsMarkdownExtension(ext + 1);
 
     char *line = &row->render[seg_from];
@@ -2398,6 +2416,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
         size_t char_len = utf8NextCharLen(line, (size_t)j, (size_t)len);
         if (char_len == 0 || (size_t)j + char_len > (size_t)len) char_len = 1;
         int32_t emitted_len = (int32_t)char_len;
+        if (renderByteHidden(row, rendercol)) { j += emitted_len; continue; }
         struct utf8DecodeResult decoded = utf8DecodeChar(line + j, (size_t)(len - j));
         uint8_t should_sel = (row_sel_start >= 0 &&
             filecol >= row_sel_start && filecol < row_sel_end) ||
@@ -2466,6 +2485,8 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
                 abAppend(ab, "\x1b[1m", 4);
             else if (row->hl[rendercol] == HL_EMPHASIS)
                 abAppend(ab, "\x1b[3m", 4);
+            else if (renderByteUnderlined(row, rendercol))
+                abAppend(ab, "\x1b[4m", 4);
             else styled = 0;
         }
 
@@ -2673,7 +2694,7 @@ static void editorBeginHeadingRow(struct abuf *ab, int32_t filerow) {
         E.document.buffer.rows[filerow].hl_heading;
     drawing_heading = heading && (S.color_mode == COLOR_MODE_RGB ?
         S.rgb_markdown_heading_background != RGB_TERMINAL_DEFAULT : S.markdown_heading_reverse);
-    drawing_heading_bold = heading && S.markdown_text_styles;
+    drawing_heading_bold = heading && (S.markdown_text_styles || S.markdown_live_preview);
     if (drawing_heading || drawing_heading_bold) abAppendReset(ab);
     if (drawing_heading) {
         /* Erase-to-end does not reliably paint reverse-video blanks. Write
@@ -2726,10 +2747,11 @@ static void editorDrawRows(struct abuf *ab) {
                     abAppend(ab, "~", 1);
                 }
             } else {
-                int32_t len = E.document.buffer.rows[filerow].rsize - E.view.coloff;
-                if (len < 0) len = 0;
-                if (len > textcols) len = textcols;
-                editorDrawRowSegment(ab, filerow, E.view.coloff, E.view.coloff + len,
+                erow *row = &E.document.buffer.rows[filerow];
+                editorSyncMarkdownPreview();
+                int32_t from = renderByteAtColumn(row, E.view.coloff);
+                int32_t to = renderByteAtColumn(row, E.view.coloff + textcols);
+                editorDrawRowSegment(ab, filerow, from, to,
                     has_sel, sel_y0, sel_x0, sel_y1, sel_x1,
                     has_pair, pair_y0, pair_x0, pair_y1, pair_x1);
                 if (editorRowTerminatorHighlighted(filerow, has_sel, sel_y0, sel_y1))
@@ -3308,22 +3330,7 @@ static void editorSetStatusMessageSticky(const char *fmt, ...) {
  * E.document.cursor.rx via editorRowCxToRx()/clamping below.
  */
 static int32_t editorSegColToCx(erow *row, int32_t seg_from_rx, int32_t target_col) {
-    int32_t target_rx = seg_from_rx + target_col;
-    int32_t rx = 0, j = 0;
-    while (j < row->size) {
-        if (rx >= target_rx) break;
-        if (row->chars[j] == '\t') {
-            rx += (S.tab_stop - 1) - (rx % S.tab_stop);
-            rx++;
-            j++;
-            continue;
-        }
-        size_t clen = utf8NextCharLen(row->chars, (size_t)j, (size_t)row->size);
-        if (clen == 0) clen = 1;
-        rx += utf8SingleCharWidth(row->chars + j, clen);
-        j += (int32_t)clen;
-    }
-    return j;
+    return editorRowRxToCx(row, seg_from_rx + target_col);
 }
 
 /**
@@ -5954,8 +5961,9 @@ static uint8_t editorHandleNavigationKey(int32_t c) {
             int32_t hw_wrapcols = editorSoftWrapCols();
             if (hw_wrapcols > 0 && S.home_end_visual_line && E.document.cursor.cy < E.document.buffer.row_count) {
                 int32_t seg_idx, seg_col;
-                editorRxToSegment(&E.document.buffer.rows[E.document.cursor.cy], hw_wrapcols, E.document.cursor.rx, &seg_idx, &seg_col);
                 erow *row = &E.document.buffer.rows[E.document.cursor.cy];
+                int32_t rx = editorRowCxToRx(row, E.document.cursor.cx);
+                editorRxToSegment(row, hw_wrapcols, rx, &seg_idx, &seg_col);
                 int32_t nseg = editorRowSegments(row, hw_wrapcols);
                 if (to_home) {
                     E.document.cursor.cx = editorSegColToCx(row, row->seg_start_rx[seg_idx], 0);

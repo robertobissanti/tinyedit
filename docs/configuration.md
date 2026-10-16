@@ -33,6 +33,11 @@ switch in **View**. It is off by default, works with block and bar shapes, and
 is saved as `cursor_blink = true` when enabled. The screenshot above predates
 this additional row.
 
+**Markdown live preview** is available in F2 and **View**, and is saved as
+`markdown_live_preview = true`. It defaults to `false` and requires syntax
+highlighting. See the [live preview behavior](usage.md#top-and-status-bars)
+for supported constructs and cursor expansion.
+
 ## Colors page and RGB
 
 **F2 → Colors** keeps every color setting on one page, grouped into

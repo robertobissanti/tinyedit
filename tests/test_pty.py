@@ -496,9 +496,39 @@ def test_menu_view_toggles_settings(home):
         os.write(master, b"\x1b[21~" + b"\x1b[C" * 3)
         reopened = read_until(master, b"Auto-indent new lines")
         assert b"[ ] Syntax highlighting" in reopened
-        os.write(master, b"\x1b[B" * 5 + b"\r")
+        os.write(master, b"\x1b[B" * 6 + b"\r")
         read_available(master)
         assert "auto_indent = false" in config.read_text(encoding="utf-8")
+    finally:
+        finish(process, master)
+
+
+def test_markdown_live_preview(home):
+    case_home = pathlib.Path(home) / "markdown-live-preview"
+    case_home.mkdir()
+    target = case_home / "preview.md"
+    original = b"start\n**bold** and *italic* [label](https://example.org)\n"
+    target.write_bytes(original)
+    config = case_home / ".tinyeditrc"
+    config.write_text("show_menu = true\nbackup_interval = 0\n", encoding="utf-8")
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1b[21~" + b"\x1b[C" * 3)
+        read_until(master, b"Markdown live preview")
+        os.write(master, b"\x1b[B" * 5 + b"\r")
+        output = read_available(master)
+        output = output.rsplit(b"\x1b[H", 1)[-1]
+        text = re.sub(rb"\x1b\[[0-9;?]*[ -/]*[@-~]", b"", output)
+        assert "markdown_live_preview = true" in config.read_text()
+        assert b"bold and italic label" in text and b"https://example.org" not in text
+        assert b"\x1b[1m" in output and b"\x1b[3m" in output and b"\x1b[4m" in output
+        os.write(master, b"\x1b[B")
+        output = read_available(master)
+        output = output.rsplit(b"\x1b[H", 1)[-1]
+        text = re.sub(rb"\x1b\[[0-9;?]*[ -/]*[@-~]", b"", output)
+        assert b"**bold** and italic label" in text, "cursor expands only its construct"
+        assert target.read_bytes() == original, "preview changed disk source"
     finally:
         finish(process, master)
 
@@ -1745,7 +1775,7 @@ def test_cursor_blink(home):
         assert "cursor_blink = true" in config.read_text()
         os.write(master, b"\x1b[21~" + b"\x1b[C" * 3)
         assert b"[x] Cursor blinking" in read_available(master)
-        os.write(master, b"\x1b[B" * 6 + b"\r")
+        os.write(master, b"\x1b[B" * 7 + b"\r")
         assert b"\x1b[6 q" in read_available(master)
         assert "cursor_blink = false" in config.read_text(), "View toggle not saved"
     finally:
@@ -1876,6 +1906,7 @@ def main():
         test_menu_mouse_navigation(home)
         test_menu_show_invisibles_refreshes_rows(home)
         test_menu_view_toggles_settings(home)
+        test_markdown_live_preview(home)
         test_matching_bracket_highlight(home)
         test_very_long_wrapped_line(home)
         test_utf8_word_jumps(home)

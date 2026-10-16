@@ -1604,6 +1604,104 @@ static void testMarkdownStyles(void) {
     settingsDefaults(&S);
 }
 
+static void testMarkdownPreview(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    check(!S.markdown_live_preview, "live preview defaults off");
+    check(commandToggleSetting(CMD_TOGGLE_MARKDOWN_PREVIEW, &S) &&
+        commandIsChecked(CMD_TOGGLE_MARKDOWN_PREVIEW, &S), "View toggles live preview");
+    E.search.search_match_y = E.search.search_match_end_y = -1;
+    E.document.file.filename = teStrdup("preview.MD");
+    const char *source = "**caffè界** e *é* [sito](https://example.org/a(b))";
+    editorInsertRow(0, source, strlen(source));
+    editorInsertRow(1, "plain", 5);
+    E.document.cursor.cy = 1;
+    E.document.cursor.cx = 0;
+    erow *row = &E.document.buffer.rows[0];
+    editorSyncMarkdownPreview();
+    check(row->markdown_count == 3, "paired emphasis and link presentation spans");
+    check(editorRowCxToRx(row, row->size) == 16,
+        "preview measures Unicode columns without markup or URL");
+    check(editorRowRxToCx(row, 1) == 3 && editorRowRxToCx(row, 6) == 8,
+        "preview maps columns back to source bytes including wide glyph");
+    struct abuf ab = ABUF_INIT;
+    editorDrawRowSegment(&ab, 0, 0, row->rsize, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    check(strchr(ab.b, '*') == NULL && strstr(ab.b, "https") == NULL && strstr(ab.b, "\x1b[1m") &&
+        strstr(ab.b, "\x1b[3m") && strstr(ab.b, "\x1b[4m"),
+        "preview hides markup and emits bold italic underline independently of styles setting");
+    abFree(&ab);
+    for (int32_t i = 0; i < row->markdown_count; i++) {
+        struct markdownSpan span = row->markdown_spans[i];
+        E.document.cursor.cy = 0;
+        for (int32_t x = span.start; x <= span.end; ) {
+            E.document.cursor.cx = x;
+            editorSyncMarkdownPreview();
+            check(!renderByteHidden(row, span.start) && !renderByteHidden(row, span.end - 1),
+                "cursor on either boundary or inside expands complete construct");
+            if (x == span.end) break;
+            x += (int32_t)utf8NextCharLen(row->chars, (size_t)x, (size_t)row->size);
+        }
+    }
+    E.document.cursor.cy = 1;
+    E.document.cursor.cx = 0;
+    editorSyncMarkdownPreview();
+    check(renderByteHidden(row, 0), "leaving construct collapses again");
+    S.show_line_numbers = S.show_top_bar = S.show_menu = 0;
+    E.view.screencols = 80; E.view.screenrows = 10; E.view.rowoff = E.view.coloff = 0;
+    int32_t y, x;
+    editorMouseToCursor(2, 1, &y, &x);
+    check(y == 0 && x == 3, "mouse click maps compact Unicode text to source");
+    E.document.selection.active = 1;
+    check(editorRowCxToRx(row, row->size) == bufferRowCxToRx(row, row->size, S.tab_stop),
+        "selection reveals original text");
+    E.document.selection.active = 0;
+    E.search.search_match_y = 0;
+    editorSyncMarkdownPreview();
+    check(!renderByteHidden(row, 0), "search reveals delimiters and destination");
+    E.search.search_match_y = -1;
+    editorInsertRow(2, "**ab**", 6);
+    row = &E.document.buffer.rows[2];
+    check(editorRowSegments(row, 2) == 1, "hidden closer at wrap boundary adds no phantom row");
+    E.document.cursor.cy = 2; E.document.cursor.cx = 2;
+    check(editorRowSegments(row, 2) == 3, "expansion invalidates wrap cache");
+    E.document.cursor.cy = 1; E.document.cursor.cx = 0;
+    check(editorRowSegments(row, 2) == 1, "collapse invalidates wrap cache");
+    editorInsertRow(3, "**界**", strlen("**界**"));
+    row = &E.document.buffer.rows[3];
+    check(editorRowSegments(row, 1) == 1, "hidden opener before wide glyph adds no phantom segment");
+    editorInsertRow(4, "`**code**` \\*escaped*", strlen("`**code**` \\*escaped*"));
+    row = &E.document.buffer.rows[4];
+    check(row->markdown_count == 0, "code and escaped emphasis stay literal");
+    check(!strcmp(E.document.buffer.rows[0].chars, source), "presentation preserves source bytes");
+    editorInsertRow(5, "**a**\t界", strlen("**a**\t界"));
+    row = &E.document.buffer.rows[5];
+    check(editorRowCxToRx(row, row->size) == 6 && editorRowRxToCx(row, 4) == 6,
+        "tab expansion retains original tab stops and source-byte mapping");
+    editorInsertRow(6, "**ab** **cd** **ef** tail", 25);
+    E.document.cursor.cy = 6; E.document.cursor.cx = 25;
+    S.soft_wrap = 8; S.home_end_visual_line = 1;
+    E.document.cursor.rx = editorRowCxToRx(&E.document.buffer.rows[6], 25);
+    editorHandleNavigationKey(SHIFT_HOME);
+    check(E.document.cursor.cx == 21 && E.document.selection.active,
+        "Shift-Home uses expanded coordinates when selection reveals markup");
+    E.document.selection.active = 0;
+    E.document.cursor.cy = 0; E.document.cursor.cx = 3;
+    editorInsertChar('z');
+    editorUndo();
+    check(!strcmp(E.document.buffer.rows[0].chars, source) &&
+        E.document.buffer.rows[0].markdown_count == 3, "undo rebuilds presentation from original source");
+    editorRedo();
+    check(E.document.buffer.rows[0].markdown_count == 3 &&
+        E.document.buffer.rows[0].chars[3] == 'z', "redo rebuilds presentation spans");
+    S.syntax_highlight = 0;
+    editorRehighlightFrom(0, 1);
+    check(E.document.buffer.rows[0].markdown_count == 0, "syntax toggle clears presentation spans");
+    editorResetDocument();
+    settingsDefaults(&S);
+    editorSyncMarkdownPreview();
+}
+
 static void testRedrawCaches(void) {
     editorResetDocument();
     settingsDefaults(&S);
@@ -1972,6 +2070,7 @@ int main(void) {
     testSearchSession();
     testBracketColors();
     testMarkdownStyles();
+    testMarkdownPreview();
     testHeadingReverse();
     testRedrawCaches();
     puts("core tests: ok");

@@ -105,6 +105,7 @@ void bufferFreeRow(erow *row) {
     free(row->render);
     free(row->chars);
     free(row->hl);
+    free(row->markdown_spans);
     free(row->seg_start);
     free(row->seg_start_rx);
 }

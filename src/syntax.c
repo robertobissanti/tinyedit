@@ -1059,6 +1059,34 @@ static int32_t syntaxTryHighlightMarkdownTag(erow *row, const char *s, int32_t l
     return close + 1;
 }
 
+/* Presentation is conservative where the tokenizer accepts escaped markers. */
+static uint8_t syntaxMarkdownEscaped(const erow *row, int32_t at) {
+    uint8_t escaped = 0;
+    while (at > 0) {
+        size_t len = utf8PrevCharLen(row->render, (size_t)at);
+        if (len != 1 || row->render[at - 1] != '\\') break;
+        escaped = !escaped;
+        at--;
+    }
+    return escaped;
+}
+
+static void syntaxMarkdownSpan(erow *row, int32_t start, int32_t content_start,
+    int32_t content_end, int32_t end, uint8_t link) {
+    if (syntaxMarkdownEscaped(row, start) || (!link && syntaxMarkdownEscaped(row, content_end)))
+        return;
+    if (row->markdown_count == row->markdown_capacity) {
+        int32_t capacity = row->markdown_capacity;
+        capacity = capacity > INT32_MAX / 2 ? INT32_MAX : capacity ? capacity * 2 : 4;
+        if (capacity == row->markdown_count) return;
+        row->markdown_spans = teRealloc(row->markdown_spans,
+            teArrayBytes((size_t)capacity, sizeof(*row->markdown_spans)));
+        row->markdown_capacity = capacity;
+    }
+    row->markdown_spans[row->markdown_count++] =
+        (struct markdownSpan){start, content_start, content_end, end, link};
+}
+
 /**
  * @brief Try to color a Markdown link or image with distinct label and URL colors.
  *
@@ -1085,6 +1113,7 @@ static int32_t syntaxTryHighlightMarkdownTag(erow *row, const char *s, int32_t l
  */
 static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t len, int32_t i) {
     int32_t start = i;
+    int32_t span_count = row->markdown_count;
     int32_t bracket = i;
     if (s[bracket] == '!') bracket++;
     if (bracket >= len || s[bracket] != '[') return start;
@@ -1132,6 +1161,9 @@ static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t 
     row->hl[label_end + 1] = HL_PREPROCESSOR;
     for (int32_t u = label_end + 2; u < url_end; u++) row->hl[u] = HL_STRING;
     row->hl[url_end] = HL_PREPROCESSOR;
+    row->markdown_count = span_count;
+    if (start == bracket)
+        syntaxMarkdownSpan(row, start, bracket + 1, label_end, url_end + 1, 1);
     return url_end + 1;
 }
 
@@ -1381,6 +1413,7 @@ static void syntaxHighlightRowMarkdown(erow *row, uint8_t prev_in_fence, uint8_t
                  * independently colorable. */
                 enum syntaxHighlight cls = (run == 1) ? HL_EMPHASIS : HL_EMPHASIS_STRONG;
                 for (int32_t k = i; k < close_start + run; k++) row->hl[k] = (uint8_t)cls;
+                syntaxMarkdownSpan(row, i, i + run, close_start, close_start + run, 0);
                 i = close_start + run;
                 continue;
             }
@@ -1687,6 +1720,8 @@ void syntaxHighlightRow(erow *row, const char *filename,
     uint8_t syntax_highlight_enabled, uint8_t prev_open_comment, uint8_t prev_open_math,
     uint8_t prev_open_frontmatter, int32_t row_index, uint8_t prev_open_emphasis) {
     row->hl_heading = 0;
+    row->markdown_count = 0;
+    row->seg_wrapcols = -1;
     if (!syntax_highlight_enabled || !filename || row->rsize <= 0) {
         free(row->hl);
         row->hl = NULL;

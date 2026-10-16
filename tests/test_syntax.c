@@ -20,6 +20,7 @@ static void freeRow(erow *row) {
     free(row->chars);
     free(row->render);
     free(row->hl);
+    free(row->markdown_spans);
 }
 
 static void expectClass(const erow *row, int32_t at, enum syntaxHighlight expected,

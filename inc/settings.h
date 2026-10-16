@@ -198,6 +198,7 @@ struct editorSettings {
     /* Swap heading foreground and background using terminal reverse video. */
     int32_t markdown_heading_reverse;
     int32_t markdown_text_styles;
+    int32_t markdown_live_preview;
     /* Color for text with no highlight class (HL_NORMAL, see
      * syntax.h) -- e.g. identifiers, punctuation, whitespace. Default
      * COLOR_TERMINAL_DEFAULT (no escape emitted, terminal's own
