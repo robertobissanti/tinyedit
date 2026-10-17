@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 
 static int failures = 0;
 
@@ -42,6 +43,26 @@ static void highlight(erow *row, const char *filename, uint8_t prev_comment,
 
 int main(void) {
     erow row;
+
+    struct rlimit original_stack, small_stack;
+    if (getrlimit(RLIMIT_STACK, &original_stack) != 0) return 1;
+    small_stack = original_stack;
+    if (small_stack.rlim_cur > 512 * 1024) small_stack.rlim_cur = 512 * 1024;
+    if (setrlimit(RLIMIT_STACK, &small_stack) != 0) return 1;
+    const size_t nesting = 10000;
+    char *deep = teMalloc(nesting * 5 + 2);
+    memset(deep, '[', nesting);
+    deep[nesting] = 'x';
+    for (size_t i = 0; i < nesting; i++) memcpy(deep + nesting + 1 + i * 4, "](x)", 4);
+    deep[nesting * 5 + 1] = '\0';
+    initRow(&row, deep);
+    highlight(&row, "deep.md", 0, 0);
+    expectClass(&row, 0, HL_LINK_MARKER, "deep link outer marker");
+    expectClass(&row, (int32_t)nesting, HL_LINK_LABEL, "deep link literal label");
+    if (strcmp(row.chars, deep) || row.markdown_count != 1) failures++;
+    freeRow(&row);
+    free(deep);
+    if (setrlimit(RLIMIT_STACK, &original_stack) != 0) return 1;
 
     initRow(&row, "   #include <stdint.h>");
     highlight(&row, "demo.c", 0, 0);

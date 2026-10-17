@@ -49,6 +49,9 @@
 
 ### Important fixes
 
+- Bound Markdown link highlighting depth so heavily nested links cannot exhaust
+  the stack and crash the editor. Deeper labels retain their literal text.
+
 - Open only non-executable image files (PNG, JPEG, GIF, WebP, SVG, BMP, TIFF,
   HEIC, AVIF, ICO) from Markdown image links: a crafted `![x](payload.command)`
   or `.desktop` target could otherwise run code through the desktop opener with

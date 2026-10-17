@@ -466,6 +466,9 @@ text, so the requested margin may be smaller.
 
 ## Markdown display and live preview
 
+Link-label highlighting follows at most 16 nested levels. Deeper labels stay
+literal, so crafted nesting cannot exhaust the call stack; file bytes are unchanged.
+
 Enable **Markdown bold and italic** in F2 (or set
 `markdown_text_styles = true` in `~/.tinyeditrc`) to render Markdown emphasis
 with bold/italic terminal attributes and headings in bold. Markup remains

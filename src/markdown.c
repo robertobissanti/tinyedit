@@ -10,6 +10,8 @@
 #include <string.h>
 #include <stdlib.h>
 
+#define MARKDOWN_LINK_DEPTH 16
+
 static uint8_t preview_enabled;
 static const erow *preview_row;
 static int32_t preview_cursor;
@@ -342,7 +344,8 @@ static void syntaxMarkdownSpan(erow *row, int32_t start, int32_t content_start,
  * scanner. Reference-style links ("[text][ref]") and bare autolinks are out of
  * scope for this first pass.
  */
-static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t len, int32_t i) {
+static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t len,
+    int32_t i, int32_t nesting) {
     int32_t start = i;
     int32_t span_count = row->markdown_count;
     int32_t bracket = i;
@@ -378,14 +381,16 @@ static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t 
     if (s[start] == '!') row->hl[start] = HL_LINK_MARKER;
     row->hl[bracket] = HL_LINK_MARKER;
 
-    /* Label: recurse so a nested image inside a link keeps its own
-     * classes, and plain label text becomes HL_LINK_LABEL. */
+    /* Bound stack use for hostile nesting. Deeper labels remain literal;
+     * source bytes and the outer link's navigation are unaffected. */
     int32_t k = bracket + 1;
     while (k < label_end) {
-        int32_t nested = syntaxTryHighlightMarkdownLink(row, s, label_end, k);
+        int32_t nested = nesting < MARKDOWN_LINK_DEPTH
+            ? syntaxTryHighlightMarkdownLink(row, s, label_end, k, nesting + 1) : k;
         if (nested != k) { k = nested; continue; }
-        row->hl[k] = HL_LINK_LABEL;
-        k++;
+        int32_t after = markdownNext(s, k, label_end);
+        memset(row->hl + k, HL_LINK_LABEL, (size_t)(after - k));
+        k = after;
     }
 
     row->hl[label_end] = HL_LINK_MARKER;
@@ -638,7 +643,7 @@ void markdownHighlightRow(erow *row, uint8_t prev_in_fence, uint8_t prev_in_math
          * ("some_file", "a*b"), which would otherwise open an emphasis
          * span that swallows the rest of the line. */
         if (s[i] == '[' || s[i] == '!') {
-            int32_t end = syntaxTryHighlightMarkdownLink(row, s, len, i);
+            int32_t end = syntaxTryHighlightMarkdownLink(row, s, len, i, 0);
             if (end != i) { i = end; continue; }
         }
         if (s[i] == '$' || s[i] == '\\') {
