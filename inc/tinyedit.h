@@ -140,6 +140,7 @@ typedef struct erow {
      * populated. */
     uint8_t *hl;
     struct markdownSpan *markdown_spans; /* Owned, rebuilt with highlighting. */
+    struct markdownCodeState markdown_code; /* Outgoing fenced-code state. */
     int32_t markdown_count, markdown_capacity;
     int32_t seg_preview_cursor;
     int32_t seg_preview_edit_start;

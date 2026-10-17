@@ -38,6 +38,34 @@ embedded HTML tags), HTML/XML (`.html` `.htm`
 properties, values, comments).
 
 Two constructs common in static-site Markdown get their own handling.
+
+**Fenced code blocks** use the declared language's highlighter. For example:
+
+```c
+int answer = 42;
+/* A comment, including continuation on subsequent rows. */
+printf("hello");
+```
+
+Both backtick and tilde fences of at least three characters are supported;
+the closing fence must use the same character and be at least as long, with
+only whitespace after it. Up to three leading spaces and blockquote prefixes
+are recognized. Use an extension such as `c`, `cpp`, `py`, `js`, `json`, `html`
+or `css`, or the aliases `python`, `javascript`, `typescript`, `bash`, `shell`
+and `c++`. Installed syntax definitions participate using their extensions
+or single-word filetype names, with the usual priority over built-in languages.
+A Pandoc first language class also works, for example an opening line
+`` ~~~{.python #example} ``. Additional attributes do not affect highlighting.
+
+The same tokenizer limits apply as for standalone source files. No language
+is guessed: omitted or unknown language tags, including `text`, keep a uniform
+code color. Inline backtick spans keep their ordinary code style. Indented
+code blocks and arbitrary nested Markdown containers do not select a language.
+Code remains literal source: Markdown links/emphasis and preview hiding are
+disabled inside the fence, and no code is executed. Changing the language tag
+or a code row refreshes the remainder of its fenced block, including across
+blank lines and undo/redo.
+
 A YAML **front matter** block, the `---` delimited metadata header
 used by Jekyll, Eleventy and Hugo, is highlighted as structured data
 rather than prose: delimiters and the `:` as markers, keys as keywords,

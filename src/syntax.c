@@ -1156,6 +1156,59 @@ static uint8_t syntaxHighlightRowCss(erow *row, uint8_t prev_open_comment) {
 
 /* ---- dispatch -------------------------------------------------------- */
 
+static uint8_t syntaxCodeNameEquals(const char *name, int32_t length, const char *candidate) {
+    if (!candidate || strlen(candidate) != (size_t)length) return 0;
+    for (int32_t at = 0; at < length;) {
+        size_t step = utf8NextCharLen(name, (size_t)at, (size_t)length);
+        if (step == 1) {
+            uint8_t a = (uint8_t)name[at], b = (uint8_t)candidate[at];
+            if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
+            if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
+            if (a != b) return 0;
+        } else if (memcmp(name + at, candidate + at, step)) return 0;
+        at += (int32_t)step;
+    }
+    return 1;
+}
+
+uint8_t syntaxHighlightCodeRow(erow *row, const char *language, int32_t length,
+    uint8_t comment, uint8_t math) {
+    if (length <= 0) return 0;
+    const char *alias = NULL;
+    if (syntaxCodeNameEquals(language, length, "python")) alias = "py";
+    else if (syntaxCodeNameEquals(language, length, "javascript")) alias = "js";
+    else if (syntaxCodeNameEquals(language, length, "typescript")) alias = "ts";
+    else if (syntaxCodeNameEquals(language, length, "bash") || syntaxCodeNameEquals(language, length, "shell")) alias = "sh";
+    else if (syntaxCodeNameEquals(language, length, "c++")) alias = "cpp";
+    if (alias) { language = alias; length = (int32_t)strlen(alias); }
+    if (!userLangsLoaded) syntaxLoadUserLangs();
+    const struct syntaxLang *lang = NULL;
+    for (int32_t table = 0; table < 2 && !lang; table++) {
+        int32_t count = table == 0 ? userLangTableCount : syntaxLangTableCount;
+        for (int32_t i = 0; i < count && !lang; i++) {
+            const struct syntaxLang *entry = table == 0 ? userLangTable[i] : syntaxLangTable[i];
+            if (syntaxCodeNameEquals(language, length, entry->filetype)) lang = entry;
+            for (int32_t j = 0; !lang && entry->extensions[j]; j++)
+                if (syntaxCodeNameEquals(language, length, entry->extensions[j])) lang = entry;
+        }
+    }
+    if (lang && lang->base_tokenizer == BASE_TOKENIZER_XML) {
+        syntaxHighlightRowXml(row, comment, lang->template_delimiters);
+        row->hl_open_math = 0;
+    } else if (lang)
+        syntaxHighlightRowGeneric(row, lang, comment, math, syntaxCodeNameEquals(language, length, "json"));
+    else if (syntaxCodeNameEquals(language, length, "html") || syntaxCodeNameEquals(language, length, "xml") ||
+        syntaxCodeNameEquals(language, length, "htm") || syntaxCodeNameEquals(language, length, "svg")) {
+        syntaxHighlightRowXml(row, comment, NULL);
+        row->hl_open_math = 0;
+    } else if (syntaxCodeNameEquals(language, length, "css")) {
+        syntaxHighlightRowCss(row, comment);
+        row->hl_open_math = 0;
+    }
+    else return 0;
+    return 1;
+}
+
 /**
  * @brief Rebuild a row's syntax colors using its filename and incoming states.
  *
@@ -1180,6 +1233,7 @@ void syntaxHighlightRow(erow *row, const char *filename,
     uint8_t syntax_highlight_enabled, uint8_t prev_open_comment, uint8_t prev_open_math,
     uint8_t prev_open_frontmatter, int32_t row_index, uint8_t prev_open_emphasis) {
     row->hl_heading = 0;
+    row->markdown_code = (struct markdownCodeState){0};
     row->markdown_count = 0;
     row->seg_wrapcols = -1;
     if (!syntax_highlight_enabled || !filename || row->rsize <= 0) {
@@ -1196,6 +1250,10 @@ void syntaxHighlightRow(erow *row, const char *filename,
         /* A blank line ends an emphasis span (unlike front matter,
          * which survives one) -- see hl_open_emphasis in tinyedit.h. */
         row->hl_open_emphasis = 0;
+        const char *extension = filename ? strrchr(filename, '.') : NULL;
+        if (syntax_highlight_enabled && extension && syntaxIsMarkdownExtension(extension + 1) &&
+            row->rsize <= 0 && row->owner && row_index > 0 && row_index <= row->owner->row_count)
+            row->markdown_code = row->owner->rows[row_index - 1].markdown_code;
         return;
     }
 

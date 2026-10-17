@@ -24,7 +24,7 @@
  *   linenoise.c    historical line-editor implementation; not built
  *   links.c        inline/bare links and safe browser/mail/file dispatch
  *   menu.c         UTF-8 menu layout, viewport clipping and input navigation
- *   markdown.c     Markdown syntax, live preview, explicit IDs and source navigation
+ *   markdown.c     Markdown syntax, fenced-code dispatch, preview and source navigation
  *   render.c       shared row/wrapped-text layout and presentation adapters
  *   search.c       compiled queries, text search and source-coordinate results
  *   settings.c     persistent configuration, color scheme loading and color escapes
@@ -445,7 +445,8 @@ static void editorTouchRowsFrom(int32_t from) {
  * @brief Propagate syntax changes through the rows that depend on them.
  *
  * @details Pass a valid starting row; force retokenizes all following rows.
- * Otherwise stop once comment, math, front matter and emphasis states settle.
+ * Otherwise stop once lexical states settle. Fenced code is propagated through
+ * its closing delimiter so changing a language tag recolors the whole block.
  */
 static void editorRehighlightFrom(int32_t from, uint8_t force) {
     if (edit_batch.depth) {
@@ -467,7 +468,8 @@ static void editorRehighlightFrom(int32_t from, uint8_t force) {
         open_math = E.document.buffer.rows[i].hl_open_math;
         open_frontmatter = E.document.buffer.rows[i].hl_open_frontmatter;
         open_emphasis = E.document.buffer.rows[i].hl_open_emphasis;
-        if (!force && i > from && open_comment == prev_comment && open_math == prev_math &&
+        if (!force && i > from && !E.document.buffer.rows[i].markdown_code.marker &&
+            open_comment == prev_comment && open_math == prev_math &&
             open_frontmatter == prev_frontmatter && open_emphasis == prev_emphasis) break;
     }
 }

@@ -16,6 +16,60 @@ static int32_t preview_cursor;
 static const erow *preview_edit_row;
 static int32_t preview_edit_start = -1;
 
+static int32_t markdownNext(const char *s, int32_t at, int32_t len) {
+    return at + (int32_t)utf8NextCharLen(s, (size_t)at, (size_t)len);
+}
+
+uint8_t markdownLinkIsImage(const erow *row, const struct textLink *link) {
+    if (link->start <= 0 || row->chars[link->start - 1] != '!') return 0;
+    int32_t at = link->start - 1;
+    uint8_t escaped = 0;
+    while (at > 0) {
+        int32_t prev = at - (int32_t)utf8PrevCharLen(row->chars, (size_t)at);
+        if (row->chars[prev] != '\\') break;
+        escaped = !escaped;
+        at = prev;
+    }
+    return !escaped;
+}
+
+static uint8_t markdownSpace(char c) { return c == ' ' || c == '\t' || c == '\r'; }
+
+static int32_t markdownTrimStart(const erow *row) {
+    int32_t at = 0;
+    while (at < row->size && markdownSpace(row->chars[at])) at = markdownNext(row->chars, at, row->size);
+    return at;
+}
+
+static int32_t markdownTrimEnd(const erow *row) {
+    int32_t end = row->size;
+    while (end > 0) {
+        size_t step = utf8PrevCharLen(row->chars, (size_t)end);
+        if (step != 1 || !markdownSpace(row->chars[end - 1])) break;
+        end -= (int32_t)step;
+    }
+    return end;
+}
+
+static uint8_t markdownFence(const erow *row, uint8_t *marker, int32_t *width, int32_t *after) {
+    int32_t at = markdownTrimStart(row);
+    if (at > 3) return 0;
+    while (at < row->size && row->chars[at] == '>') {
+        at = markdownNext(row->chars, at, row->size);
+        int32_t spaces = 0;
+        while (at < row->size && row->chars[at] == ' ' && spaces < 3) {
+            at = markdownNext(row->chars, at, row->size);
+            spaces++;
+        }
+    }
+    int32_t start = at;
+    if (at >= row->size || (row->chars[at] != '`' && row->chars[at] != '~')) return 0;
+    *marker = (uint8_t)row->chars[at];
+    while (at < row->size && (uint8_t)row->chars[at] == *marker) at = markdownNext(row->chars, at, row->size);
+    *width = at - start; *after = at;
+    return *width >= 3;
+}
+
 /* ---- Markdown presentation ---- */
 
 int32_t markdownSourceRenderByte(const erow *row, int32_t cx, int32_t tab_stop) {
@@ -428,19 +482,43 @@ void markdownHighlightRow(erow *row, uint8_t prev_in_fence, uint8_t prev_in_math
         return;
     }
 
-    uint8_t is_fence_line = len >= 3 && s[0] == '`' && s[1] == '`' && s[2] == '`';
-    if (is_fence_line) {
-        for (int32_t k = 0; k < len; k++) row->hl[k] = HL_STRING;
-        row->hl_open_comment = !prev_in_fence;
-        row->hl_open_math = 0;
-        row->hl_open_frontmatter = 0;
-        return;
-    }
-    if (prev_in_fence) {
-        for (int32_t k = 0; k < len; k++) row->hl[k] = HL_STRING;
-        row->hl_open_comment = 1;
-        row->hl_open_math = 0;
-        row->hl_open_frontmatter = 0;
+    struct markdownCodeState code = {0};
+    if (row->owner && row_index > 0 && row_index <= row->owner->row_count)
+        code = row->owner->rows[row_index - 1].markdown_code;
+    if (prev_in_fence && !code.marker)
+        code = (struct markdownCodeState){-1, 3, '`', 0, 0};
+    erow source_row = {0}; source_row.chars = (char *)source; source_row.size = source_len;
+    uint8_t fence_marker; int32_t width, after;
+    uint8_t fence = markdownFence(&source_row, &fence_marker, &width, &after);
+    if (fence || code.marker) {
+        memset(row->hl, HL_STRING, (size_t)len);
+        if (!code.marker) {
+            code = (struct markdownCodeState){row_index, width, fence_marker, 0, 0};
+        } else if (fence && fence_marker == code.marker && width >= code.width &&
+            after == markdownTrimEnd(&source_row)) {
+            code = (struct markdownCodeState){0};
+        } else if (row->owner && code.start >= 0 && code.start < row->owner->row_count) {
+            const erow *opening = &row->owner->rows[code.start];
+            uint8_t opening_marker; int32_t opening_width, info;
+            if (markdownFence(opening, &opening_marker, &opening_width, &info)) {
+                while (info < opening->size && markdownSpace(opening->chars[info])) info = markdownNext(opening->chars, info, opening->size);
+                if (info < opening->size && opening->chars[info] == '{') {
+                    info++;
+                    while (info < opening->size && markdownSpace(opening->chars[info])) info = markdownNext(opening->chars, info, opening->size);
+                    if (info < opening->size && opening->chars[info] == '.') info++;
+                }
+                int32_t end = info;
+                while (end < opening->size && !markdownSpace(opening->chars[end]) && opening->chars[end] != '}')
+                    end = markdownNext(opening->chars, end, opening->size);
+                if (syntaxHighlightCodeRow(row, opening->chars + info, end - info, code.comment, code.math)) {
+                    code.comment = row->hl_open_comment;
+                    code.math = row->hl_open_math;
+                }
+            }
+        }
+        row->markdown_code = code;
+        row->hl_open_comment = code.marker != 0;
+        row->hl_open_math = row->hl_open_frontmatter = row->hl_open_emphasis = 0;
         return;
     }
 
@@ -637,60 +715,6 @@ void markdownHighlightRow(erow *row, uint8_t prev_in_fence, uint8_t prev_in_math
 
 
 /* ---- source navigation (independent of highlighting) ---- */
-
-static int32_t markdownNext(const char *s, int32_t at, int32_t len) {
-    return at + (int32_t)utf8NextCharLen(s, (size_t)at, (size_t)len);
-}
-
-uint8_t markdownLinkIsImage(const erow *row, const struct textLink *link) {
-    if (link->start <= 0 || row->chars[link->start - 1] != '!') return 0;
-    int32_t at = link->start - 1;
-    uint8_t escaped = 0;
-    while (at > 0) {
-        int32_t prev = at - (int32_t)utf8PrevCharLen(row->chars, (size_t)at);
-        if (row->chars[prev] != '\\') break;
-        escaped = !escaped;
-        at = prev;
-    }
-    return !escaped;
-}
-
-static uint8_t markdownSpace(char c) { return c == ' ' || c == '\t' || c == '\r'; }
-
-static int32_t markdownTrimStart(const erow *row) {
-    int32_t at = 0;
-    while (at < row->size && markdownSpace(row->chars[at])) at = markdownNext(row->chars, at, row->size);
-    return at;
-}
-
-static int32_t markdownTrimEnd(const erow *row) {
-    int32_t end = row->size;
-    while (end > 0) {
-        size_t step = utf8PrevCharLen(row->chars, (size_t)end);
-        if (step != 1 || !markdownSpace(row->chars[end - 1])) break;
-        end -= (int32_t)step;
-    }
-    return end;
-}
-
-static uint8_t markdownFence(const erow *row, uint8_t *marker, int32_t *width, int32_t *after) {
-    int32_t at = markdownTrimStart(row);
-    if (at > 3) return 0;
-    while (at < row->size && row->chars[at] == '>') {
-        at = markdownNext(row->chars, at, row->size);
-        int32_t spaces = 0;
-        while (at < row->size && row->chars[at] == ' ' && spaces < 3) {
-            at = markdownNext(row->chars, at, row->size);
-            spaces++;
-        }
-    }
-    int32_t start = at;
-    if (at >= row->size || (row->chars[at] != '`' && row->chars[at] != '~')) return 0;
-    *marker = (uint8_t)row->chars[at];
-    while (at < row->size && (uint8_t)row->chars[at] == *marker) at = markdownNext(row->chars, at, row->size);
-    *width = at - start; *after = at;
-    return *width >= 3;
-}
 
 static uint8_t markdownHasCodeClose(const struct editorBuffer *buffer, int32_t y, int32_t at, int32_t width) {
     for (int32_t line = y; line < buffer->row_count; line++) {

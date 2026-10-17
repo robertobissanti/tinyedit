@@ -4,6 +4,11 @@
 
 ### New features
 
+- Highlight declared Markdown fenced-code languages with tinyedit's existing
+  tokenizers, including installed syntax definitions. Preserve multiline
+  comments across code rows and recolor the block when its language changes;
+  unknown or omitted languages keep the uniform code style.
+
 - Open local Markdown image destinations in the operating system's default
   application, with relative/encoded paths and the usual link gestures.
   In live preview, hover and single-click the visible image path to open it

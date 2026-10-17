@@ -11,6 +11,11 @@ struct markdownSpan {
     uint8_t link;
 };
 
+struct markdownCodeState {
+    int32_t start, width;
+    uint8_t marker, comment, math;
+};
+
 struct textLink;
 
 enum markdownAnchorResult { MARKDOWN_ANCHOR_MISSING, MARKDOWN_ANCHOR_FOUND, MARKDOWN_ANCHOR_DUPLICATE };

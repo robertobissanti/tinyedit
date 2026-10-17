@@ -1154,6 +1154,47 @@ static void testMarkdownNavigation(void) {
     settingsDefaults(&S);
 }
 
+static void testMarkdownCodeBlocks(void) {
+    settingsDefaults(&S);
+    const char *const c_block[] = {"```c", "int answer = 42;", "/* commento", "",
+        "ancora commento */", "printf(\"città\");", "```", "## Heading"};
+    markdownNavigationRows(c_block, sizeof(c_block) / sizeof(*c_block));
+    erow *rows = E.document.buffer.rows;
+    check(rows[1].hl && rows[1].hl[0] == HL_KEYWORD && rows[1].hl[13] == HL_NUMBER,
+        "fenced C uses language keywords and numbers");
+    check(rows[2].hl[0] == HL_COMMENT && rows[3].markdown_code.comment && rows[4].hl[0] == HL_COMMENT,
+        "embedded multiline comment survives blank code rows");
+    check(rows[5].hl[0] == HL_FUNCTION && rows[5].hl[7] == HL_STRING && !rows[5].markdown_count,
+        "embedded strings and calls use C highlighting without Markdown spans");
+    check(!rows[6].markdown_code.marker && rows[7].hl_heading, "closing code fence restores Markdown");
+    E.document.cursor.cy = 0; E.document.cursor.cx = 4;
+    editorDelChar();
+    check(E.document.buffer.rows[1].hl[0] == HL_STRING, "removing language tag recolors whole code block");
+    editorUndo();
+    check(E.document.buffer.rows[1].hl[0] == HL_KEYWORD, "undo restores fenced language highlighting");
+    const char *const languages[] = {"~~~python", "def f():", "    return 42", "~~~",
+        "```json", "{\"key\": 12}", "```", "```html", "<div title=\"hello\">", "```",
+        "```css", "a { color: red; }", "```", "```{.javascript #example}", "const x = 3;", "```"};
+    markdownNavigationRows(languages, sizeof(languages) / sizeof(*languages));
+    rows = E.document.buffer.rows;
+    check(rows[1].hl[0] == HL_KEYWORD && rows[2].hl[4] == HL_KEYWORD, "tilde fence supports Python alias");
+    check(rows[5].hl[1] == HL_JSON_KEY && rows[5].hl[8] == HL_NUMBER, "JSON fenced keys and numbers");
+    check(rows[8].hl[1] == HL_KEYWORD && rows[8].hl[11] == HL_STRING, "HTML code uses markup tokenizer");
+    check(rows[11].hl[4] == HL_KEYWORD, "CSS code uses dedicated tokenizer");
+    check(rows[14].hl[0] == HL_KEYWORD, "Pandoc language class selects JavaScript alias");
+    const char *const boundaries[] = {"````c", "```", "int x = 1;", "~~~", "int y = 2;", "````",
+        "```unknown-language", "int z = 3;", "```", "```", "int plain = 4;", "```", "**bold**"};
+    markdownNavigationRows(boundaries, sizeof(boundaries) / sizeof(*boundaries));
+    rows = E.document.buffer.rows;
+    check(rows[2].hl[0] == HL_KEYWORD && rows[4].hl[0] == HL_KEYWORD,
+        "shorter or different fence does not close embedded code");
+    check(rows[7].hl[0] == HL_STRING && rows[10].hl[0] == HL_STRING && rows[12].markdown_count,
+        "unknown or absent code language stays literal and does not leak into prose");
+    S.syntax_highlight = 0; editorUpdateAllRows();
+    check(!rows[2].hl && !rows[2].markdown_code.marker, "disabling highlighting clears embedded state");
+    editorResetDocument(); settingsDefaults(&S);
+}
+
 static void testLinks(void) {
     struct textLink link;
     const char *inline_link = "é [guide](<folder/a b.md#title> \"title\") end";
@@ -2564,6 +2605,7 @@ int main(void) {
     testMouseScrollView();
     testLinks();
     testMarkdownNavigation();
+    testMarkdownCodeBlocks();
     testSharedAutoClose();
     testEditBatches();
     testSearchSession();

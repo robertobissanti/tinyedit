@@ -78,6 +78,10 @@ not by itself handle termination signals; SIGTERM/SIGHUP cleanup remains pending
 - `src/markdown.c`, `inc/markdown.h`: Markdown highlighting and row-owned source
   spans, compact-preview projection/edit state, heading slugs, explicit Pandoc
   and Obsidian anchor resolution, and local `@id` reference recognition.
+  Fenced-code state records its opener and embedded comment/math state;
+  declared languages reuse the standalone syntax tokenizers without per-row
+  language allocations. Edits propagate through the closing fence so language
+  tag changes cannot leave stale colors in the block.
   This groups Markdown policy behind one module; generic layout and cursor
   handling still live in render/editor code. It prepares a future vanilla
   boundary, but does not add a vanilla build option.

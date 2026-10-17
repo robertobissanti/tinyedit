@@ -135,6 +135,11 @@ uint8_t syntaxExtensionEquals(const char *ext, const char *candidate);
 uint8_t syntaxIsAsciiLetter(unsigned char byte);
 uint8_t syntaxIsIdentifierByte(char byte, const char *extra, uint8_t first);
 int32_t syntaxTryHighlightMath(erow *row, const char *s, int32_t len, int32_t i);
+/** Highlight a declared code language using installed/built-in tokenizers.
+ * language is a borrowed bounded source slice. Returns zero for unknown names
+ * (without modifying the row); never dispatches recursively to Markdown. */
+uint8_t syntaxHighlightCodeRow(erow *row, const char *language, int32_t length,
+    uint8_t comment, uint8_t math);
 
 /**
  * @brief Rebuild a row's syntax colors using its filename and incoming states.
