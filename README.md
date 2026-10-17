@@ -200,8 +200,13 @@ page with ANSI/RGB palettes and live previews. One Dark and all four official Ca
 extra confirmation. The RGB presets use distinct yellow parentheses and
 brackets. Markdown link/image delimiters and Pandoc anchor markers use a
 separate JSON-key color, distinct from ordinary parentheses and brackets.
+Link labels and destinations share that color and are underlined in styled
+source as well as live preview.
 Strings and comments retain their own colors.
 Save all Settings with F2/Ctrl-S. ANSI is the default; RGB output is an explicit choice.
+Synthwave Pro is also available as a dark RGB adaptation of Roberto Bissanti’s
+Obsidian theme. Theme sources and adaptation limits are listed in the
+[palette guide](colorschemes/README.md#theme-sources-and-terminal-adaptations).
 See the [settings and themes guide](docs/configuration.md) for installation
 and configuration.
 

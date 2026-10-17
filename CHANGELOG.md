@@ -4,6 +4,10 @@
 
 ### New features
 
+- Add the Synthwave Pro dark RGB preset, adapted from Roberto Bissanti’s
+  Obsidian theme, with purple navigation markers, cyan headings and yellow
+  ordinary brackets. Document sources and adaptation limits for all themes.
+
 - Add all four official Catppuccin RGB palettes: light Latte and dark Frappé,
   Macchiato and Mocha. Use the same color-role mapping and official palette
   values, including Surface 0 for Markdown heading backgrounds.
@@ -59,6 +63,10 @@
   retain `make install-binary` for executable-only installations.
 
 ### Other minor fixing
+
+- Give Markdown links a consistent navigation color across label, destination
+  and delimiters in every theme; underline link text in styled source as well
+  as live preview, keeping ordinary brackets visually separate.
 
 - Distinguish Markdown link/image delimiters and recognized Pandoc anchor
   delimiters/IDs from ordinary parentheses: navigation markers use the JSON-key

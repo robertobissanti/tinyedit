@@ -2,6 +2,7 @@
 
 Complete RGB presets and separate ANSI adaptations, adapted to tinyedit's color roles:
 
+- `synthwave-pro.conf`: [Synthwave Pro](https://github.com/robertobissanti/obsidian-synthwave-pro), default Synthwave dark palette.
 - `one-dark.conf`: [Vim One](https://github.com/rakr/vim-one), `background=dark`.
 - `catppuccin-latte.conf`: Catppuccin Latte, light.
 - `catppuccin-frappe.conf`: Catppuccin Frappé, dark.
@@ -31,7 +32,8 @@ Catppuccin editor integration. Their MIT notice is included in
 Ordinary `()`, `[]` and `{}` use the Yellow bracket role. Markdown link/image
 delimiters and recognized Pandoc span, header and Div anchor markers use the
 Blue JSON-key role, distinguishing navigation syntax from
-ordinary punctuation. Labels and destinations keep their own token colors.
+ordinary punctuation. Labels and destinations share the navigation color, with underlined link text
+in both source and live preview when Markdown styles are enabled.
 Literal strings, comments and inline code retain their colors; selection/search
 and link-hover feedback still take precedence. Mocha's heading background now uses official Surface 0
 (`#313244`), replacing the previous custom `#2D2E43`.
@@ -102,3 +104,26 @@ an independent user choice. Non-color settings and filetype overrides are
 preserved. Settings labels always use terminal defaults.
 
 You can also replace the corresponding entries in `~/.tinyeditrc` manually.
+
+## Theme sources and terminal adaptations
+
+- **Catppuccin**: [official palette](https://catppuccin.com/palette/) and
+  [palette repository](https://github.com/catppuccin/palette), version 1.8.0.
+- **One Dark**: [rakr/vim-one](https://github.com/rakr/vim-one), with tinyedit's
+  personal Markdown overrides described above; inspired by Atom One Dark.
+- **Synthwave Pro**: Roberto Bissanti's
+  [Obsidian theme](https://github.com/robertobissanti/obsidian-synthwave-pro),
+  specifically its default dark Synthwave palette in `theme.css`.
+
+Synthwave Pro uses deep indigo `#1A1530`, warm text `#ECE6FF`, purple
+`#B56CFF` for link/anchor markers and labels, yellow `#FFD23F` for ordinary
+brackets and strings, cyan `#36E2EC` headings/hover, and magenta `#FF3EC8`
+bold text. The heading background `#1D2E47` is a terminal approximation of
+cyan at 12% over the editor background. Selection uses the palette's opaque
+border color. Comments use muted text for readability. Syntax roles are shared:
+JSON keys use the link-marker purple, and keywords share the label purple.
+Only this default RGB variant is included; Obsidian's alternate palettes,
+per-heading-level colors, tag pills, code backgrounds, glow, rounded corners,
+images and CSS layout are not reproduced by a color preset. Live-preview
+underlining and navigation retain tinyedit's existing behavior. MIT notices
+are in [LICENSE-THIRD-PARTY](../LICENSE-THIRD-PARTY).

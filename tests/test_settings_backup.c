@@ -159,6 +159,12 @@ int main(void) {
         if (scheme.color_background != unchanged.color_background || scheme.tab_stop != unchanged.tab_stop ||
             scheme.rgb_output != unchanged.rgb_output) fail("Catppuccin changed unrelated settings or ANSI palette");
     }
+    if (!settingsLoadColorScheme("colorschemes/synthwave-pro.conf", &scheme, scheme_error, sizeof(scheme_error)) ||
+        scheme.rgb_color_background != 0x1a1530 ||
+        scheme.rgb_color_syntax_json_key != 0xb56cff ||
+        scheme.rgb_color_syntax_bracket != 0xffd23f ||
+        scheme.rgb_color_syntax_preprocessor != 0x36e2ec)
+        fail("Synthwave Pro palette rejected or navigation colors incorrect");
     before_scheme = scheme;
     const char *invalid_schemes[] = {
         "color_mode = rgb\nrgb_background = #112233\n",

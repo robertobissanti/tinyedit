@@ -43,7 +43,8 @@ color. Markdown link/image delimiters and Pandoc anchor delimiters/IDs use the
 JSON-key color instead. This includes `[text]{#id}`, image
 attributes, heading attributes and fenced Divs such as `::: {#id}`; unrelated
 `[text]` or `{text}` remains ordinary punctuation. Link labels and destinations
-retain their keyword/string colors. Brackets within strings, comments and
+share that navigation color and are underlined when Markdown text styles or
+live preview is enabled. Brackets within strings, comments and
 inline code keep their token's color; selection/search and link-hover feedback
 take precedence.
 

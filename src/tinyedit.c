@@ -2633,7 +2633,8 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
                 abAppend(ab, "\x1b[1m", 4);
             else if (row->hl[rendercol] == HL_EMPHASIS)
                 abAppend(ab, "\x1b[3m", 4);
-            else if (renderByteUnderlined(row, rendercol) || link_hover)
+            else if (renderByteUnderlined(row, rendercol) || link_hover ||
+                row->hl[rendercol] == HL_LINK_LABEL || row->hl[rendercol] == HL_LINK_DESTINATION)
                 abAppend(ab, "\x1b[4m", 4);
             else styled = 0;
         }

@@ -222,8 +222,8 @@ int main(void) {
     initRow(&row, "Vedi [la doc](https://example.com) qui.");
     highlight(&row, "d.md", 0, 0);
     expectClass(&row, 5, HL_LINK_MARKER, "link opening bracket");
-    expectClass(&row, 6, HL_KEYWORD, "link label");
-    expectClass(&row, 14, HL_STRING, "link destination");
+    expectClass(&row, 6, HL_LINK_LABEL, "link label");
+    expectClass(&row, 14, HL_LINK_DESTINATION, "link destination");
     expectClass(&row, 0, HL_NORMAL, "prose around link");
     freeRow(&row);
 
@@ -232,10 +232,10 @@ int main(void) {
     initRow(&row, "[![License](https://img.shields.io/x)](LICENSE)");
     highlight(&row, "d.md", 0, 0);
     expectClass(&row, 0, HL_LINK_MARKER, "nested link opening bracket");
-    expectClass(&row, 1, HL_PREPROCESSOR, "nested image marker");
-    expectClass(&row, 3, HL_KEYWORD, "nested image label");
-    expectClass(&row, 12, HL_STRING, "nested image destination");
-    expectClass(&row, 39, HL_STRING, "outer link destination");
+    expectClass(&row, 1, HL_LINK_MARKER, "nested image marker");
+    expectClass(&row, 3, HL_LINK_LABEL, "nested image label");
+    expectClass(&row, 12, HL_LINK_DESTINATION, "nested image destination");
+    expectClass(&row, 39, HL_LINK_DESTINATION, "outer link destination");
     freeRow(&row);
 
     /* An unmatched "[link]" is prose, not a link. */

@@ -339,10 +339,9 @@ static void syntaxMarkdownSpan(erow *row, int32_t start, int32_t content_start,
  * recognized.
  *
  * @note A Markdown link "[text](url)" or image "![alt](url)": brackets,
- * parentheses and the leading '!' as HL_PREPROCESSOR markers, the label as
- * HL_KEYWORD, the destination as HL_STRING. Keeping the two apart is what
- * makes a row of badges readable -- the long URL stops competing with the
- * label for attention.
+ * parentheses and the leading '!' use HL_LINK_MARKER. Label and destination
+ * have distinct classes so rendering can underline link text without styling
+ * the surrounding syntax. All share the theme’s navigation color.
  *
  * Handles the nested image-inside-link form "[![alt](img)](url)" that badge
  * rows use: the label scan tracks bracket depth, so the inner "![alt](img)" is
@@ -388,22 +387,22 @@ static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t 
     }
     if (url_end < 0) return start;
 
-    if (s[start] == '!') row->hl[start] = HL_PREPROCESSOR;
+    if (s[start] == '!') row->hl[start] = HL_LINK_MARKER;
     row->hl[bracket] = HL_LINK_MARKER;
 
     /* Label: recurse so a nested image inside a link keeps its own
-     * colors, and plain label text becomes HL_KEYWORD. */
+     * classes, and plain label text becomes HL_LINK_LABEL. */
     int32_t k = bracket + 1;
     while (k < label_end) {
         int32_t nested = syntaxTryHighlightMarkdownLink(row, s, label_end, k);
         if (nested != k) { k = nested; continue; }
-        row->hl[k] = HL_KEYWORD;
+        row->hl[k] = HL_LINK_LABEL;
         k++;
     }
 
     row->hl[label_end] = HL_LINK_MARKER;
     row->hl[label_end + 1] = HL_LINK_MARKER;
-    for (int32_t u = label_end + 2; u < url_end; u++) row->hl[u] = HL_STRING;
+    for (int32_t u = label_end + 2; u < url_end; u++) row->hl[u] = HL_LINK_DESTINATION;
     row->hl[url_end] = HL_LINK_MARKER;
     row->markdown_count = span_count;
     int32_t destination = label_end + 2;
@@ -863,7 +862,7 @@ char *markdownHeadingSlug(const char *text, int32_t length) {
 static int32_t markdownPairEnd(const erow *row, const uint8_t *mask, int32_t start, char open, char close) {
     int32_t depth = 0;
     for (int32_t at = start; at < row->size; at = markdownNext(row->chars, at, row->size)) {
-        if (mask ? !mask[at] : row->hl && (row->hl[at] == HL_STRING ||
+        if (mask ? !mask[at] : row->hl && (row->hl[at] == HL_STRING || row->hl[at] == HL_LINK_DESTINATION ||
             row->hl[at] == HL_COMMENT || row->hl[at] == HL_MATH)) continue;
         if (row->chars[at] == open) depth++;
         else if (row->chars[at] == close && --depth == 0) return at + 1;
@@ -872,7 +871,7 @@ static int32_t markdownPairEnd(const erow *row, const uint8_t *mask, int32_t sta
 }
 
 static uint8_t markdownAnchorEligible(const erow *row, int32_t at) {
-    if (row->hl[at] == HL_STRING || row->hl[at] == HL_COMMENT || row->hl[at] == HL_MATH) return 0;
+    if (row->hl[at] == HL_STRING || row->hl[at] == HL_LINK_DESTINATION || row->hl[at] == HL_COMMENT || row->hl[at] == HL_MATH) return 0;
     uint8_t escaped = 0;
     while (at > 0) {
         int32_t prev = at - (int32_t)utf8PrevCharLen(row->chars, (size_t)at);

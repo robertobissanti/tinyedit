@@ -1334,6 +1334,8 @@ const char *syntaxColorFor(enum syntaxHighlight hl, const struct editorSettings 
         case HL_EMPHASIS:     return ansiColorCode(settingsColor(s, color_syntax_italic));
         case HL_KEYWORD:      return ansiColorCode(settingsColor(s, color_syntax_keyword));
         case HL_JSON_KEY:     return ansiColorCode(settingsColor(s, color_syntax_json_key));
+        case HL_LINK_LABEL:
+        case HL_LINK_DESTINATION:
         case HL_LINK_MARKER:  return ansiColorCode(settingsColor(s, color_syntax_json_key));
         case HL_STRING:       return ansiColorCode(settingsColor(s, color_syntax_string));
         case HL_NUMBER:       return ansiColorCode(settingsColor(s, color_syntax_number));

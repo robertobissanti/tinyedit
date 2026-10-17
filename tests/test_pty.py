@@ -1775,6 +1775,7 @@ def test_color_scheme_selection(home):
     for flavor in ("latte", "frappe", "macchiato", "mocha"):
         name = f"catppuccin-{flavor}.conf"
         (directory / name).write_bytes((ROOT / "colorschemes" / name).read_bytes())
+    (directory / "synthwave-pro.conf").write_bytes((ROOT / "colorschemes/synthwave-pro.conf").read_bytes())
     for name in ("one-dark-ansi.conf", "catppuccin-mocha-ansi.conf"):
         (directory / name).write_bytes((ROOT / "colorschemes" / name).read_bytes())
     config = case_home / ".tinyeditrc"
@@ -1801,7 +1802,9 @@ def test_color_scheme_selection(home):
         os.write(master, b"\x1b[<65;20;5M")
         assert b"Color scheme: one-dark" in read_available(master), "wheel over scheme cycles it"
         os.write(master, b"\x1b[<0;20;5M\x1b[<0;20;5m")
-        assert b"Color scheme: catppuccin-frappe" in read_available(master), "click wraps to first RGB preset"
+        assert b"Color scheme: synthwave-pro" in read_available(master), "Synthwave Pro is selectable"
+        os.write(master, b"\x1b[C")
+        assert b"Color scheme: catppuccin-frappe" in read_available(master), "arrow wraps to first RGB preset"
         # Leaving the row keeps its choice without an Enter confirmation.
         os.write(master, b"\x1b[A")
         assert b"Color scheme: catppuccin-frappe" in read_available(master)
@@ -1812,7 +1815,7 @@ def test_color_scheme_selection(home):
         os.write(master, b"n")
         read_available(master)
         assert config.read_bytes() == original, "discarded scheme wrote settings"
-        # Cycle through all five RGB presets and save without another confirmation.
+        # Select One Dark and save without another confirmation.
         os.write(master, b"\x1bOQ" + navigation + b"\x1b[B" + b"\x1b[C" * 5)
         output = read_available(master)
         assert b"Color scheme: one-dark" in output

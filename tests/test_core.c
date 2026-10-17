@@ -1968,6 +1968,7 @@ static void testBracketColors(void) {
     editorResetDocument();
     S.syntax_highlight = 1;
     E.document.file.filename = teStrdup("brackets.md");
+    S.markdown_text_styles = 1;
     S.color_syntax_json_key = COLOR_BLUE_DARK;
     S.color_syntax_preprocessor = COLOR_GREEN_DARK;
     const char *markdown = "[anchor](#id) ![image](img.png){#fig:id} [span]{#id} () [] {}";
@@ -1985,6 +1986,7 @@ static void testBracketColors(void) {
     }
     check(strstr(ab.b, "\x1b[34m[") && strstr(ab.b, "\x1b[34m{") && strstr(ab.b, "\x1b[31m("),
         "ANSI link and Pandoc markers differ from ordinary bracket color");
+    check(strstr(ab.b, "\x1b[4ma") != NULL, "source link label is underlined");
     abFree(&ab);
     S.color_mode = COLOR_MODE_RGB;
     S.rgb_color_syntax_bracket = 0x123456;

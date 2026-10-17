@@ -78,6 +78,7 @@ Complete presets are included in [`colorschemes/`](../colorschemes/README.md):
 | Catppuccin Latte (light) | `catppuccin-latte.conf` | — |
 | Catppuccin Frappé (dark) | `catppuccin-frappe.conf` | — |
 | Catppuccin Macchiato (dark) | `catppuccin-macchiato.conf` | — |
+| Synthwave Pro (dark) | `synthwave-pro.conf` | — |
 | Catppuccin Mocha (dark) | `catppuccin-mocha.conf` | `catppuccin-mocha-ansi.conf` |
 
 RGB presets use explicit colors; ANSI presets are approximations whose actual
@@ -91,7 +92,8 @@ Catppuccin Mocha, separate from normal text. Ordinary parentheses/brackets use
 anchor delimiters/IDs instead use **Syntax: JSON key color**, so navigation
 syntax is distinct from punctuation used for other purposes. In Mocha, this is
 Blue `#89B4FA` for link/anchor markers and Yellow `#F9E2AF` for ordinary
-brackets. Link labels and destinations keep their keyword/string colors.
+brackets. Link labels and destinations share the navigation color and are underlined
+when Markdown text styles or live preview is enabled.
 Brackets inside strings, comments or literal code spans retain those token colors;
 selection, search and hovered link content keep their normal precedence.
 
@@ -259,3 +261,6 @@ there are more above, and `v` on the last one if there are more below.
 Markdown italic text has its own **Italic text color** row in Colors:
 `color_syntax_italic` (ANSI) / `rgb_syntax_italic` (RGB). One Dark RGB uses
 `#D19A67`. Older configurations without these keys retain the keyword color.
+
+Theme provenance, Synthwave Pro color mapping and terminal limitations are documented
+in the [palette guide](../colorschemes/README.md#theme-sources-and-terminal-adaptations).
