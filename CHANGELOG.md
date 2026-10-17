@@ -4,6 +4,12 @@
 
 ### New features
 
+- Navigate Markdown links to explicit Pandoc IDs on headings, spans, inline
+  images and fenced Divs, and to Obsidian paragraph/standalone block IDs.
+  Reuse local-file fragments and existing link gestures; resolve local `@id`
+  references only when a matching Pandoc target exists. Report duplicate or
+  missing IDs explicitly and ignore targets/references inside code.
+
 - Open `mailto:` links in the configured desktop mail composer (`open` on macOS,
   `xdg-email` on Linux), preserving the URI and its parameters without sending mail.
 
@@ -35,6 +41,10 @@
   retain `make install-binary` for executable-only installations.
 
 ### Other minor fixing
+
+- Move Markdown parsing, highlighting, preview projection and anchor resolution
+  into a dedicated module, preparing a clearer boundary for a future vanilla
+  build without changing the default build or adding dependencies.
 
 - Add an Ask DeepWiki badge to the README for repository documentation access,
   using Shields.io to avoid DeepWiki image requests blocked by anti-bot checks.

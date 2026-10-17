@@ -1,6 +1,7 @@
 #define _DEFAULT_SOURCE
 #include "links.h"
 #include "alloc.h"
+#include "markdown.h"
 #include "utf8.h"
 #include <ctype.h>
 #include <errno.h>
@@ -209,23 +210,7 @@ char *linksDecode(const char *text) {
  * @return owned NUL-terminated text to free.
  */
 char *linksHeadingSlug(const char *text, int32_t length) {
-    char *slug = teMalloc(teSizeAdd((size_t)length, 1));
-    int32_t at = 0;
-    size_t out = 0;
-    while (at < length && text[at] == ' ') at++;
-    while (at < length && text[at] == '#') at++;
-    while (at < length && text[at] == ' ') at++;
-    while (length > at && (text[length - 1] == ' ' || text[length - 1] == '#')) length--;
-    while (at < length) {
-        size_t step = utf8NextCharLen(text, (size_t)at, (size_t)length);
-        unsigned char c = (unsigned char)text[at];
-        if (c >= 128) { memcpy(slug + out, text + at, step); out += step; }
-        else if (isalnum(c) || c == '_' || c == '-') slug[out++] = (char)tolower(c);
-        else if (c == ' ' || c == '\t') slug[out++] = '-';
-        at += (int32_t)step;
-    }
-    slug[out] = '\0';
-    return slug;
+    return markdownHeadingSlug(text, length);
 }
 
 /**

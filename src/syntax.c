@@ -2,6 +2,7 @@
 
 #include "syntax.h"
 #include "alloc.h"
+#include "markdown.h"
 #include "resources.h"
 #include "utf8.h"
 
@@ -150,7 +151,7 @@ static void syntaxLoadUserLangs(void);
  * @details left and right are NUL-terminated without leading dots.
  * @return 1 only when the entire extensions match, independent of locale.
  */
-static uint8_t syntaxExtensionEquals(const char *left, const char *right) {
+uint8_t syntaxExtensionEquals(const char *left, const char *right) {
     while (*left && *right) {
         unsigned char a = (unsigned char)*left;
         unsigned char b = (unsigned char)*right;
@@ -174,7 +175,7 @@ static uint8_t syntaxExtensionEquals(const char *left, const char *right) {
  * bytes differently on different systems, while the tokenizer must make the
  * same choice on macOS, Linux and other POSIX targets.
  */
-static uint8_t syntaxIsAsciiLetter(unsigned char byte) {
+uint8_t syntaxIsAsciiLetter(unsigned char byte) {
     return (byte >= (unsigned char)'A' && byte <= (unsigned char)'Z') ||
         (byte >= (unsigned char)'a' && byte <= (unsigned char)'z');
 }
@@ -537,11 +538,6 @@ static void syntaxLoadUserLangs(void) {
 
 /* ---- generic C-like tokenizer --------------------------------------- */
 
-/* Defined near the Markdown tokenizer below (shared with it); forward
- * declared here since the generic tokenizer's optional math_mode (see
- * struct syntaxLang) needs it too. */
-static int32_t syntaxTryHighlightMath(erow *row, const char *s, int32_t len, int32_t i);
-
 /**
  * @brief Decide whether a byte can end an ASCII keyword.
  *
@@ -574,7 +570,7 @@ static int32_t syntaxCharLenAt(const char *s, int32_t len, int32_t i) {
  * @return 1 for eligible bytes, including non-ASCII bytes whose full span is
  * stepped separately.
  */
-static uint8_t syntaxIsIdentifierByte(char c, const char *extra, uint8_t first) {
+uint8_t syntaxIsIdentifierByte(char c, const char *extra, uint8_t first) {
     unsigned char byte = (unsigned char)c;
     if (byte >= 0x80) return 1;
     if (c == '_' || (extra && strchr(extra, c))) return 1;
@@ -634,7 +630,7 @@ static int32_t matchKeyword(const char *const *list, const char *s, int32_t avai
 /**
  * @brief Ensure row-owned highlight capacity for render bytes.
  */
-static uint8_t syntaxReserveHighlight(erow *row) {
+uint8_t syntaxReserveHighlight(erow *row) {
     uint8_t *highlight = teTryRealloc(row->hl, (size_t)row->rsize);
     if (!highlight) {
         free(row->hl);
@@ -827,32 +823,6 @@ static void syntaxHighlightRowGeneric(erow *row, const struct syntaxLang *lang,
     row->hl_open_math = in_math;
 }
 
-/* ---- Markdown (dedicated tokenizer) ----------------------------------
- *
- * Not "keywords + strings + comments" like the C-like languages above:
- * highlights ATX headings (leading '#'s -> HL_PREPROCESSOR, reusing that
- * class for "structural marker" rather than adding a parallel one),
- * inline code spans `...` and fenced code blocks ```...``` (-> HL_STRING,
- * reusing "literal text" semantics), LaTeX math "$...$"/"$$...$$"/
- * "\(...\)"/"\[...\]" (its own HL_MATH class, so it's independently
- * colorable from code spans even though both start from the same
- * "literal/non-prose" idea), and
- * emphasis wrapped in single or double asterisks/underscores (->
- * HL_KEYWORD, reusing "stands out from body text").
- * No nested Markdown-in-code-fence-language highlighting -- a code
- * fence's contents render as HL_STRING regardless of the language tag
- * after the opening ```, matching the "no nested/embedded syntax" scope
- * boundary from the original C-only version. */
-/**
- * @brief Recognize extensions handled by the Markdown tokenizer.
- *
- * @details ext is NUL-terminated without a dot.
- * @return 1 for md or markdown, ignoring ASCII case.
- */
-uint8_t syntaxIsMarkdownExtension(const char *ext) {
-    return syntaxExtensionEquals(ext, "md") || syntaxExtensionEquals(ext, "markdown");
-}
-
 /**
  * @brief Color a complete fixed-delimiter math span on one row.
  *
@@ -902,7 +872,7 @@ static int32_t syntaxTryHighlightDelimited(erow *row, const char *s, int32_t len
  * embedded in, so both can call the exact same matching logic instead of
  * duplicating it.
  */
-static int32_t syntaxTryHighlightMath(erow *row, const char *s, int32_t len, int32_t i) {
+int32_t syntaxTryHighlightMath(erow *row, const char *s, int32_t len, int32_t i) {
     if (s[i] == '\\') {
         int32_t end = syntaxTryHighlightDelimited(row, s, len, i, "\\[", "\\]");
         if (end >= 0) return end;
@@ -930,519 +900,6 @@ static int32_t syntaxTryHighlightMath(erow *row, const char *s, int32_t len, int
     int32_t end = close_start + width;
     for (int32_t k = start; k < end; k++) row->hl[k] = HL_MATH;
     return end;
-}
-
-/**
- * @brief Recognize the YAML front matter boundary used by Markdown.
- *
- * @details s contains len bytes.
- * @return 1 for exactly three hyphens followed only by spaces or tabs;
- * deciding whether it opens front matter depends on row position.
- */
-static uint8_t syntaxIsFrontMatterFence(const char *s, int32_t len) {
-    if (len < 3 || s[0] != '-' || s[1] != '-' || s[2] != '-') return 0;
-    for (int32_t i = 3; i < len; i++)
-        if (s[i] != ' ' && s[i] != '\t') return 0;
-    return 1;
-}
-
-/**
- * @brief Color a shallow YAML metadata line inside front matter.
- *
- * @details row->hl must already be allocated for len bytes. Highlights simple
- * keys, values, comments and list markers; does not parse full YAML or update
- * block state.
- *
- * @note One line of YAML front matter: "key: value" with the key as a keyword
- * and the value as a string, so the metadata block reads as structured data
- * rather than prose. Comments ("# ...") and list items ("- item") get the
- * treatment they'd have in any other language.
- *
- * Deliberately shallow -- no nested mappings, block scalars, anchors or multi-
- * line values. Front matter in practice is a flat list of scalar keys, and a
- * real YAML parser is far outside what this file does.
- */
-static void syntaxHighlightFrontMatterLine(erow *row, const char *s, int32_t len) {
-    int32_t i = 0;
-    while (i < len && (s[i] == ' ' || s[i] == '\t')) i++;
-
-    if (i < len && s[i] == '#') {
-        for (int32_t k = i; k < len; k++) row->hl[k] = HL_COMMENT;
-        return;
-    }
-
-    /* "- " list item: the dash is a marker, the rest is a value. */
-    if (i < len && s[i] == '-' && (i + 1 >= len || s[i + 1] == ' ')) {
-        row->hl[i] = HL_PREPROCESSOR;
-        i++;
-        for (int32_t k = i; k < len; k++) row->hl[k] = HL_STRING;
-        return;
-    }
-
-    int32_t key_start = i;
-    while (i < len && s[i] != ':') i++;
-    if (i >= len) {
-        /* No colon: a bare continuation/scalar line, all value. */
-        for (int32_t k = key_start; k < len; k++) row->hl[k] = HL_STRING;
-        return;
-    }
-
-    for (int32_t k = key_start; k < i; k++) row->hl[k] = HL_KEYWORD;
-    row->hl[i++] = HL_PREPROCESSOR; /* the colon itself */
-    for (int32_t k = i; k < len; k++) row->hl[k] = HL_STRING;
-}
-
-/**
- * @brief Try to color an HTML tag embedded in Markdown prose.
- *
- * @details row->hl must be ready and i is a valid byte offset in s.
- * @return the exclusive end offset on a recognized same-line tag, or i unchanged
- * without consuming text.
- *
- * @note An HTML tag embedded in Markdown, inline (<em>) or block (<div ...>).
- * Highlights the angle brackets and tag name as HL_KEYWORD, attribute names
- * likewise, and quoted attribute values as HL_STRING -- the same classes the
- * XML tokenizer uses, so a tag looks the same whether it sits in an .html file
- * or inside a document.
- *
- * Returns the index just past '>', or `i` unchanged when s[i] doesn't begin a
- * plausible tag. Being conservative matters here: prose is full of '<' used as
- * a less-than sign, and highlighting "a < b" as markup would be worse than
- * leaving real tags plain. So a tag must start with a letter or '/' and
- * actually reach a '>' on the same line.
- */
-static int32_t syntaxTryHighlightMarkdownTag(erow *row, const char *s, int32_t len, int32_t i) {
-    if (s[i] != '<') return i;
-
-    int32_t j = i + 1;
-    if (j < len && s[j] == '/') j++;
-    if (j >= len || !syntaxIsAsciiLetter((unsigned char)s[j])) return i;
-
-    /* Scan ahead for the closing '>', bailing out on anything that
-     * says "this isn't a tag" (another '<' first, or end of line). */
-    int32_t close = -1;
-    uint8_t in_quote = 0;
-    char quote = 0;
-    for (int32_t k = j; k < len; k++) {
-        if (in_quote) {
-            if (s[k] == quote) in_quote = 0;
-            continue;
-        }
-        if (s[k] == '"' || s[k] == '\'') { in_quote = 1; quote = s[k]; continue; }
-        if (s[k] == '<') return i;
-        if (s[k] == '>') { close = k; break; }
-    }
-    if (close < 0) return i;
-
-    row->hl[i] = HL_KEYWORD;
-    int32_t k = i + 1;
-    if (s[k] == '/') row->hl[k++] = HL_KEYWORD;
-    while (k < close && syntaxIsIdentifierByte(s[k], ":.-", 0)) row->hl[k++] = HL_KEYWORD;
-
-    while (k < close) {
-        if (s[k] == '"' || s[k] == '\'') {
-            char q = s[k];
-            row->hl[k++] = HL_STRING;
-            while (k < close && s[k] != q) row->hl[k++] = HL_STRING;
-            if (k < close) row->hl[k++] = HL_STRING;
-            continue;
-        }
-        if (syntaxIsIdentifierByte(s[k], ":.-", 1)) {
-            while (k < close && syntaxIsIdentifierByte(s[k], ":.-", 0))
-                row->hl[k++] = HL_KEYWORD;
-            continue;
-        }
-        k++;
-    }
-
-    row->hl[close] = HL_KEYWORD;
-    return close + 1;
-}
-
-/* Presentation is conservative where the tokenizer accepts escaped markers. */
-static uint8_t syntaxMarkdownEscaped(const erow *row, int32_t at) {
-    uint8_t escaped = 0;
-    while (at > 0) {
-        size_t len = utf8PrevCharLen(row->render, (size_t)at);
-        if (len != 1 || row->render[at - 1] != '\\') break;
-        escaped = !escaped;
-        at--;
-    }
-    return escaped;
-}
-
-static void syntaxMarkdownSpan(erow *row, int32_t start, int32_t content_start,
-    int32_t content_end, int32_t end, uint8_t link) {
-    if (syntaxMarkdownEscaped(row, start) || (!link && syntaxMarkdownEscaped(row, content_end)))
-        return;
-    if (row->markdown_count == row->markdown_capacity) {
-        int32_t capacity = row->markdown_capacity;
-        capacity = capacity > INT32_MAX / 2 ? INT32_MAX : capacity ? capacity * 2 : 4;
-        if (capacity == row->markdown_count) return;
-        row->markdown_spans = teRealloc(row->markdown_spans,
-            teArrayBytes((size_t)capacity, sizeof(*row->markdown_spans)));
-        row->markdown_capacity = capacity;
-    }
-    row->markdown_spans[row->markdown_count++] =
-        (struct markdownSpan){start, content_start, content_end, end, link};
-}
-
-/**
- * @brief Try to color a Markdown link or image with distinct label and URL colors.
- *
- * @details row->hl must be ready and i is a valid byte offset in s.
- * @return the exclusive end offset on success, or i unchanged when no complete link is
- * recognized.
- *
- * @note A Markdown link "[text](url)" or image "![alt](url)": brackets,
- * parentheses and the leading '!' as HL_PREPROCESSOR markers, the label as
- * HL_KEYWORD, the destination as HL_STRING. Keeping the two apart is what
- * makes a row of badges readable -- the long URL stops competing with the
- * label for attention.
- *
- * Handles the nested image-inside-link form "[![alt](img)](url)" that badge
- * rows use: the label scan tracks bracket depth, so the inner "![alt](img)" is
- * found as a unit and highlighted by recursing into it rather than terminating
- * the outer label at the first ']'.
- *
- * Returns the index just past the closing ')', or `i` unchanged when this
- * isn't a well-formed link -- an unmatched "[link]" or a stray "(text)" in
- * prose is left as plain text, same conservative stance as the HTML tag
- * scanner. Reference-style links ("[text][ref]") and bare autolinks are out of
- * scope for this first pass.
- */
-static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t len, int32_t i) {
-    int32_t start = i;
-    int32_t span_count = row->markdown_count;
-    int32_t bracket = i;
-    if (s[bracket] == '!') bracket++;
-    if (bracket >= len || s[bracket] != '[') return start;
-
-    /* Find the ']' matching this '[', allowing nested bracket pairs. */
-    int32_t depth = 0;
-    int32_t label_end = -1;
-    for (int32_t k = bracket; k < len; k++) {
-        if (s[k] == '[') depth++;
-        else if (s[k] == ']') {
-            depth--;
-            if (depth == 0) { label_end = k; break; }
-        }
-    }
-    if (label_end < 0) return start;
-    if (label_end + 1 >= len || s[label_end + 1] != '(') return start;
-
-    /* Matching ')', allowing nested parens (they appear in real URLs,
-     * e.g. Wikipedia article titles). */
-    depth = 0;
-    int32_t url_end = -1;
-    for (int32_t k = label_end + 1; k < len; k++) {
-        if (s[k] == '(') depth++;
-        else if (s[k] == ')') {
-            depth--;
-            if (depth == 0) { url_end = k; break; }
-        }
-    }
-    if (url_end < 0) return start;
-
-    if (s[start] == '!') row->hl[start] = HL_PREPROCESSOR;
-    row->hl[bracket] = HL_PREPROCESSOR;
-
-    /* Label: recurse so a nested image inside a link keeps its own
-     * colors, and plain label text becomes HL_KEYWORD. */
-    int32_t k = bracket + 1;
-    while (k < label_end) {
-        int32_t nested = syntaxTryHighlightMarkdownLink(row, s, label_end, k);
-        if (nested != k) { k = nested; continue; }
-        row->hl[k] = HL_KEYWORD;
-        k++;
-    }
-
-    row->hl[label_end] = HL_PREPROCESSOR;
-    row->hl[label_end + 1] = HL_PREPROCESSOR;
-    for (int32_t u = label_end + 2; u < url_end; u++) row->hl[u] = HL_STRING;
-    row->hl[url_end] = HL_PREPROCESSOR;
-    row->markdown_count = span_count;
-    int32_t destination = label_end + 2;
-    while (destination < url_end && (s[destination] == ' ' || s[destination] == '\t'))
-        destination += (int32_t)utf8NextCharLen(s, (size_t)destination, (size_t)url_end);
-    if (start == bracket && destination < url_end)
-        syntaxMarkdownSpan(row, start, bracket + 1, label_end, url_end + 1, 1);
-    return url_end + 1;
-}
-
-/* Only standalone dollar delimiters open a block: an unmatched currency
- * symbol in prose must not turn the following document into mathematics. */
-/**
- * @brief Recognize a Markdown math fence at the supplied byte position.
- */
-static uint8_t syntaxMarkdownMathFence(const char *s, int32_t len) {
-    int32_t i = 0;
-    while (i < len && (s[i] == ' ' || s[i] == '\t')) i++;
-    int32_t start = i;
-    while (i < len && s[i] == '$') i++;
-    int32_t width = i - start;
-    while (i < len && (s[i] == ' ' || s[i] == '\t')) i++;
-    if (i != len) return 0;
-    return width == 1 ? 2 : (width == 2 ? 3 : 0);
-}
-
-/**
- * @brief Color Markdown text while carrying multiline constructs between rows.
- *
- * @details row->render must be current; previous flags describe fences, math,
- * front matter and emphasis. row_index is zero-based so front matter opens
- * only at the document start.
- */
-static void syntaxHighlightRowMarkdown(erow *row, uint8_t prev_in_fence, uint8_t prev_in_math,
-    uint8_t prev_in_frontmatter, int32_t row_index, uint8_t prev_in_emphasis) {
-    if (!syntaxReserveHighlight(row)) return;
-    memset(row->hl, HL_NORMAL, (size_t)row->rsize);
-
-    const char *s = row->render;
-    int32_t len = row->rsize;
-    const char *source = row->chars ? row->chars : s;
-    int32_t source_len = row->chars ? row->size : len;
-
-    /* YAML front matter, before every other rule: while inside it the
-     * document isn't Markdown at all. Recognized only when the opening
-     * "---" is row 0 -- further down, "---" is a horizontal rule. */
-    if (row_index == 0 && syntaxIsFrontMatterFence(s, len)) {
-        for (int32_t k = 0; k < len; k++) row->hl[k] = HL_PREPROCESSOR;
-        row->hl_open_comment = 0;
-        row->hl_open_math = 0;
-        row->hl_open_frontmatter = 1;
-        return;
-    }
-    if (prev_in_frontmatter) {
-        row->hl_open_comment = 0;
-        row->hl_open_math = 0;
-        row->hl_open_frontmatter = 0;
-        if (syntaxIsFrontMatterFence(s, len)) {
-            for (int32_t k = 0; k < len; k++) row->hl[k] = HL_PREPROCESSOR;
-            row->hl_open_frontmatter = 0; /* closing delimiter */
-            return;
-        }
-        syntaxHighlightFrontMatterLine(row, s, len);
-        row->hl_open_frontmatter = 1;
-        return;
-    }
-
-    uint8_t dollar_fence = syntaxMarkdownMathFence(source, source_len);
-    if (prev_in_math >= 2 || (!prev_in_math && dollar_fence && !prev_in_fence)) {
-        memset(row->hl, HL_MATH, (size_t)len);
-        row->hl_open_math = prev_in_math
-            ? (dollar_fence == prev_in_math ? 0 : prev_in_math) : dollar_fence;
-        row->hl_open_comment = 0;
-        row->hl_open_frontmatter = 0;
-        row->hl_open_emphasis = 0;
-        return;
-    }
-
-    uint8_t is_fence_line = len >= 3 && s[0] == '`' && s[1] == '`' && s[2] == '`';
-    if (is_fence_line) {
-        for (int32_t k = 0; k < len; k++) row->hl[k] = HL_STRING;
-        row->hl_open_comment = !prev_in_fence;
-        row->hl_open_math = 0;
-        row->hl_open_frontmatter = 0;
-        return;
-    }
-    if (prev_in_fence) {
-        for (int32_t k = 0; k < len; k++) row->hl[k] = HL_STRING;
-        row->hl_open_comment = 1;
-        row->hl_open_math = 0;
-        row->hl_open_frontmatter = 0;
-        return;
-    }
-
-    /* Multi-line "\[...\]" display math -- same "\]" search as the
-     * generic tokenizer's in_math handling, kept separate here since
-     * Markdown's fence state above already owns hl_open_comment for
-     * this tokenizer and math needs its own bit (hl_open_math). */
-    if (prev_in_math) {
-        int32_t close_at = -1;
-        for (int32_t k = 0; k + 1 < len; k++) {
-            if (s[k] == '\\' && s[k + 1] == ']') { close_at = k; break; }
-        }
-        if (close_at >= 0) {
-            for (int32_t k = 0; k < close_at + 2; k++) row->hl[k] = HL_MATH;
-            row->hl_open_comment = 0;
-            row->hl_open_math = 0;
-            row->hl_open_frontmatter = 0;
-            /* Falls through to scan the rest of the line normally
-             * (text after "\]" is prose again), unlike the fence case
-             * above which always consumes the whole line -- math only
-             * consumes up through its closing delimiter. */
-            int32_t i = close_at + 2;
-            while (i < len) {
-                if (s[i] == '`') {
-                    int32_t start = i++;
-                    while (i < len && s[i] != '`') i++;
-                    if (i < len) i++;
-                    for (int32_t k = start; k < i; k++) row->hl[k] = HL_STRING;
-                    continue;
-                }
-                if (s[i] == '$' || s[i] == '\\') {
-                    int32_t end = syntaxTryHighlightMath(row, s, len, i);
-                    if (end >= 0) { i = end; continue; }
-                }
-                i++;
-            }
-            return;
-        }
-        for (int32_t k = 0; k < len; k++) row->hl[k] = HL_MATH;
-        row->hl_open_comment = 0;
-        row->hl_open_math = 1;
-        row->hl_open_frontmatter = 0;
-        return;
-    }
-
-    /* Continuation of an emphasis span opened on an earlier row. A
-     * blank line ends it (see hl_open_emphasis in tinyedit.h): the
-     * `len <= 0` case is handled by the empty-row path in
-     * syntaxHighlightRow(), so reaching here with prev_in_emphasis set
-     * means this row has text. */
-    if (prev_in_emphasis) {
-        char marker_cls = (prev_in_emphasis == 1) ? (char)HL_EMPHASIS : (char)HL_EMPHASIS_STRONG;
-        int32_t run_needed = (prev_in_emphasis == 1) ? 1 : 2;
-
-        int32_t close_start = -1;
-        for (int32_t k = 0; k < len; k++) {
-            if (s[k] != '*' && s[k] != '_') continue;
-            int32_t crun = 0;
-            while (k + crun < len && s[k + crun] == s[k]) crun++;
-            if (crun >= run_needed) { close_start = k + run_needed; break; }
-            k += crun - 1;
-        }
-
-        row->hl_open_comment = 0;
-        row->hl_open_math = 0;
-        row->hl_open_frontmatter = 0;
-
-        if (close_start < 0) {
-            for (int32_t k = 0; k < len; k++) row->hl[k] = (uint8_t)marker_cls;
-            row->hl_open_emphasis = prev_in_emphasis;
-            return;
-        }
-        for (int32_t k = 0; k < close_start; k++) row->hl[k] = (uint8_t)marker_cls;
-        row->hl_open_emphasis = 0;
-        /* Text after the closer is ordinary prose; leaving it
-         * HL_NORMAL is correct, and re-scanning it for further
-         * constructs isn't worth a second pass here. */
-        return;
-    }
-
-    int32_t heading_start = 0;
-    while (heading_start < source_len && heading_start < 3 && source[heading_start] == ' ')
-        heading_start++;
-    if (heading_start < source_len && source[heading_start] == '#') {
-        int32_t k = heading_start;
-        while (k < source_len && source[k] == '#') k++;
-        if (k - heading_start <= 6 &&
-            (k == source_len || source[k] == ' ' || source[k] == '\t')) {
-            row->hl_heading = 1;
-            for (int32_t i = 0; i < len; i++) row->hl[i] = HL_PREPROCESSOR;
-            row->hl_open_comment = 0;
-            row->hl_open_math = 0;
-            row->hl_open_frontmatter = 0;
-            return;
-        }
-    }
-
-    int32_t i = 0;
-    while (i < len) {
-        if (s[i] == '\\' && i + 1 < len && s[i + 1] == '[') {
-            int32_t end = syntaxTryHighlightMath(row, s, len, i);
-            if (end >= 0) { i = end; continue; }
-            /* "\[" with no "\]" before end of line -- opens multi-line
-             * math, same as the generic tokenizer's handling. */
-            row->hl[i] = HL_MATH;
-            row->hl[i + 1] = HL_MATH;
-            i += 2;
-            while (i < len) row->hl[i++] = HL_MATH;
-            row->hl_open_comment = 0;
-            row->hl_open_math = 1;
-            row->hl_open_frontmatter = 0;
-            return;
-        }
-        if (s[i] == '`') {
-            int32_t start = i++;
-            while (i < len && s[i] != '`') i++;
-            if (i < len) i++; /* consume closing backtick */
-            for (int32_t k = start; k < i; k++) row->hl[k] = HL_STRING;
-            continue;
-        }
-        /* After the code-span rule above, so a tag written inside
-         * backticks (`<div>`, common when documenting HTML) stays a
-         * code span rather than being highlighted as real markup. */
-        if (s[i] == '<') {
-            int32_t end = syntaxTryHighlightMarkdownTag(row, s, len, i);
-            if (end != i) { i = end; continue; }
-        }
-        /* Before the emphasis rule below: URLs are full of '_' and '*'
-         * ("some_file", "a*b"), which would otherwise open an emphasis
-         * span that swallows the rest of the line. */
-        if (s[i] == '[' || s[i] == '!') {
-            int32_t end = syntaxTryHighlightMarkdownLink(row, s, len, i);
-            if (end != i) { i = end; continue; }
-        }
-        if (s[i] == '$' || s[i] == '\\') {
-            int32_t end = syntaxTryHighlightMath(row, s, len, i);
-            if (end >= 0) { i = end; continue; }
-        }
-        if ((s[i] == '*' || s[i] == '_') &&
-            !(i > 0 && isalnum((unsigned char)s[i - 1]))) {
-            char marker = s[i];
-            int32_t run = 1;
-            while (i + run < len && s[i + run] == marker) run++;
-            /* Find the matching closing run of the same length on this
-             * line; if there is none, the span continues onto the next
-             * row (see hl_open_emphasis in tinyedit.h) and is closed
-             * either by that marker later or by a blank line. */
-            int32_t j = i + run;
-            int32_t close_start = -1;
-            while (j < len) {
-                if (s[j] == marker) {
-                    int32_t crun = 0;
-                    while (j + crun < len && s[j + crun] == marker) crun++;
-                    if (crun >= run) { close_start = j; break; }
-                    j += crun;
-                } else j++;
-            }
-            if (close_start >= 0) {
-                /* run == 1: a single asterisk or underscore marker,
-                 * i.e. italic -- mapped to HL_EMPHASIS. run >= 2: a
-                 * doubled marker, i.e. bold -- its own
-                 * HL_EMPHASIS_STRONG class so the two are
-                 * independently colorable. */
-                enum syntaxHighlight cls = (run == 1) ? HL_EMPHASIS : HL_EMPHASIS_STRONG;
-                for (int32_t k = i; k < close_start + run; k++) row->hl[k] = (uint8_t)cls;
-                syntaxMarkdownSpan(row, i, i + run, close_start, close_start + run, 0);
-                i = close_start + run;
-                continue;
-            }
-
-            /* No closer on this line: highlight to end of line and
-             * carry the span into the next row. Only for a marker that
-             * looks like an opener -- one followed by something other
-             * than whitespace -- so a trailing "*" or a lone "5 * 3"
-             * asterisk doesn't start a span. */
-            if (i + run < len && s[i + run] != ' ' && s[i + run] != '\t') {
-                enum syntaxHighlight cls = (run == 1) ? HL_EMPHASIS : HL_EMPHASIS_STRONG;
-                for (int32_t k = i; k < len; k++) row->hl[k] = (uint8_t)cls;
-                row->hl_open_comment = 0;
-                row->hl_open_math = 0;
-                row->hl_open_frontmatter = 0;
-                row->hl_open_emphasis = (run == 1) ? 1 : 2;
-                return;
-            }
-        }
-        i++;
-    }
-
-    row->hl_open_comment = 0;
-    row->hl_open_math = 0;
-    row->hl_open_frontmatter = 0;
-    row->hl_open_emphasis = 0;
 }
 
 /* ---- XML/HTML (dedicated tokenizer) -----------------------------------
@@ -1763,7 +1220,7 @@ void syntaxHighlightRow(erow *row, const char *filename,
     }
 
     if (ext && syntaxIsMarkdownExtension(ext)) {
-        syntaxHighlightRowMarkdown(row, prev_open_comment, prev_open_math,
+        markdownHighlightRow(row, prev_open_comment, prev_open_math,
             prev_open_frontmatter, row_index, prev_open_emphasis);
         return;
     }
@@ -1850,4 +1307,8 @@ uint8_t syntaxHasBuiltinExtension(const char *ext) {
             if (syntaxExtensionEquals(lang->extensions[j], ext)) return 1;
     }
     return 0;
+}
+
+uint8_t syntaxIsMarkdownExtension(const char *ext) {
+    return markdownIsExtension(ext);
 }

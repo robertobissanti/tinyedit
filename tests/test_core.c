@@ -933,6 +933,227 @@ static void testColorSettings(void) {
     settingsDefaults(&S);
 }
 
+static void markdownNavigationRows(const char *const *rows, size_t count) {
+    editorResetDocument();
+    E.document.file.filename = teStrdup("navigation.md");
+    for (size_t i = 0; i < count; i++)
+        editorInsertRow(E.document.buffer.row_count, rows[i], strlen(rows[i]));
+    E.document.file.dirty = 0;
+    editorSetStatusMessage("");
+}
+
+static void testMarkdownNavigation(void) {
+    settingsDefaults(&S);
+    T.focused = T.visible = 0;
+    E.view.screenrows = 20; E.view.screencols = 80;
+    const char *const targets[] = {
+        "## Dati", "## Titolo {#dati}", "[Dati sperimentali]{.misura #span title=\"Dati\"}",
+        "![Diagramma](architettura.png){#fig:architettura .diagramma}",
+        "::: {.diagramma #architettura title=\"Diagramma\"}", "Testo", ":::",
+        "## Héading UTF-8 {.classe #esatto}", "Testo. ^paragrafo", "",
+        "| Nome | Valore |", "| --- | --- |", "| A | 10 |", "", "^tabella", "",
+        "- Primo", "- Secondo", "", "^lista", "", "::: {#minimo}", "contenuto", ":::",
+        "", "Primo paragrafo", "continua qui", "", "^multilinea"
+    };
+    markdownNavigationRows(targets, sizeof(targets) / sizeof(*targets));
+    E.document.selection.active = E.document.selection.pinned = 1;
+    E.view.rowoff = E.view.coloff = E.view.free_scroll = 1;
+    editorLinkAnchor("dati");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 1 &&
+        !E.document.selection.active && !E.document.selection.pinned && !E.view.free_scroll,
+        "explicit Pandoc ID wins over heading slug and clears navigation state");
+    editorLinkAnchor("span");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 2, "Pandoc span with class and property");
+    editorLinkAnchor("fig:architettura");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 3, "Pandoc image ID with colon");
+    editorLinkAnchor("architettura");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 4, "Pandoc fenced Div attributes");
+    editorLinkAnchor("héading-utf-8");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 7, "UTF-8 header slug omits trailing attributes");
+    editorLinkAnchor("^paragrafo");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 8, "Obsidian paragraph marker");
+    editorLinkAnchor("^tabella");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 10, "standalone Obsidian marker targets table start");
+    editorLinkAnchor("^lista");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 16, "standalone Obsidian marker targets list start");
+    editorLinkAnchor("minimo");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 21, "minimal Pandoc fenced Div ID");
+    editorLinkAnchor("^multilinea");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 25, "standalone marker targets multiline paragraph start");
+    editorLinkAnchor("Esatto");
+    check(E.ui.statusmsg_error, "explicit IDs are case sensitive");
+    editorLinkAnchor("^dati");
+    check(E.ui.statusmsg_error, "Obsidian lookup never falls back to Pandoc ID");
+    editorLinkAnchor("missing");
+    check(E.ui.statusmsg_error && strstr(E.ui.statusmsg, "missing"), "missing anchor is explicit red error");
+
+    const char *const duplicates[] = {"[uno]{#duplicato}", "## Due {#duplicato}",
+        "Testo ^blocco", "Altro ^blocco"};
+    markdownNavigationRows(duplicates, sizeof(duplicates) / sizeof(*duplicates));
+    editorLinkAnchor("duplicato");
+    check(E.ui.statusmsg_error && E.document.cursor.cy == 0 &&
+        (strstr(E.ui.statusmsg, "Duplicate") || strstr(E.ui.statusmsg, "duplicate")), "duplicate Pandoc ID refuses arbitrary navigation");
+    editorLinkAnchor("^blocco");
+    check(E.ui.statusmsg_error && E.document.cursor.cy == 0 &&
+        (strstr(E.ui.statusmsg, "Duplicate") || strstr(E.ui.statusmsg, "duplicate")), "duplicate Obsidian ID refuses arbitrary navigation");
+
+    const char *const code[] = {"```markdown", "## Falso {#hidden}", "Testo ^fake",
+        "@real", "```", "`[Falso]{#inline}`", "`Testo ^inline-block`", "[Vero]{#real}"};
+    markdownNavigationRows(code, sizeof(code) / sizeof(*code));
+    S.syntax_highlight = 0;
+    editorLinkAnchor("hidden"); check(E.ui.statusmsg_error, "fenced Pandoc ID excluded with highlighting disabled");
+    editorLinkAnchor("^fake"); check(E.ui.statusmsg_error, "fenced block marker excluded");
+    editorLinkAnchor("inline"); check(E.ui.statusmsg_error, "inline code Pandoc ID excluded");
+    editorLinkAnchor("^inline-block"); check(E.ui.statusmsg_error, "inline code block marker excluded");
+    struct textLink link;
+    E.document.cursor.cy = 3; E.document.cursor.cx = 2;
+    check(!editorCursorLink(&link), "reference inside fence excluded without highlighting");
+    S.syntax_highlight = 1;
+
+    const char *const quoted_code[] = {"> ```markdown", "> [Falso]{#quoted}",
+        "> @real", "> ```", "[Vero]{#real}"};
+    markdownNavigationRows(quoted_code, sizeof(quoted_code) / sizeof(*quoted_code));
+    editorLinkAnchor("quoted"); check(E.ui.statusmsg_error, "quoted code fence excludes anchors");
+    E.document.cursor.cy = 2; E.document.cursor.cx = 4;
+    check(!editorCursorLink(&link), "quoted code fence excludes references");
+    editorLinkAnchor("real");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 4, "quoted fence closes before actual target");
+
+    const char *const lexical[] = {
+        "\\[literal]{#escaped}", "\\::: {#escaped-div}", "\\@real", "[Vero]{#real}",
+        "Paragrafo", "^unseparated", "", "- Primo", "", "- Secondo", "", "^loose"
+    };
+    markdownNavigationRows(lexical, sizeof(lexical) / sizeof(*lexical));
+    editorLinkAnchor("escaped"); check(E.ui.statusmsg_error, "escaped span opener is not an anchor");
+    editorLinkAnchor("escaped-div"); check(E.ui.statusmsg_error, "escaped Div opener is not an anchor");
+    E.document.cursor.cy = 2; E.document.cursor.cx = 3;
+    check(!editorCursorLink(&link), "escaped local reference is not navigable");
+    editorLinkAnchor("^unseparated");
+    check(E.ui.statusmsg_error, "standalone marker requires separating blank line");
+    editorLinkAnchor("^loose");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 7, "standalone block marker targets whole loose list");
+
+    const char *const continued_list[] = {"- Primo", "  continuazione", "", "^continued"};
+    markdownNavigationRows(continued_list, sizeof(continued_list) / sizeof(*continued_list));
+    editorLinkAnchor("^continued");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 0, "standalone marker includes list continuation text");
+
+    const char *const references[] = {"é @fig:architettura, poi [@dati].", "[Figura]{#fig:architettura}",
+        "## Dati {#dati}", "a@dati @bibliografia `@dati`", "[vai](#d%61ti)"};
+    markdownNavigationRows(references, sizeof(references) / sizeof(*references));
+    E.document.cursor.cx = 5;
+    check(editorCursorLink(&link), "UTF-8 reference before comma is navigable");
+    editorOpenCursorLink();
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 1, "reference punctuation excluded from destination");
+    E.document.cursor.cy = 0; E.document.cursor.cx = 29;
+    check(editorCursorLink(&link), "bracketed local reference recognized");
+    editorOpenCursorLink();
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 2, "bracketed local reference resolves");
+    E.document.cursor.cy = 3; E.document.cursor.cx = 3;
+    check(!editorCursorLink(&link), "email is not local reference even with matching ID");
+    E.document.cursor.cx = 10;
+    check(!editorCursorLink(&link), "bibliographic citation without local target is not link");
+    E.document.cursor.cx = 25;
+    check(!editorCursorLink(&link), "inline code reference excluded");
+    E.document.cursor.cy = 4; E.document.cursor.cx = 2;
+    editorOpenCursorLink();
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 2, "explicit fragment retains percent decoding");
+
+    const char *const extra[] = {
+        "~~~markdown", "[hidden]{#tilde}", "@dati", "~~~", "`inizio", "[hidden]{#multicode}",
+        "@dati", "fine`", "[ok]{title=\"#fake\" #dati}", "## Literal \\{#escaped-heading}",
+        "@dati: @dati.extra", "[first]{#adjacent}[second]{#adjacent}"
+    };
+    markdownNavigationRows(extra, sizeof(extra) / sizeof(*extra));
+    editorLinkAnchor("tilde"); check(E.ui.statusmsg_error, "tilde code fence excludes targets");
+    editorLinkAnchor("multicode"); check(E.ui.statusmsg_error, "multiline code span excludes target");
+    editorLinkAnchor("fake"); check(E.ui.statusmsg_error, "quoted attribute text is not an ID");
+    editorLinkAnchor("escaped-heading"); check(E.ui.statusmsg_error, "escaped header attribute opener is literal");
+    editorLinkAnchor("dati");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 8, "ID after quoted hash attribute resolves");
+    E.document.cursor.cy = 2; E.document.cursor.cx = 2;
+    check(!editorCursorLink(&link), "tilde fence reference excluded");
+    E.document.cursor.cy = 6;
+    check(!editorCursorLink(&link), "multiline inline code reference excluded");
+    E.document.cursor.cy = 10; E.document.cursor.cx = 2;
+    check(editorCursorLink(&link), "terminal colon punctuation allows local reference");
+    E.document.cursor.cx = 5;
+    check(!editorCursorLink(&link), "trimmed colon is outside local reference");
+    editorLinkAnchor("adjacent");
+    check(E.ui.statusmsg_error && (strstr(E.ui.statusmsg, "Duplicate") || strstr(E.ui.statusmsg, "duplicate")),
+        "adjacent explicit IDs on one row still count as duplicates");
+
+    const char *const mouse_refs[] = {"start", "@dati, [@fig:immagine]", "[Dati]{#dati}", "![Fig](a.png){#fig:immagine}"};
+    markdownNavigationRows(mouse_refs, sizeof(mouse_refs) / sizeof(*mouse_refs));
+    S.markdown_live_preview = S.mouse_enabled = 1;
+    S.show_line_numbers = S.show_menu = S.show_top_bar = 0;
+    E.view.rowoff = E.view.coloff = 0;
+    E.search.search_match_y = E.search.search_match_end_y = -1;
+    mouseEventButton = 35; mouseEventPress = 1; mouseEventCol = 2; mouseEventRow = 2;
+    editorHandleMouseEvent();
+    editorUpdateLinkHover();
+    check(hovered_link_row == 1 && E.document.cursor.cy == 0, "hover recognizes local reference without moving cursor");
+    mouseEventButton = 0;
+    editorHandleMouseEvent();
+    check(E.document.cursor.cy == 2 && !E.document.mouse.dragging && !E.document.selection.active,
+        "single preview click follows local reference");
+    E.document.cursor.cy = 0; E.document.cursor.cx = 0;
+    mouseEventButton = 35; mouseEventCol = 11;
+    editorHandleMouseEvent();
+    editorUpdateLinkHover();
+    check(hovered_link_row == 1, "hover recognizes bracketed colon reference");
+    mouseEventButton = 0; editorHandleMouseEvent();
+    check(E.document.cursor.cy == 3, "single preview click follows bracketed colon reference");
+    settingsDefaults(&S);
+
+    char root[] = "/tmp/tinyedit-anchors-XXXXXX";
+    check(mkdtemp(root) != NULL, "cross-file anchor fixtures");
+    char source[256], destination[256];
+    snprintf(source, sizeof(source), "%s/source.md", root);
+    snprintf(destination, sizeof(destination), "%s/altro.md", root);
+    FILE *file = fopen(source, "wb");
+    check(file && fputs("[Vai](altro.md#dati)\n", file) >= 0 && fclose(file) == 0, "write explicit link source");
+    file = fopen(destination, "wb");
+    check(file && fputs("## Titolo {#dati}\n\nBlocco ^blocco\n![Fig](a.png){#fig:immagine}\n", file) >= 0 && fclose(file) == 0,
+        "write cross-file anchor targets");
+    check(editorOpen(source), "open explicit link source");
+    E.document.cursor.cx = 2;
+    editorOpenCursorLink();
+    check(!E.ui.statusmsg_error && !strcmp(E.document.file.filename, destination) && E.document.cursor.cy == 0,
+        "local file fragment resolves explicit Pandoc ID");
+    check(editorOpen(source), "restore source for block link");
+    editorFollowLink("altro.md#^blocco");
+    check(!E.ui.statusmsg_error && !strcmp(E.document.file.filename, destination) && E.document.cursor.cy == 2,
+        "local file fragment resolves Obsidian block");
+    check(editorOpen(source), "restore source for colon fragment");
+    editorFollowLink("altro.md#fig:immagine");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 3, "colon in cross-file explicit fragment remains supported");
+    check(editorOpen(source), "restore source for cancelled explicit link");
+    E.document.cursor.cx = 2;
+    E.document.cursor.cx = E.document.buffer.rows[0].size;
+    editorPushUndo(EDIT_INSERT); editorInsertChar('X');
+    E.document.cursor.cx = 2;
+    E.document.selection.active = E.document.selection.pinned = 1;
+    E.document.selection.anchor_x = 1;
+    int input[2], saved_input = dup(STDIN_FILENO);
+    check(saved_input >= 0 && pipe(input) == 0, "cancel explicit link input");
+    check(write(input[1], "x", 1) == 1 && dup2(input[0], STDIN_FILENO) >= 0, "cancel explicit link answer");
+    close(input[0]);
+    editorFollowLink("altro.md#fig:immagine");
+    check(!strcmp(E.document.file.filename, source) && E.document.file.dirty && E.document.cursor.cx == 2 &&
+        E.document.selection.active && E.document.selection.pinned && E.document.selection.anchor_x == 1,
+        "cancel explicit cross-file fragment preserves dirty document and selection");
+    check(dup2(saved_input, STDIN_FILENO) >= 0, "restore explicit link input");
+    close(saved_input); close(input[1]);
+    editorResetDocument();
+    unlink(source); unlink(destination); rmdir(root);
+    markdownNavigationRows(extra, sizeof(extra) / sizeof(*extra));
+    E.document.cursor.cy = 10; E.document.cursor.cx = 9;
+    check(!editorCursorLink(&link), "dot inside reference does not activate matching ID prefix");
+    editorResetDocument();
+    settingsDefaults(&S);
+}
+
 static void testLinks(void) {
     struct textLink link;
     const char *inline_link = "é [guide](<folder/a b.md#title> \"title\") end";
@@ -2216,6 +2437,7 @@ int main(void) {
     testColorSettings();
     testMouseDispatch();
     testLinks();
+    testMarkdownNavigation();
     testSharedAutoClose();
     testEditBatches();
     testSearchSession();

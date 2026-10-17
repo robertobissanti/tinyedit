@@ -22,12 +22,13 @@
  *   fileio.c       home-path expansion, staged loading and atomic replacement
  *   history.c      bounded row deltas, undo/redo and allocation-failure rollback
  *   linenoise.c    historical line-editor implementation; not built
- *   links.c        inline links, heading slugs and safe browser/mail dispatch
+ *   links.c        inline/bare links and safe browser/mail dispatch
  *   menu.c         UTF-8 menu layout, viewport clipping and input navigation
- *   render.c       Markdown presentation and shared row/wrapped-text layout
+ *   markdown.c     Markdown syntax, live preview, explicit IDs and source navigation
+ *   render.c       shared row/wrapped-text layout and presentation adapters
  *   search.c       compiled queries, text search and source-coordinate results
  *   settings.c     persistent configuration, color scheme loading and color escapes
- *   syntax.c       filetype detection, highlighting and Markdown source spans
+ *   syntax.c       filetype dispatch, shared helpers and other language tokenizers
  *   terminal.c     raw terminal setup, input decoding, and terminal I/O
  *   tree.c         owned filesystem tree and lazy directory expansion
  *   tinyedit.c     application flow, editor commands, screens, and drawing
@@ -46,6 +47,7 @@
 #include "fileio.h"
 #include "history.h"
 #include "links.h"
+#include "markdown.h"
 #include "render.h"
 #include "resources.h"
 #include "clipboard.h"
@@ -1820,8 +1822,10 @@ static uint8_t editorCursorLink(struct textLink *link) {
     if (T.focused || cy < 0 || cy >= E.document.buffer.row_count) return 0;
     erow *row = &E.document.buffer.rows[cy];
     const char *extension = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
-    if (extension && syntaxIsMarkdownExtension(extension + 1) && row->hl_open_comment) return 0;
-    return linksFind(row->chars, row->size, E.document.cursor.cx, link);
+    uint8_t markdown = extension && markdownIsExtension(extension + 1);
+    if (markdown && !markdownSourceVisible(&E.document.buffer, cy, E.document.cursor.cx)) return 0;
+    if (linksFind(row->chars, row->size, E.document.cursor.cx, link)) return 1;
+    return markdown && markdownFindReference(&E.document.buffer, cy, E.document.cursor.cx, link);
 }
 
 /**
@@ -1833,24 +1837,15 @@ static uint8_t editorCursorLink(struct textLink *link) {
  */
 static void editorLinkAnchor(const char *anchor) {
     if (!anchor || !*anchor) return;
-    for (int32_t y = 0; y < E.document.buffer.row_count; y++) {
-        erow *row = &E.document.buffer.rows[y];
-        int32_t at = 0;
-        while (at < row->size && at < 4 && row->chars[at] == ' ') at++;
-        if (at >= row->size || row->chars[at] != '#' || row->hl_open_comment) continue;
-        char *slug = linksHeadingSlug(row->chars, row->size);
-        uint8_t match = !strcmp(slug, anchor);
-        free(slug);
-        if (match) {
-            E.document.cursor.cy = y;
-            E.document.cursor.cx = 0;
-            E.document.selection.active = E.document.selection.pinned = 0;
-            E.view.rowoff = E.view.coloff = E.view.free_scroll = 0;
-            editorSetStatusMessage("Heading: %s", anchor);
-            return;
-        }
-    }
-    editorSetErrorMessage("Heading not found: %s", anchor);
+    int32_t y, x;
+    enum markdownAnchorResult result = markdownResolveAnchor(&E.document.buffer, anchor, &y, &x);
+    if (result == MARKDOWN_ANCHOR_FOUND) {
+        E.document.cursor.cy = y; E.document.cursor.cx = x;
+        E.document.selection.active = E.document.selection.pinned = 0;
+        E.view.rowoff = E.view.coloff = E.view.free_scroll = 0;
+        editorSetStatusMessage("Anchor: %s", anchor);
+    } else if (result == MARKDOWN_ANCHOR_DUPLICATE) editorSetErrorMessage("Duplicate Markdown ID: %s", anchor);
+    else editorSetErrorMessage("Markdown anchor not found: %s", anchor);
 }
 
 /**
@@ -1876,7 +1871,8 @@ static void editorFollowLink(const char *target) {
     /* Reject URI schemes rather than interpreting them as local filenames. */
     const char *colon = strchr(target, ':');
     const char *slash = strchr(target, '/');
-    if (colon && (!slash || colon < slash)) {
+    const char *hash = strchr(target, '#');
+    if (colon && (!hash || colon < hash) && (!slash || colon < slash)) {
         editorSetErrorMessage("Unsupported link type");
         return;
     }
@@ -1928,6 +1924,24 @@ static void editorFollowLink(const char *target) {
     free(path); free(anchor);
 }
 
+/* A local reference borrows source coordinates like a normal link, but its
+ * target is an explicit ID rather than a file path. */
+static char *editorLinkTarget(int32_t row, const struct textLink *link) {
+    struct textLink reference;
+    const char *ext = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
+    if (ext && markdownIsExtension(ext + 1) &&
+        markdownFindReference(&E.document.buffer, row, link->start, &reference) &&
+        reference.start == link->start && reference.end == link->end) {
+        size_t length = (size_t)(reference.target_end - reference.target_start);
+        char *target = teMalloc(teSizeAdd(length, 2));
+        target[0] = '#';
+        memcpy(target + 1, E.document.buffer.rows[row].chars + reference.target_start, length);
+        target[length + 1] = '\0';
+        return target;
+    }
+    return linksTarget(E.document.buffer.rows[row].chars, link);
+}
+
 /**
  * @brief Follow the link under the cursor (Alt+Enter or double click).
  * @details Reports "No link under cursor" or "Invalid link target" instead of
@@ -1936,7 +1950,7 @@ static void editorFollowLink(const char *target) {
 static void editorOpenCursorLink(void) {
     struct textLink link;
     if (!editorCursorLink(&link)) { editorSetStatusMessage("No link under cursor"); return; }
-    char *target = linksTarget(E.document.buffer.rows[E.document.cursor.cy].chars, &link);
+    char *target = editorLinkTarget(E.document.cursor.cy, &link);
     if (target) { editorFollowLink(target); free(target); }
     else editorSetErrorMessage("Invalid link target");
 }
@@ -2331,6 +2345,16 @@ static uint8_t editorPreviewLinkAtMouse(int32_t screen_col, int32_t screen_row,
     int32_t end_rx = seg + 1 < nseg ? row->seg_start_rx[seg + 1] :
         editorRowCxToRx(row, row->size);
     if (rx >= end_rx) return 0;
+    int32_t source = editorRowRxToCx(row, rx);
+    struct textLink ordinary;
+    if (!linksFind(row->chars, row->size, source, &ordinary) &&
+        markdownFindReference(&E.document.buffer, cy, source, link)) {
+        int32_t from = markdownSourceRenderByte(row, link->start, S.tab_stop);
+        int32_t to = markdownSourceRenderByte(row, link->end, S.tab_stop);
+        *file_row = cy;
+        *span = (struct markdownSpan){from, from, to, to, 1};
+        return 1;
+    }
     for (int32_t i = 0; i < row->markdown_count; i++) {
         const struct markdownSpan *candidate = &row->markdown_spans[i];
         if (!candidate->link || byte < candidate->content_start || byte >= candidate->content_end ||
@@ -5958,7 +5982,7 @@ static int32_t editorHandleMouseEvent(void) {
             if (!shift_held && editorPreviewLinkAtMouse(mouseEventCol, mouseEventRow,
                 &link_row, &preview_link, &preview_span)) {
                 document_click_pending = 0;
-                char *target = linksTarget(E.document.buffer.rows[link_row].chars, &preview_link);
+                char *target = editorLinkTarget(link_row, &preview_link);
                 if (target) { editorFollowLink(target); free(target); }
                 else editorSetErrorMessage("Link contains invalid control bytes");
                 return 0;

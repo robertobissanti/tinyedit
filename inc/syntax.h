@@ -13,7 +13,7 @@
  * (Markdown: headings/emphasis/links, not keywords; XML/HTML: tags/
  * attributes, not statements) get their own dedicated tokenizer
  * function instead of being forced into this table -- see
- * syntaxHighlightRowMarkdown()/syntaxHighlightRowXml().
+ * markdownHighlightRow() in markdown.c / syntaxHighlightRowXml().
  *
  * Dispatch: syntaxHighlightRow() looks up the language table entry (or
  * dedicated tokenizer) for the supplied filename's extension and calls the right
@@ -125,6 +125,16 @@ struct syntaxLang {
      * when the language declares none. */
     const char *const *template_delimiters;
 };
+
+/* Common tokenizer primitives shared with the dedicated Markdown module.
+ * Reserve owns row->hl; failure clears all highlight state without losing text.
+ * Math scans an already allocated highlight buffer and returns an end byte
+ * offset, or -1 when the delimiter pair is incomplete. */
+uint8_t syntaxReserveHighlight(erow *row);
+uint8_t syntaxExtensionEquals(const char *ext, const char *candidate);
+uint8_t syntaxIsAsciiLetter(unsigned char byte);
+uint8_t syntaxIsIdentifierByte(char byte, const char *extra, uint8_t first);
+int32_t syntaxTryHighlightMath(erow *row, const char *s, int32_t len, int32_t i);
 
 /**
  * @brief Rebuild a row's syntax colors using its filename and incoming states.

@@ -72,14 +72,21 @@ not by itself handle termination signals; SIGTERM/SIGHUP cleanup remains pending
   generation and a descriptor table driving the parser and F2 submenus.
 - `src/command.c`, `inc/command.h`: Shared command labels, shortcuts, and
   links to settings toggles.
-- `src/links.c`, `inc/links.h`: Bounded inline link recognition, decoded local
-  targets, heading slugs and shell-free HTTP(S) browser / mailto composer dispatch.
+- `src/links.c`, `inc/links.h`: Bounded general link recognition, decoded local
+  paths/fragments and shell-free HTTP(S) browser / mailto composer dispatch.
+- `src/markdown.c`, `inc/markdown.h`: Markdown highlighting and row-owned source
+  spans, compact-preview projection/edit state, heading slugs, explicit Pandoc
+  and Obsidian anchor resolution, and local `@id` reference recognition.
+  This groups Markdown policy behind one module; generic layout and cursor
+  handling still live in render/editor code. It prepares a future vanilla
+  boundary, but does not add a vanilla build option.
 - `src/menu.c`, `inc/menu.h`: Menu bar and popup drawing, plus keyboard and
   mouse navigation.
 - `src/syntax.c`, `inc/syntax.h`: Syntax highlighting, with a generic tokenizer
   for "C-like" languages driven by per-language tables (including
   ones loaded at runtime from `~/.tinyedit/syntax/*.conf`), plus
-  dedicated tokenizers for Markdown, HTML/XML, and CSS. A `.conf` can
+  dedicated tokenizers for HTML/XML and CSS and dispatch to the Markdown
+  module. A `.conf` can
   route its language through the markup tokenizer (`base_tokenizer =
   xml`) and declare embedded `template_delimiters`, which is how the
   HTML-template languages are supported without compiled-in code.

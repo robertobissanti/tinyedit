@@ -236,10 +236,10 @@ open links, including when experimental macOS Command keys are enabled.
 
 Local links resolve relative to the current file (or the working directory
 for an unnamed document). They accept percent-encoded paths, angle-bracket
-paths containing spaces, and `#heading` fragments for ATX Markdown headings.
+paths containing spaces, and Markdown fragments described below.
 Directory links open their `README.md`. Switching files uses the usual
 save/discard/cancel confirmation: cancellation, failed saving, missing targets
-and unreadable files keep the current document. Same-document `#heading` links
+and unreadable files keep the current document. Same-document fragment links
 move the cursor without replacing the document.
 
 Web links open the system browser using `open` on macOS or `xdg-open` on Linux,
@@ -252,6 +252,86 @@ a desktop mail handler; starting the launcher does not confirm account setup
 or successful composition. Other URI schemes are unsupported. Reference-style Markdown links, HTML links, duplicate-heading
 suffixes and Setext heading anchors are not yet supported. Images are installed
 as resources; tinyedit does not display image files inline or open binary files.
+
+### Markdown heading, attribute and block targets
+
+Existing links such as `[Settings](#settings-and-appearance)` still reach
+`## Settings and Appearance`. A trailing Pandoc attribute group does not become
+part of the heading slug. Explicit Pandoc IDs are checked first, exactly and
+case-sensitively; only when no explicit ID matches does tinyedit try the existing
+ATX heading slug. Fragments retain percent decoding.
+
+These explicit targets can be reached with `[Dati](#dati)` or the corresponding
+ID in another file, such as `[Diagramma](altro.md#fig:architettura)`:
+
+```markdown
+## Titolo {#dati}
+
+[Dati sperimentali]{#esperimento}
+
+![Diagramma](architettura.png){#fig:architettura}
+
+::: {.diagramma #architettura title="Diagramma"}
+Contenuto del blocco.
+:::
+```
+
+ID attributes may appear alongside classes and quoted or unquoted properties.
+Spans and inline images require attributes immediately after the construct;
+header attributes must finish the heading line. The destination is the heading
+text, span text, image source or beginning of the fenced Div.
+
+Obsidian paragraph block IDs use a space before a trailing marker:
+
+```markdown
+Questo paragrafo contiene i dati. ^dati
+
+[Vedi i dati](#^dati)
+```
+
+For a structured block, put the marker on its own line, separated by a blank
+line on both sides (the end of the document also terminates the marker). For example:
+
+```markdown
+| Nome | Valore |
+|------|--------|
+| A    | 10     |
+
+^tabella-dati
+
+[Vedi la tabella](#^tabella-dati)
+```
+
+The jump reaches the associated block's beginning, not the marker line.
+The block association covers contiguous paragraphs, pipe tables, blockquotes
+(including callouts), and ordinary lists with blank-separated items. It is a
+conservative source scan, not a complete parser for arbitrary nested blocks;
+complex nested or multi-paragraph list layouts may need a heading or Pandoc
+span/Div ID instead.
+Obsidian IDs contain only ASCII letters, digits and hyphens. `#^id` searches
+only Obsidian block IDs; it never falls back to a heading or Pandoc ID.
+Cross-file block links work too: `[Tabella](altro.md#^tabella-dati)`.
+Duplicate explicit targets in the requested namespace and missing destinations
+produce an explicit error rather than selecting a target arbitrarily.
+
+Bare local references such as `@dati`, `@fig:architettura` and
+`[@fig:architettura]` use the same opening gestures as links: Alt+Enter or a
+mouse double-click, and a single click in compact Markdown live preview.
+They are navigable only when that Pandoc ID exists in the current document;
+email addresses and bibliography citations without a local target stay text.
+References accept letters, digits, underscores, hyphens, namespace colons and
+UTF-8 text; sentence punctuation is separate from the reference. A Pandoc ID
+containing a period can be reached with an explicit `(#id.with.period)` link;
+periods are not part of bare `@id` references.
+
+This is navigation in the Markdown source, available independently of live
+preview. Code fences and inline code do not define targets or references.
+tinyedit does not execute Pandoc, generate figure numbers, load filters or
+render images. HTML IDs, Kramdown attributes, wikilinks, reference-style images
+and a complete Pandoc or Obsidian parser are outside this subset. See the
+[Pandoc attribute syntax](https://pandoc.org/MANUAL.html#extension-header_attributes),
+[Pandoc spans and Divs](https://pandoc.org/MANUAL.html#divs-and-spans) and
+[Obsidian block convention](https://obsidian.md/help/links#Link%20to%20a%20block%20in%20a%20note).
 
 ## Menus
 

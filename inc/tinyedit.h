@@ -19,6 +19,7 @@
 #define __TINYEDIT_H
 
 #include "build_info.h"
+#include "markdown.h"
 #include "settings.h"
 #include "search.h"
 
@@ -122,11 +123,6 @@ enum undoEditType { EDIT_NONE, EDIT_INSERT, EDIT_DELETE, EDIT_OTHER };
 struct editorBuffer;
 struct historyAction;
 struct historyChange;
-
-struct markdownSpan {
-    int32_t start, content_start, content_end, end; /* Render-byte offsets. */
-    uint8_t link;
-};
 
 typedef struct erow {
     struct editorBuffer *owner;

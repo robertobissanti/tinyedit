@@ -2,89 +2,21 @@
 
 #include "alloc.h"
 #include "buffer.h"
+#include "markdown.h"
 #include "utf8.h"
 
 #include <stdlib.h>
 
-static uint8_t preview_enabled;
-static const erow *preview_row;
-static int32_t preview_cursor;
-static const erow *preview_edit_row;
-static int32_t preview_edit_start = -1;
+/* ---- presentation adapters ---- */
 
-/* ---- Markdown presentation ---- */
-
-static int32_t sourceRenderByte(const erow *row, int32_t cx, int32_t tab_stop) {
-    int32_t at = 0, byte = 0, rx = 0;
-    while (at < cx && at < row->size) {
-        size_t len = utf8NextCharLen(row->chars, (size_t)at, (size_t)row->size);
-        uint8_t tab = row->chars[at] == '\t';
-        int32_t width = tab ? tab_stop - rx % tab_stop :
-            utf8SingleCharWidth(row->chars + at, len);
-        byte += tab ? width : (int32_t)len;
-        rx += width;
-        at += (int32_t)len;
-    }
-    return byte;
-}
-
-void renderSetMarkdownPreview(uint8_t enabled, const erow *active_row,
+void renderSetMarkdownPreview(uint8_t enabled, const erow *row,
     int32_t cursor, int32_t tab_stop) {
-    preview_enabled = enabled;
-    preview_row = active_row;
-    preview_cursor = enabled && active_row ? sourceRenderByte(active_row, cursor, tab_stop) : -1;
-    int32_t edit_start = -1;
-    if (enabled && active_row) {
-        for (int32_t i = 0; i < active_row->markdown_count; i++) {
-            const struct markdownSpan *span = &active_row->markdown_spans[i];
-            if (!span->link || preview_cursor < span->start || preview_cursor > span->end) continue;
-            if (preview_cursor == span->start || preview_cursor == span->end ||
-                (preview_edit_row == active_row && preview_edit_start == span->start)) {
-                edit_start = span->start;
-                break;
-            }
-        }
-    }
-    preview_edit_row = enabled ? active_row : NULL;
-    preview_edit_start = edit_start;
+    markdownSetPreview(enabled, row, cursor, tab_stop);
 }
 
-void renderKeepMarkdownLinkEditing(void) {
-    if (!preview_enabled || !preview_row) return;
-    for (int32_t i = 0; i < preview_row->markdown_count; i++) {
-        const struct markdownSpan *span = &preview_row->markdown_spans[i];
-        if (span->link && preview_cursor >= span->start && preview_cursor <= span->end) {
-            preview_edit_row = preview_row;
-            preview_edit_start = span->start;
-            return;
-        }
-    }
-}
-
-static const struct markdownSpan *renderSpanAt(const erow *row, int32_t byte) {
-    int32_t lo = 0, hi = row->markdown_count;
-    while (lo < hi) {
-        int32_t mid = lo + (hi - lo) / 2;
-        if (row->markdown_spans[mid].start <= byte) lo = mid + 1;
-        else hi = mid;
-    }
-    if (!lo || byte >= row->markdown_spans[lo - 1].end) return NULL;
-    return &row->markdown_spans[lo - 1];
-}
-
-uint8_t renderByteHidden(const erow *row, int32_t byte) {
-    if (!preview_enabled) return 0;
-    const struct markdownSpan *span = renderSpanAt(row, byte);
-    if (!span || (row == preview_row && preview_cursor >= span->start &&
-        preview_cursor <= span->end && (!span->link || preview_edit_start == span->start))) return 0;
-    return byte < span->content_start || byte >= span->content_end;
-}
-
-uint8_t renderByteUnderlined(const erow *row, int32_t byte) {
-    if (!preview_enabled) return 0;
-    const struct markdownSpan *span = renderSpanAt(row, byte);
-    return span && span->link && byte >= span->content_start && byte < span->content_end;
-}
+void renderKeepMarkdownLinkEditing(void) { markdownKeepLinkEditing(); }
+uint8_t renderByteHidden(const erow *row, int32_t byte) { return markdownByteHidden(row, byte); }
+uint8_t renderByteUnderlined(const erow *row, int32_t byte) { return markdownByteUnderlined(row, byte); }
 
 int32_t renderByteAtColumn(const erow *row, int32_t column) {
     int32_t byte = 0, rx = 0;
@@ -99,8 +31,8 @@ int32_t renderByteAtColumn(const erow *row, int32_t column) {
 }
 
 int32_t renderRowCxToRx(const erow *row, int32_t cx, int32_t tab_stop) {
-    if (!preview_enabled || !row->markdown_count) return bufferRowCxToRx(row, cx, tab_stop);
-    int32_t end = sourceRenderByte(row, cx, tab_stop), byte = 0, rx = 0;
+    if (!markdownPreviewEnabled() || !row->markdown_count) return bufferRowCxToRx(row, cx, tab_stop);
+    int32_t end = markdownSourceRenderByte(row, cx, tab_stop), byte = 0, rx = 0;
     while (byte < end) {
         size_t len = utf8NextCharLen(row->render, (size_t)byte, (size_t)row->rsize);
         if (!renderByteHidden(row, byte)) rx += utf8SingleCharWidth(row->render + byte, len);
@@ -110,11 +42,11 @@ int32_t renderRowCxToRx(const erow *row, int32_t cx, int32_t tab_stop) {
 }
 
 int32_t renderRowRxToCx(const erow *row, int32_t target_rx, int32_t tab_stop) {
-    if (!preview_enabled || !row->markdown_count) return bufferRowRxToCx(row, target_rx, tab_stop);
+    if (!markdownPreviewEnabled() || !row->markdown_count) return bufferRowRxToCx(row, target_rx, tab_stop);
     int32_t at = 0, byte = 0, raw_rx = 0, rx = 0;
     while (at < row->size) {
         if (rx >= target_rx) {
-            const struct markdownSpan *span = renderSpanAt(row, byte);
+            const struct markdownSpan *span = markdownSpanAt(row, byte);
             /* The label's right insertion boundary belongs after the hidden
              * destination, so clicking beside it can enter source editing. */
             if (!span || !span->link || byte < span->content_end || !renderByteHidden(row, byte)) break;
@@ -184,10 +116,10 @@ int32_t renderSoftWrapCols(const struct editorView *view, const struct editorBuf
  * @return at least one segment and caches separate render-byte and display-column starts owned by row.
  */
 int32_t renderRowSegments(erow *row, int32_t wrapcols) {
-    int32_t cursor = row == preview_row ? preview_cursor : -1;
-    int32_t edit_start = row == preview_edit_row ? preview_edit_start : -1;
+    int32_t cursor = markdownPreviewCursor(row);
+    int32_t edit_start = markdownPreviewEditStart(row);
     if (row->seg_start && row->seg_start_rx && row->seg_wrapcols == wrapcols &&
-        row->seg_preview_enabled == preview_enabled && row->seg_preview_cursor == cursor &&
+        row->seg_preview_enabled == markdownPreviewEnabled() && row->seg_preview_cursor == cursor &&
         row->seg_preview_edit_start == edit_start)
         return row->seg_count;
     free(row->seg_start);
@@ -196,7 +128,7 @@ int32_t renderRowSegments(erow *row, int32_t wrapcols) {
     row->seg_start_rx = NULL;
     row->seg_count = 0;
     row->seg_wrapcols = wrapcols;
-    row->seg_preview_enabled = preview_enabled;
+    row->seg_preview_enabled = markdownPreviewEnabled();
     row->seg_preview_cursor = cursor;
     row->seg_preview_edit_start = edit_start;
 

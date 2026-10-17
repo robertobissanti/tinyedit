@@ -9,6 +9,11 @@ from urllib.parse import unquote, urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def prose_only(text):
+    text = re.sub(r"^(`{3,}|~{3,})[^\n]*\n.*?^\1\s*$", "", text, flags=re.S | re.M)
+    return re.sub(r"(?<!`)(`+)(?!`).*?(?<!`)\1(?!`)", "", text, flags=re.S)
+
+
 def test_colorscheme_copy_failure(temporary):
     """A later successful copy must not hide an earlier installation error."""
     tools = Path(temporary) / "fake-tools"
@@ -34,6 +39,7 @@ def test_colorscheme_copy_failure(temporary):
 
 
 def main():
+    assert prose_only("`` `literal` [sample](absent.md) `` [real](README.md)") == " [real](README.md)"
     with tempfile.TemporaryDirectory(prefix="tinyedit docs ") as temporary:
         test_colorscheme_copy_failure(temporary)
         destination = Path(temporary) / ".tinyedit"
@@ -45,8 +51,7 @@ def main():
         for source in (ROOT / "docs").glob("*.md"):
             installed = destination / "docs" / source.name
             assert installed.read_bytes() == source.read_bytes(), source
-            text = re.sub(r"```.*?```", "", installed.read_text(), flags=re.S)
-            text = re.sub(r"`[^`]*`", "", text)
+            text = prose_only(installed.read_text())
             targets = [m.group(1) for m in re.finditer(r"!?\[[^\]\n]*\]\(([^)\n]+)\)", text)]
             targets += re.findall(r'<img\s[^>]*src="([^"]+)"', text)  # HTML images too
             for target in targets:
