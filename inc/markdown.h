@@ -37,6 +37,7 @@ uint8_t markdownLinkIsImage(const struct erow *row, const struct textLink *link)
  * render must be current; spans borrow no source memory. */
 void markdownHighlightRow(struct erow *row, uint8_t prev_in_fence, uint8_t prev_in_math,
     uint8_t prev_in_frontmatter, int32_t row_index, uint8_t prev_in_emphasis);
+void markdownHighlightAnchors(struct erow *row);
 uint8_t markdownIsExtension(const char *ext);
 
 /* Borrow active_row until the next configuration. cursor is a source-byte

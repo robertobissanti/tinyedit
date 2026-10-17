@@ -86,8 +86,12 @@ Markdown colors (blue headings, orange-red bold and orange math), with a
 coordinated blue-gray heading background (`#354151`); it does not reproduce an
 Airline theme or every Vim highlight group. Parentheses and brackets use a
 distinct yellow in the RGB presets: `#E5C07B` in One Dark and `#F9E2AF` in
-Catppuccin Mocha, separate from normal text. Link/image delimiters, Pandoc
-attribute braces and plain parentheses/brackets all use this same bracket role.
+Catppuccin Mocha, separate from normal text. Ordinary parentheses/brackets use
+**Syntax: bracket color**. Markdown link/image delimiters and recognized Pandoc
+anchor delimiters/IDs instead use **Syntax: preprocessor color**, so navigation
+syntax is distinct from punctuation used for other purposes. In Mocha, this is
+Lavender `#B4BEFE` for link/anchor markers and Yellow `#F9E2AF` for ordinary
+brackets. Link labels and destinations keep their keyword/string colors.
 Brackets inside strings, comments or literal code spans retain those token colors;
 selection, search and hovered link content keep their normal precedence.
 

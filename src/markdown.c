@@ -389,7 +389,7 @@ static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t 
     if (url_end < 0) return start;
 
     if (s[start] == '!') row->hl[start] = HL_PREPROCESSOR;
-    row->hl[bracket] = HL_BRACKET;
+    row->hl[bracket] = HL_LINK_MARKER;
 
     /* Label: recurse so a nested image inside a link keeps its own
      * colors, and plain label text becomes HL_KEYWORD. */
@@ -401,10 +401,10 @@ static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t 
         k++;
     }
 
-    row->hl[label_end] = HL_BRACKET;
-    row->hl[label_end + 1] = HL_BRACKET;
+    row->hl[label_end] = HL_LINK_MARKER;
+    row->hl[label_end + 1] = HL_LINK_MARKER;
     for (int32_t u = label_end + 2; u < url_end; u++) row->hl[u] = HL_STRING;
-    row->hl[url_end] = HL_BRACKET;
+    row->hl[url_end] = HL_LINK_MARKER;
     row->markdown_count = span_count;
     int32_t destination = label_end + 2;
     while (destination < url_end && (s[destination] == ' ' || s[destination] == '\t'))
@@ -863,11 +863,65 @@ char *markdownHeadingSlug(const char *text, int32_t length) {
 static int32_t markdownPairEnd(const erow *row, const uint8_t *mask, int32_t start, char open, char close) {
     int32_t depth = 0;
     for (int32_t at = start; at < row->size; at = markdownNext(row->chars, at, row->size)) {
-        if (!mask[at]) continue;
+        if (mask ? !mask[at] : row->hl && (row->hl[at] == HL_STRING ||
+            row->hl[at] == HL_COMMENT || row->hl[at] == HL_MATH)) continue;
         if (row->chars[at] == open) depth++;
         else if (row->chars[at] == close && --depth == 0) return at + 1;
     }
     return -1;
+}
+
+static uint8_t markdownAnchorEligible(const erow *row, int32_t at) {
+    if (row->hl[at] == HL_STRING || row->hl[at] == HL_COMMENT || row->hl[at] == HL_MATH) return 0;
+    uint8_t escaped = 0;
+    while (at > 0) {
+        int32_t prev = at - (int32_t)utf8PrevCharLen(row->chars, (size_t)at);
+        if (row->chars[prev] != '\\') break;
+        escaped = !escaped;
+        at = prev;
+    }
+    return !escaped;
+}
+
+static void markdownHighlightAttribute(erow *row, int32_t start, const struct markdownAttributes *attr) {
+    row->hl[start] = row->hl[attr->end - 1] = HL_LINK_MARKER;
+    memset(row->hl + attr->id_start - 1, HL_LINK_MARKER, (size_t)(attr->id_end - attr->id_start + 1));
+}
+
+void markdownHighlightAnchors(erow *row) {
+    if (!row->hl || row->markdown_code.marker || row->hl_open_frontmatter) return;
+    erow rendered = {0}; rendered.chars = row->render; rendered.size = row->rsize; rendered.hl = row->hl;
+    struct markdownAttributes attr;
+    if (row->hl_heading) {
+        int32_t start = markdownHeaderAttributes(&rendered, NULL, &attr);
+        if (start >= 0 && attr.id_start >= 0) markdownHighlightAttribute(row, start, &attr);
+    }
+    int32_t start = markdownTrimStart(&rendered), div = start;
+    while (div < rendered.size && rendered.chars[div] == ':') div = markdownNext(rendered.chars, div, rendered.size);
+    if (start <= 3 && div - start >= 3 && markdownAnchorEligible(&rendered, start)) {
+        while (div < rendered.size && markdownSpace(rendered.chars[div])) div = markdownNext(rendered.chars, div, rendered.size);
+        if (markdownAttributes(&rendered, NULL, div, &attr) && attr.id_start >= 0 && attr.end == markdownTrimEnd(&rendered)) {
+            markdownHighlightAttribute(row, div, &attr);
+            memset(row->hl + start, HL_LINK_MARKER, (size_t)(div - start));
+        }
+    }
+    for (int32_t at = 0; at < rendered.size;) {
+        if (!markdownAnchorEligible(&rendered, at)) { at = markdownNext(rendered.chars, at, rendered.size); continue; }
+        uint8_t image = rendered.chars[at] == '!' && at + 1 < rendered.size && rendered.chars[at + 1] == '[';
+        int32_t bracket = image ? at + 1 : at;
+        if (rendered.chars[bracket] != '[') { at = markdownNext(rendered.chars, at, rendered.size); continue; }
+        int32_t close = markdownPairEnd(&rendered, NULL, bracket, '[', ']');
+        if (close < 0) { at = markdownNext(rendered.chars, at, rendered.size); continue; }
+        int32_t attributes = close;
+        if (image && (close >= rendered.size || rendered.chars[close] != '(')) { at = close; continue; }
+        if (image)
+            attributes = markdownPairEnd(&rendered, NULL, close, '(', ')');
+        if (attributes >= 0 && markdownAttributes(&rendered, NULL, attributes, &attr) && attr.id_start >= 0) {
+            row->hl[bracket] = row->hl[close - 1] = HL_LINK_MARKER;
+            markdownHighlightAttribute(row, attributes, &attr);
+            at = attr.end;
+        } else at = close;
+    }
 }
 
 static uint8_t markdownIdEquals(const erow *row, int32_t from, int32_t to, const char *id) {

@@ -38,11 +38,14 @@ embedded HTML tags), HTML/XML (`.html` `.htm`
 `.xml`, with tags, attributes, and `<!-- -->` comments), and CSS (`.css`, with
 properties, values, comments).
 
-Parentheses, square brackets and braces use the configured bracket color,
-including the delimiters of Markdown links and images and the braces of Pandoc
-attributes. These delimiters do not inherit the heading/preprocessor color.
-Brackets within strings, comments and inline code keep their token's color;
-selection/search and link-hover feedback take precedence.
+Ordinary parentheses, square brackets and braces use the configured bracket
+color. Markdown link/image delimiters and Pandoc anchor delimiters/IDs use the
+structural/preprocessor color instead. This includes `[text]{#id}`, image
+attributes, heading attributes and fenced Divs such as `::: {#id}`; unrelated
+`[text]` or `{text}` remains ordinary punctuation. Link labels and destinations
+retain their keyword/string colors. Brackets within strings, comments and
+inline code keep their token's color; selection/search and link-hover feedback
+take precedence.
 
 ### Fenced code blocks
 

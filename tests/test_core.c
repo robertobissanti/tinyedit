@@ -1968,29 +1968,40 @@ static void testBracketColors(void) {
     editorResetDocument();
     S.syntax_highlight = 1;
     E.document.file.filename = teStrdup("brackets.md");
-    const char *markdown = "[anchor](#id) ![image](img.png){#fig:id} [span]{#id} ()";
+    S.color_syntax_preprocessor = COLOR_BLUE_DARK;
+    const char *markdown = "[anchor](#id) ![image](img.png){#fig:id} [span]{#id} () [] {}";
     editorInsertRow(0, markdown, strlen(markdown));
     ab = (struct abuf)ABUF_INIT;
     editorDrawRowSegment(&ab, 0, 0, E.document.buffer.rows[0].rsize,
         0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
     abAppend(&ab, "", 1);
-    for (const char *bracket = "()[]{}"; *bracket; bracket++) {
-        char expected[] = "\x1b[31m?";
-        expected[5] = *bracket;
-        check(strstr(ab.b, expected) != NULL, "Markdown link, image, attribute and plain brackets share one color");
+    int32_t plain = (int32_t)(strstr(markdown, " () [] {}") - markdown) + 1;
+    erow *row = &E.document.buffer.rows[0];
+    for (int32_t at = 0; at < row->size; at += (int32_t)utf8NextCharLen(row->chars, (size_t)at, (size_t)row->size)) {
+        if (strchr("()[]{}", row->chars[at]))
+            check(row->hl[at] == (at < plain ? HL_LINK_MARKER : HL_NORMAL),
+                "link/image/anchor delimiters are distinct from ordinary brackets");
     }
-    check(strstr(ab.b, "\x1b[31m[") && !strstr(ab.b, "\x1b[36m["),
-        "Markdown structural markers do not override the bracket role");
+    check(strstr(ab.b, "\x1b[34m[") && strstr(ab.b, "\x1b[34m{") && strstr(ab.b, "\x1b[31m("),
+        "ANSI link and Pandoc markers differ from ordinary bracket color");
     abFree(&ab);
     S.color_mode = COLOR_MODE_RGB;
     S.rgb_color_syntax_bracket = 0x123456;
+    S.rgb_color_syntax_preprocessor = 0x654321;
     ab = (struct abuf)ABUF_INIT;
     editorDrawRowSegment(&ab, 0, 0, E.document.buffer.rows[0].rsize,
         0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
     abAppend(&ab, "", 1);
-    check(strstr(ab.b, "\x1b[38;2;18;52;86m[") && strstr(ab.b, "\x1b[38;2;18;52;86m("),
-        "RGB bracket role covers Markdown links and image destinations");
+    check(strstr(ab.b, "\x1b[38;2;101;67;33m[") && strstr(ab.b, "\x1b[38;2;18;52;86m("),
+        "RGB link/anchor markers and ordinary brackets use distinct roles");
     abFree(&ab);
+    editorResetDocument();
+    E.document.file.filename = teStrdup("literal.md");
+    const char *literal = "`[literal]{#fake}` \\[escaped]{#escaped} [plain] {ordinary} ![missing]{#bad}";
+    editorInsertRow(0, literal, strlen(literal));
+    row = &E.document.buffer.rows[0];
+    for (int32_t at = 0; at < row->rsize; at++)
+        check(row->hl[at] != HL_LINK_MARKER, "literal, escaped and incomplete anchors do not receive link markers");
     editorResetDocument();
     settingsDefaults(&S);
 }

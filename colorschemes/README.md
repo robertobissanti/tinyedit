@@ -24,14 +24,16 @@ Catppuccin editor integration. Their MIT notice is included in
 | JSON keys and function names | Blue |
 | Parentheses and brackets | Yellow |
 | Numbers and bold emphasis | Peach |
-| Preprocessor and Markdown headings | Lavender |
+| Preprocessor, Markdown headings and link/anchor markers | Lavender |
 | Math / italic text | Teal / Text |
 | Link hover | Sky |
 
-All structural `()`, `[]` and `{}` share the bracket role, including Markdown
-links/images and Pandoc spans/attributes. Literal strings, comments and inline
-code retain their own token colors. Selection/search and link-hover feedback
-still take precedence. Mocha's heading background now uses official Surface 0
+Ordinary `()`, `[]` and `{}` use the Yellow bracket role. Markdown link/image
+delimiters and recognized Pandoc span, header and Div anchor markers use the
+Lavender structural/preprocessor role, distinguishing navigation syntax from
+ordinary punctuation. Labels and destinations keep their own token colors.
+Literal strings, comments and inline code retain their colors; selection/search
+and link-hover feedback still take precedence. Mocha's heading background now uses official Surface 0
 (`#313244`), replacing the previous custom `#2D2E43`.
 
 One Dark includes the personal Vim Markdown overrides: blue headings

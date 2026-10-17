@@ -60,8 +60,9 @@
 
 ### Other minor fixing
 
-- Use the configured bracket color for Markdown link/image delimiters as well
-  as Pandoc attributes and plain parentheses, preserving literal strings,
+- Distinguish Markdown link/image delimiters and recognized Pandoc anchor
+  delimiters/IDs from ordinary parentheses: navigation markers use the structural
+  color, while ordinary brackets keep their own color. Preserve literal strings,
   comments, selection and hover colors.
 
 - Keep the current color-scheme name visible in Colors and cycle presets

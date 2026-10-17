@@ -198,8 +198,9 @@ page with ANSI/RGB palettes and live previews. One Dark and all four official Ca
 (Latte, Frappé, Macchiato and Mocha) are included. The Colors page always shows the current preset name
 (or Custom); Left/Right selects a preset directly in the draft, without an
 extra confirmation. The RGB presets use distinct yellow parentheses and
-brackets. Markdown links, images and Pandoc attributes use the same bracket
-color as ordinary text and code; strings and comments retain their own colors.
+brackets. Markdown link/image delimiters and Pandoc anchor markers use a
+separate structural color, distinct from ordinary parentheses and brackets.
+Strings and comments retain their own colors.
 Save all Settings with F2/Ctrl-S. ANSI is the default; RGB output is an explicit choice.
 See the [settings and themes guide](docs/configuration.md) for installation
 and configuration.
