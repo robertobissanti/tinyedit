@@ -83,7 +83,7 @@ for real editing rather than just demonstrating how a terminal works.
 | [Menus](docs/usage.md#menus) | A persistent menu bar with TinyEdit, File, Edit, View, and Help menus; keyboard and optional mouse navigation; shortcuts beside commands; and checked View settings. |
 | [Interface](docs/usage.md#top-and-status-bars) | Optional Markdown live preview with cursor expansion, line numbers and top bar, visible whitespace, file statistics, in-editor help, and a settings panel. |
 | [Configuration](docs/configuration.md#settings-and-appearance) | Settings live in `~/.tinyeditrc`; tabs, wrapping, mouse behavior, cursor shape and blinking, interface elements, and editing assists can all be changed from `F2`. |
-| [Colors and themes](docs/configuration.md#colors-page-and-rgb) | ANSI by default or optional RGB with validated hex colors, previews, separate palettes, and One Dark / Catppuccin Mocha presets selected from one Colors page. |
+| [Colors and themes](docs/configuration.md#colors-page-and-rgb) | ANSI by default or optional RGB with validated hex colors, previews, separate palettes, and One Dark plus all four Catppuccin flavors selected from one Colors page. |
 | [Build identification](#build-identification) | The same release and source build identifier appears in `--version`, the startup splash, and F3. |
 | [Portability](#build) | One C99 binary and no third-party runtime libraries. The supported targets are POSIX systems such as macOS and Linux. |
 | [Testing](docs/development.md#code-layout) | Syntax, settings, backup, terminal-input, key-binding, and very-long-line behavior are covered by `make test`; sample files are included for hands-on checks. |
@@ -194,11 +194,13 @@ make install-docs           # personal guides for Help → Documentation
 | `F10` | Open the menu |
 
 F2 includes cursor shape and blinking, editing preferences, and a **Colors**
-page with ANSI/RGB palettes and live previews. One Dark and Catppuccin Mocha
-presets are included. The Colors page always shows the current preset name
+page with ANSI/RGB palettes and live previews. One Dark and all four official Catppuccin RGB palettes
+(Latte, Frappé, Macchiato and Mocha) are included. The Colors page always shows the current preset name
 (or Custom); Left/Right selects a preset directly in the draft, without an
 extra confirmation. The RGB presets use distinct yellow parentheses and
-brackets. Save all Settings with F2/Ctrl-S. ANSI is the default; RGB output is an explicit choice.
+brackets. Markdown links, images and Pandoc attributes use the same bracket
+color as ordinary text and code; strings and comments retain their own colors.
+Save all Settings with F2/Ctrl-S. ANSI is the default; RGB output is an explicit choice.
 See the [settings and themes guide](docs/configuration.md) for installation
 and configuration.
 
@@ -297,3 +299,6 @@ see above) stays
 under Salvatore Sanfilippo and Pieter Noordhuis's original BSD
 2-Clause license; see
 [`LICENSE-THIRD-PARTY`](LICENSE-THIRD-PARTY).
+
+Catppuccin palette data is distributed under its MIT license; see
+[`LICENSE-THIRD-PARTY`](LICENSE-THIRD-PARTY) for its copyright and notice.

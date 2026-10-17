@@ -74,7 +74,8 @@ enum syntaxHighlight {
     HL_MATH,
     HL_FUNCTION,
     HL_EMPHASIS,
-    HL_JSON_KEY
+    HL_JSON_KEY,
+    HL_BRACKET
 };
 
 struct syntaxLang {

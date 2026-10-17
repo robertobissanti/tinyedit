@@ -38,6 +38,12 @@ embedded HTML tags), HTML/XML (`.html` `.htm`
 `.xml`, with tags, attributes, and `<!-- -->` comments), and CSS (`.css`, with
 properties, values, comments).
 
+Parentheses, square brackets and braces use the configured bracket color,
+including the delimiters of Markdown links and images and the braces of Pandoc
+attributes. These delimiters do not inherit the heading/preprocessor color.
+Brackets within strings, comments and inline code keep their token's color;
+selection/search and link-hover feedback take precedence.
+
 ### Fenced code blocks
 
 **Fenced code blocks** use the declared language's highlighter. For example:

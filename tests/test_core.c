@@ -1966,6 +1966,32 @@ static void testBracketColors(void) {
     check(strstr(ab.b, "\x1b[31m(") != NULL, "bracket color independent of syntax toggle");
     abFree(&ab);
     editorResetDocument();
+    S.syntax_highlight = 1;
+    E.document.file.filename = teStrdup("brackets.md");
+    const char *markdown = "[anchor](#id) ![image](img.png){#fig:id} [span]{#id} ()";
+    editorInsertRow(0, markdown, strlen(markdown));
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRowSegment(&ab, 0, 0, E.document.buffer.rows[0].rsize,
+        0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    for (const char *bracket = "()[]{}"; *bracket; bracket++) {
+        char expected[] = "\x1b[31m?";
+        expected[5] = *bracket;
+        check(strstr(ab.b, expected) != NULL, "Markdown link, image, attribute and plain brackets share one color");
+    }
+    check(strstr(ab.b, "\x1b[31m[") && !strstr(ab.b, "\x1b[36m["),
+        "Markdown structural markers do not override the bracket role");
+    abFree(&ab);
+    S.color_mode = COLOR_MODE_RGB;
+    S.rgb_color_syntax_bracket = 0x123456;
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRowSegment(&ab, 0, 0, E.document.buffer.rows[0].rsize,
+        0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    check(strstr(ab.b, "\x1b[38;2;18;52;86m[") && strstr(ab.b, "\x1b[38;2;18;52;86m("),
+        "RGB bracket role covers Markdown links and image destinations");
+    abFree(&ab);
+    editorResetDocument();
     settingsDefaults(&S);
 }
 

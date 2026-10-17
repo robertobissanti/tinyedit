@@ -75,7 +75,10 @@ Complete presets are included in [`colorschemes/`](../colorschemes/README.md):
 | Scheme | RGB file | ANSI file |
 |---|---|---|
 | One Dark, adapted from Vim One with `background=dark` | `one-dark.conf` | `one-dark-ansi.conf` |
-| Catppuccin Mocha | `catppuccin-mocha.conf` | `catppuccin-mocha-ansi.conf` |
+| Catppuccin Latte (light) | `catppuccin-latte.conf` | — |
+| Catppuccin Frappé (dark) | `catppuccin-frappe.conf` | — |
+| Catppuccin Macchiato (dark) | `catppuccin-macchiato.conf` | — |
+| Catppuccin Mocha (dark) | `catppuccin-mocha.conf` | `catppuccin-mocha-ansi.conf` |
 
 RGB presets use explicit colors; ANSI presets are approximations whose actual
 shades depend on the terminal palette. One Dark includes the customized
@@ -83,7 +86,18 @@ Markdown colors (blue headings, orange-red bold and orange math), with a
 coordinated blue-gray heading background (`#354151`); it does not reproduce an
 Airline theme or every Vim highlight group. Parentheses and brackets use a
 distinct yellow in the RGB presets: `#E5C07B` in One Dark and `#F9E2AF` in
-Catppuccin Mocha, separate from normal text.
+Catppuccin Mocha, separate from normal text. Link/image delimiters, Pandoc
+attribute braces and plain parentheses/brackets all use this same bracket role.
+Brackets inside strings, comments or literal code spans retain those token colors;
+selection, search and hovered link content keep their normal precedence.
+
+Select **Mode: rgb** to see every Catppuccin flavor. All four presets use colors
+from the official [Catppuccin palette](https://catppuccin.com/palette/), version
+1.8.0, with a consistent assignment to tinyedit's color roles. Heading backgrounds
+use each flavor's official Surface 0; Mocha now uses `#313244` in place of the
+previous custom shade. The variants are RGB presets; the existing Mocha ANSI
+approximation remains available, but a terminal's fixed ANSI palette cannot
+faithfully represent all four sets of official RGB values.
 
 ```sh
 make install-colorschemes   # copies missing files; install-colorschemes-force overwrites

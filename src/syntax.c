@@ -1333,6 +1333,7 @@ const char *syntaxColorFor(enum syntaxHighlight hl, const struct editorSettings 
         case HL_EMPHASIS:     return ansiColorCode(settingsColor(s, color_syntax_italic));
         case HL_KEYWORD:      return ansiColorCode(settingsColor(s, color_syntax_keyword));
         case HL_JSON_KEY:     return ansiColorCode(settingsColor(s, color_syntax_json_key));
+        case HL_BRACKET:      return ansiColorCode(settingsColor(s, color_syntax_bracket));
         case HL_STRING:       return ansiColorCode(settingsColor(s, color_syntax_string));
         case HL_NUMBER:       return ansiColorCode(settingsColor(s, color_syntax_number));
         case HL_PREPROCESSOR: return ansiColorCode(settingsColor(s, color_syntax_preprocessor));

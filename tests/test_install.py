@@ -60,7 +60,7 @@ def main():
                 try:
                     terminal.read_available(master)
                     navigation, _ = terminal.setting_navigation("color_mode")
-                    os.write(master, b"\x1bOQ" + navigation + b"\x1b[B\r")
+                    os.write(master, b"\x1bOQ" + navigation + b"\x1b[B" + b"\x1b[C" * 4)
                     output = terminal.read_available(master)
                     assert b"Color scheme: catppuccin-mocha" in output
                     if personal:

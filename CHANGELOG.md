@@ -4,6 +4,10 @@
 
 ### New features
 
+- Add all four official Catppuccin RGB palettes: light Latte and dark Frappé,
+  Macchiato and Mocha. Use the same color-role mapping and official palette
+  values, including Surface 0 for Markdown heading backgrounds.
+
 - Highlight declared Markdown fenced-code languages with tinyedit's existing
   tokenizers, including installed syntax definitions. Preserve multiline
   comments across code rows and recolor the block when its language changes;
@@ -55,6 +59,10 @@
   retain `make install-binary` for executable-only installations.
 
 ### Other minor fixing
+
+- Use the configured bracket color for Markdown link/image delimiters as well
+  as Pandoc attributes and plain parentheses, preserving literal strings,
+  comments, selection and hover colors.
 
 - Keep the current color-scheme name visible in Colors and cycle presets
   directly with Left/Right, without a separate Enter confirmation. Mouse clicks

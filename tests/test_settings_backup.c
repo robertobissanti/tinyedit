@@ -146,8 +146,19 @@ int main(void) {
         scheme.rgb_color_syntax_italic != scheme.rgb_color_syntax_keyword ||
         scheme.color_syntax_italic != before_scheme.color_syntax_italic)
         fail("legacy scheme italic inheritance preserves inactive palette");
-    if (!settingsLoadColorScheme("colorschemes/catppuccin-mocha.conf", &scheme, scheme_error, sizeof(scheme_error)) ||
-        scheme.rgb_color_background != 0x1e1e2e) fail("Mocha scheme rejected");
+    const char *flavors[] = {"latte", "frappe", "macchiato", "mocha"};
+    const int32_t backgrounds[] = {0xeff1f5, 0x303446, 0x24273a, 0x1e1e2e};
+    const int32_t bracket_colors[] = {0xdf8e1d, 0xe5c890, 0xeed49f, 0xf9e2af};
+    for (size_t i = 0; i < sizeof(flavors) / sizeof(*flavors); i++) {
+        char preset[128];
+        snprintf(preset, sizeof(preset), "colorschemes/catppuccin-%s.conf", flavors[i]);
+        struct editorSettings unchanged = scheme;
+        if (!settingsLoadColorScheme(preset, &scheme, scheme_error, sizeof(scheme_error)) ||
+            scheme.color_mode != COLOR_MODE_RGB || scheme.rgb_color_background != backgrounds[i] ||
+            scheme.rgb_color_syntax_bracket != bracket_colors[i]) fail("official Catppuccin flavor rejected");
+        if (scheme.color_background != unchanged.color_background || scheme.tab_stop != unchanged.tab_stop ||
+            scheme.rgb_output != unchanged.rgb_output) fail("Catppuccin changed unrelated settings or ANSI palette");
+    }
     before_scheme = scheme;
     const char *invalid_schemes[] = {
         "color_mode = rgb\nrgb_background = #112233\n",

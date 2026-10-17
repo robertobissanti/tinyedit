@@ -389,7 +389,7 @@ static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t 
     if (url_end < 0) return start;
 
     if (s[start] == '!') row->hl[start] = HL_PREPROCESSOR;
-    row->hl[bracket] = HL_PREPROCESSOR;
+    row->hl[bracket] = HL_BRACKET;
 
     /* Label: recurse so a nested image inside a link keeps its own
      * colors, and plain label text becomes HL_KEYWORD. */
@@ -401,10 +401,10 @@ static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t 
         k++;
     }
 
-    row->hl[label_end] = HL_PREPROCESSOR;
-    row->hl[label_end + 1] = HL_PREPROCESSOR;
+    row->hl[label_end] = HL_BRACKET;
+    row->hl[label_end + 1] = HL_BRACKET;
     for (int32_t u = label_end + 2; u < url_end; u++) row->hl[u] = HL_STRING;
-    row->hl[url_end] = HL_PREPROCESSOR;
+    row->hl[url_end] = HL_BRACKET;
     row->markdown_count = span_count;
     int32_t destination = label_end + 2;
     while (destination < url_end && (s[destination] == ' ' || s[destination] == '\t'))

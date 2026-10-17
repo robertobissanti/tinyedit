@@ -3,7 +3,36 @@
 Complete RGB presets and separate ANSI adaptations, adapted to tinyedit's color roles:
 
 - `one-dark.conf`: [Vim One](https://github.com/rakr/vim-one), `background=dark`.
-- `catppuccin-mocha.conf`: [Catppuccin Mocha](https://github.com/catppuccin/catppuccin).
+- `catppuccin-latte.conf`: Catppuccin Latte, light.
+- `catppuccin-frappe.conf`: Catppuccin Frappé, dark.
+- `catppuccin-macchiato.conf`: Catppuccin Macchiato, dark.
+- `catppuccin-mocha.conf`: Catppuccin Mocha, dark.
+
+The four Catppuccin RGB presets use official HEX values from
+[catppuccin/palette](https://github.com/catppuccin/palette/blob/main/palette.json),
+version 1.8.0. Color roles are tinyedit's adaptation, rather than an official
+Catppuccin editor integration. Their MIT notice is included in
+[LICENSE-THIRD-PARTY](../LICENSE-THIRD-PARTY). Select RGB mode to see all four.
+
+| tinyedit role | Official Catppuccin color |
+|---|---|
+| Editor background / normal text | Base / Text |
+| Gutter and comments / invisibles | Overlay 1 / Overlay 0 |
+| Selection / heading background | Surface 1 / Surface 0 |
+| Status bar background / text | Mantle / Subtext 0 |
+| Keywords / strings | Mauve / Green |
+| JSON keys and function names | Blue |
+| Parentheses and brackets | Yellow |
+| Numbers and bold emphasis | Peach |
+| Preprocessor and Markdown headings | Lavender |
+| Math / italic text | Teal / Text |
+| Link hover | Sky |
+
+All structural `()`, `[]` and `{}` share the bracket role, including Markdown
+links/images and Pandoc spans/attributes. Literal strings, comments and inline
+code retain their own token colors. Selection/search and link-hover feedback
+still take precedence. Mocha's heading background now uses official Surface 0
+(`#313244`), replacing the previous custom `#2D2E43`.
 
 One Dark includes the personal Vim Markdown overrides: blue headings
 (`#61AFEF`), orange-red bold (`#DE4000`), orange math (`#D19A66`). Tinyedit retains a heading background (`#354151`),
@@ -26,6 +55,8 @@ make install-colorschemes   # from the repository root; never overwrites existin
 
 ANSI files are `one-dark-ansi.conf` and `catppuccin-mocha-ansi.conf`.
 Their shades depend on the terminal palette and approximate the RGB originals.
+Latte, Frappé and Macchiato are provided as RGB presets only; ANSI fallback is
+available through Settings but cannot reproduce their exact RGB colors.
 
 In **F2 → Colors**, choose **Mode** first. The **Color scheme** row always
 shows the name of the installed preset matching the active palette, or
@@ -40,8 +71,9 @@ Ctrl-S/F2 saves all draft changes to `~/.tinyeditrc`; Esc returns from Colors
 to the main Settings page while retaining the draft. Discarding Settings keeps
 the previous colors. A failed save retains the draft for retry or discard.
 
-Both RGB presets give parentheses and brackets a distinct yellow:
-One Dark uses `#E5C07B`, Catppuccin Mocha uses `#F9E2AF`. Existing personal copies
+RGB presets give parentheses and brackets a distinct yellow: One Dark uses
+`#E5C07B`; Catppuccin Latte `#DF8E1D`, Frappé `#E5C890`, Macchiato `#EED49F`
+and Mocha `#F9E2AF`. Existing personal copies
 are preserved by normal installation. To replace them with the updated shipped
 presets, run `make install-colorschemes-force` (this overwrites personal preset
 files), then re-select the theme and save Settings. Already saved palette values

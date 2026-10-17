@@ -1772,7 +1772,9 @@ def test_color_scheme_selection(home):
     directory = case_home / ".tinyedit" / "color-scheme"
     directory.mkdir(parents=True)
     (directory / "one-dark.conf").write_bytes((ROOT / "colorschemes" / "one-dark.conf").read_bytes())
-    (directory / "catppuccin-mocha.conf").write_bytes((ROOT / "colorschemes" / "catppuccin-mocha.conf").read_bytes())
+    for flavor in ("latte", "frappe", "macchiato", "mocha"):
+        name = f"catppuccin-{flavor}.conf"
+        (directory / name).write_bytes((ROOT / "colorschemes" / name).read_bytes())
     for name in ("one-dark-ansi.conf", "catppuccin-mocha-ansi.conf"):
         (directory / name).write_bytes((ROOT / "colorschemes" / name).read_bytes())
     config = case_home / ".tinyeditrc"
@@ -1786,23 +1788,23 @@ def test_color_scheme_selection(home):
         os.write(master, b"\x1bOQ" + navigation + b"\x1b[B")
         output = read_available(master)
         assert b"Color scheme: Custom" in output
+        # Every official flavor appears and updates the same draft directly.
+        for flavor in ("frappe", "latte", "macchiato", "mocha"):
+            os.write(master, b"\x1b[C")
+            output = read_available(master)
+            assert f"Color scheme: catppuccin-{flavor}".encode() in output
+            assert b"Settings > Colors >" not in output
         os.write(master, b"\x1b[C")
-        output = read_available(master)
-        assert b"Color scheme: catppuccin-mocha" in output
-        assert b"Settings > Colors >" not in output, "selector opened another screen"
-        os.write(master, b"\x1b[C")
-        output = read_available(master)
-        assert b"Color scheme: one-dark" in output
-        assert b"one-dark-ansi" not in output, "ANSI scheme offered in RGB mode"
+        assert b"Color scheme: one-dark" in read_available(master)
         os.write(master, b"\x1b[D")
         assert b"Color scheme: catppuccin-mocha" in read_available(master)
         os.write(master, b"\x1b[<65;20;5M")
         assert b"Color scheme: one-dark" in read_available(master), "wheel over scheme cycles it"
         os.write(master, b"\x1b[<0;20;5M\x1b[<0;20;5m")
-        assert b"Color scheme: catppuccin-mocha" in read_available(master), "click cycles immediately"
+        assert b"Color scheme: catppuccin-frappe" in read_available(master), "click wraps to first RGB preset"
         # Leaving the row keeps its choice without an Enter confirmation.
         os.write(master, b"\x1b[A")
-        assert b"Color scheme: catppuccin-mocha" in read_available(master)
+        assert b"Color scheme: catppuccin-frappe" in read_available(master)
         os.write(master, b"\x1b")
         read_available(master)
         os.write(master, b"\x1b")
@@ -1810,8 +1812,8 @@ def test_color_scheme_selection(home):
         os.write(master, b"n")
         read_available(master)
         assert config.read_bytes() == original, "discarded scheme wrote settings"
-        # Cycle twice and save directly: no confirmation inside the selector.
-        os.write(master, b"\x1bOQ" + navigation + b"\x1b[B\x1b[C\x1b[C")
+        # Cycle through all five RGB presets and save without another confirmation.
+        os.write(master, b"\x1bOQ" + navigation + b"\x1b[B" + b"\x1b[C" * 5)
         output = read_available(master)
         assert b"Color scheme: one-dark" in output
         os.write(master, b"\x1bOQ")
