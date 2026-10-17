@@ -1354,6 +1354,52 @@ static void testLinks(void) {
     check(dup2(saved_output, STDOUT_FILENO) >= 0, "restore link output"); close(saved_output);
 }
 
+static void testMouseScrollView(void) {
+    for (uint8_t mode = 0; mode < 4; mode++) {
+        settingsDefaults(&S);
+        S.markdown_live_preview = mode & 1;
+        S.soft_wrap = mode > 1 ? 40 : 0;
+        S.mouse_enabled = 1;
+        S.show_menu = S.show_top_bar = S.show_line_numbers = 0;
+        T.visible = T.focused = 0;
+        editorResetDocument();
+        E.view.screenrows = 20; E.view.screencols = 80;
+        E.document.file.filename = teStrdup("scroll.md");
+        for (int32_t y = 0; y < 160; y++) editorInsertRow(y, "riga", 4);
+        E.document.cursor.cy = 137;
+        E.view.rowoff = 20;
+        editorSyncMarkdownPreview();
+        mouseEventButton = 64; mouseEventPress = 1;
+        mouseEventRow = mouseEventCol = 1;
+        editorHandleMouseEvent();
+        editorScroll();
+        check(E.view.rowoff == 17 && E.document.cursor.cy == 137,
+            "wheel detaches viewport without moving cursor");
+        for (int32_t redraw = 0; redraw < 3; redraw++) {
+            mouseEventButton = 35; mouseEventCol++;
+            editorHandleMouseEvent();
+            editorUpdateLinkHover();
+            editorScroll();
+            check(E.view.rowoff == 17 && E.document.cursor.cy == 137,
+                "passive pointer motion and redraw preserve wheel position");
+        }
+        mouseEventButton = 0; mouseEventCol = 2;
+        editorHandleMouseEvent();
+        editorScroll();
+        check(!E.view.free_scroll && E.document.cursor.cy == 17,
+            "text click restores following at clicked source position");
+        editorCancelMouseDrag();
+        E.document.cursor.cy = 137; E.view.rowoff = 17; E.view.free_scroll = 1;
+        editorDispatchKey(ARROW_UP);
+        editorScroll();
+        check(!E.view.free_scroll && E.document.cursor.cy == 136 && E.view.rowoff > 17,
+            "keyboard navigation restores cursor following");
+    }
+    editorResetDocument();
+    settingsDefaults(&S);
+    editorSyncMarkdownPreview();
+}
+
 static void testMouseDispatch(void) {
     settingsDefaults(&S);
     S.show_menu = S.show_top_bar = S.show_line_numbers = 0;
@@ -2436,6 +2482,7 @@ int main(void) {
     testNewDocument();
     testColorSettings();
     testMouseDispatch();
+    testMouseScrollView();
     testLinks();
     testMarkdownNavigation();
     testSharedAutoClose();

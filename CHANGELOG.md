@@ -25,6 +25,10 @@
 
 ### Important fixes
 
+- Keep the viewport at the mouse-wheel scroll position when the pointer moves
+  or the screen redraws, even with the cursor off-screen. Resume following
+  the cursor on keyboard input, text clicks, dragging or anchor navigation.
+
 - Keep Markdown links in source editing while typing their destination with
   live preview and automatic pair closing enabled. Empty destinations stay
   literal; completing a link no longer hides its address before typing finishes.

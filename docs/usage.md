@@ -213,6 +213,11 @@ The change takes effect
 immediately: toggling it in `F2` and pressing `Ctrl-S` applies it
 right away, no restart needed.
 
+Scrolling with the wheel leaves the cursor in place. The viewport stays at
+the scrolled position while you move the pointer or hover over links, even if
+the cursor is off-screen. Keyboard input, a text click or a drag resumes
+following the cursor.
+
 ## Links and installed documentation
 
 `make install` includes the guides. Choose **Help → Documentation** to open

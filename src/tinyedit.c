@@ -2384,26 +2384,15 @@ static void editorUpdateLinkHover(void) {
 /**
  * @brief Update cursor display coordinates and keep its context in view.
  *
- * @details Call before drawing. Consumes the one-shot free_scroll flag so
- * mouse-wheel scrolling can leave the cursor stationary.
+ * @details Call before drawing. A detached viewport survives passive redraws
+ * until an input action explicitly restores cursor-following.
  */
 static void editorScroll(void) {
     E.document.cursor.rx = 0;
     if (E.document.cursor.cy < E.document.buffer.row_count)
         E.document.cursor.rx = editorRowCxToRx(&E.document.buffer.rows[E.document.cursor.cy], E.document.cursor.cx);
 
-    /* See E.view.free_scroll's declaration in tinyedit.h: the mouse wheel
-     * sets this to scroll the view without the cursor being dragged
-     * along to follow it -- consumed (and cleared) here, right before
-     * the normal follow-the-cursor logic would otherwise immediately
-     * undo that by re-centering E.view.rowoff around the (stationary)
-     * cursor. One-shot: any redraw after this one goes through the
-     * normal path again, so real cursor movement still keeps the
-     * cursor on screen as usual. */
-    if (E.view.free_scroll) {
-        E.view.free_scroll = 0;
-        return;
-    }
+    if (E.view.free_scroll) return;
 
     int32_t wrapcols = editorSoftWrapCols();
     /* A margin wider than half the viewport has no stable position:
@@ -5959,8 +5948,8 @@ static int32_t editorHandleMouseEvent(void) {
         E.view.rowoff += delta;
         if (E.view.rowoff < 0) E.view.rowoff = 0;
         if (E.view.rowoff > limit) E.view.rowoff = limit;
-        /* Skip cursor-following for this redraw; a following keyboard event
-         * clears this override before dispatch, even within the same burst. */
+        /* A following keyboard event clears this before dispatch, even
+         * within the same burst; passive pointer motion leaves it intact. */
         E.view.free_scroll = 1;
     } else {
         uint8_t in_text_area = mouseEventRow >= 1 + (S.show_top_bar ? 1 : 0) +
@@ -5970,6 +5959,7 @@ static int32_t editorHandleMouseEvent(void) {
 
         if (mouseEventPress && mouse_button == 0) editorCancelMouseDrag();
         if (in_text_area && mouse_button == 0 && mouseEventPress) {
+            E.view.free_scroll = 0;
             /* A plain click remembers a local drag anchor without
              * arming a collapsed selection; Shift-click instead
              * retains its existing anchor, or starts from the
@@ -6020,6 +6010,7 @@ static int32_t editorHandleMouseEvent(void) {
             E.document.cursor.cx = cx;
             E.document.mouse.dragging = 1;
         } else if (in_text_area && mouse_button == 32 && E.document.mouse.dragging) {
+            E.view.free_scroll = 0;
             document_click_pending = 0;
             /* Arm from the press point only when motion creates a selection. */
             if (!E.document.selection.active) {

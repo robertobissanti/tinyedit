@@ -317,16 +317,9 @@ struct editorDocument {
 struct editorView {
     int32_t rowoff;             /* row of file we are scrolled to */
     int32_t coloff;             /* column of file we are scrolled to */
-    /* Set by the mouse wheel (see MOUSE_EVENT_KEY handling in
-     * tinyedit.c) to tell editorScroll() to skip its usual "keep the
-     * cursor on screen" re-centering for exactly one redraw -- the
-     * wheel scrolls the view without moving the cursor, and without
-     * this flag editorScroll() would otherwise immediately snap
-     * E.view.rowoff back to hug the (stationary) cursor. Cleared inside
-     * editorScroll() itself right after being consulted, so any
-     * subsequent real cursor movement (arrow keys, click, typing, ...)
-     * goes through the normal follow-the-cursor path on its very next
-     * redraw -- this is a one-shot override, not a persistent mode. */
+    /* Wheel scrolling detaches the viewport from the cursor across redraws
+     * and passive pointer motion. Keyboard dispatch, text clicks/drags and
+     * anchor jumps restore cursor-following explicitly. */
     uint8_t free_scroll;
     int32_t screenrows;
     int32_t screencols;
