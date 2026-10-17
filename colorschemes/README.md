@@ -21,16 +21,16 @@ Catppuccin editor integration. Their MIT notice is included in
 | Selection / heading background | Surface 1 / Surface 0 |
 | Status bar background / text | Mantle / Subtext 0 |
 | Keywords / strings | Mauve / Green |
-| JSON keys and function names | Blue |
+| JSON keys, function names and Markdown link/anchor markers | Blue |
 | Parentheses and brackets | Yellow |
 | Numbers and bold emphasis | Peach |
-| Preprocessor, Markdown headings and link/anchor markers | Lavender |
+| Preprocessor and Markdown headings | Lavender |
 | Math / italic text | Teal / Text |
 | Link hover | Sky |
 
 Ordinary `()`, `[]` and `{}` use the Yellow bracket role. Markdown link/image
 delimiters and recognized Pandoc span, header and Div anchor markers use the
-Lavender structural/preprocessor role, distinguishing navigation syntax from
+Blue JSON-key role, distinguishing navigation syntax from
 ordinary punctuation. Labels and destinations keep their own token colors.
 Literal strings, comments and inline code retain their colors; selection/search
 and link-hover feedback still take precedence. Mocha's heading background now uses official Surface 0

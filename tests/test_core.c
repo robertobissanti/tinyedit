@@ -1968,7 +1968,8 @@ static void testBracketColors(void) {
     editorResetDocument();
     S.syntax_highlight = 1;
     E.document.file.filename = teStrdup("brackets.md");
-    S.color_syntax_preprocessor = COLOR_BLUE_DARK;
+    S.color_syntax_json_key = COLOR_BLUE_DARK;
+    S.color_syntax_preprocessor = COLOR_GREEN_DARK;
     const char *markdown = "[anchor](#id) ![image](img.png){#fig:id} [span]{#id} () [] {}";
     editorInsertRow(0, markdown, strlen(markdown));
     ab = (struct abuf)ABUF_INIT;
@@ -1987,7 +1988,8 @@ static void testBracketColors(void) {
     abFree(&ab);
     S.color_mode = COLOR_MODE_RGB;
     S.rgb_color_syntax_bracket = 0x123456;
-    S.rgb_color_syntax_preprocessor = 0x654321;
+    S.rgb_color_syntax_json_key = 0x654321;
+    S.rgb_color_syntax_preprocessor = 0xABCDEF;
     ab = (struct abuf)ABUF_INIT;
     editorDrawRowSegment(&ab, 0, 0, E.document.buffer.rows[0].rsize,
         0, 0, 0, 0, 0, 0, -1, -1, -1, -1);

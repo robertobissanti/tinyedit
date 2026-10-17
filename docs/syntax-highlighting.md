@@ -40,7 +40,7 @@ properties, values, comments).
 
 Ordinary parentheses, square brackets and braces use the configured bracket
 color. Markdown link/image delimiters and Pandoc anchor delimiters/IDs use the
-structural/preprocessor color instead. This includes `[text]{#id}`, image
+JSON-key color instead. This includes `[text]{#id}`, image
 attributes, heading attributes and fenced Divs such as `::: {#id}`; unrelated
 `[text]` or `{text}` remains ordinary punctuation. Link labels and destinations
 retain their keyword/string colors. Brackets within strings, comments and

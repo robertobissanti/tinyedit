@@ -61,8 +61,9 @@
 ### Other minor fixing
 
 - Distinguish Markdown link/image delimiters and recognized Pandoc anchor
-  delimiters/IDs from ordinary parentheses: navigation markers use the structural
-  color, while ordinary brackets keep their own color. Preserve literal strings,
+  delimiters/IDs from ordinary parentheses: navigation markers use the JSON-key
+  color (official Blue in Catppuccin, clearer against normal text), while ordinary
+  brackets keep their own color. Preserve literal strings,
   comments, selection and hover colors.
 
 - Keep the current color-scheme name visible in Colors and cycle presets
