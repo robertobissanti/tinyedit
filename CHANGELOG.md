@@ -56,6 +56,13 @@
 
 ### Other minor fixing
 
+- Keep the current color-scheme name visible in Colors and cycle presets
+  directly with Left/Right, without a separate Enter confirmation. Mouse clicks
+  and wheel input also select a preset; Settings save/discard still controls persistence.
+- Give brackets a distinct yellow in both shipped RGB presets so they stand
+  apart from normal text. Existing personal presets and saved palettes remain
+  unchanged until updated and selected again.
+
 - Expand the README and documentation index with Markdown navigation, image
   opening, fenced-code highlighting, live-preview editing and stable mouse
   scrolling, with direct links to examples and implementation limits.

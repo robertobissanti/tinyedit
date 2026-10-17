@@ -195,7 +195,10 @@ make install-docs           # personal guides for Help → Documentation
 
 F2 includes cursor shape and blinking, editing preferences, and a **Colors**
 page with ANSI/RGB palettes and live previews. One Dark and Catppuccin Mocha
-presets are included. ANSI is the default; RGB output is an explicit choice.
+presets are included. The Colors page always shows the current preset name
+(or Custom); Left/Right selects a preset directly in the draft, without an
+extra confirmation. The RGB presets use distinct yellow parentheses and
+brackets. Save all Settings with F2/Ctrl-S. ANSI is the default; RGB output is an explicit choice.
 See the [settings and themes guide](docs/configuration.md) for installation
 and configuration.
 

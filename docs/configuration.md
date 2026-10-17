@@ -45,7 +45,8 @@ independent `color_link_hover` (ANSI) and `rgb_link_hover` (RGB) values.
 
 **F2 → Colors** keeps every color setting on one page, grouped into
 **Interface** and **Syntax highlighting**. **Mode** selects ANSI or RGB;
-**Choose Color Scheme >** sits immediately below it. RGB also exposes
+**Color scheme** sits immediately below it and always shows the matching
+preset name, or **Custom** when the palette does not match an installed preset. RGB also exposes
 **RGB output** for truecolor or ANSI fallback.
 
 Interface contains the editor background, gutter, selection, invisible
@@ -80,7 +81,9 @@ RGB presets use explicit colors; ANSI presets are approximations whose actual
 shades depend on the terminal palette. One Dark includes the customized
 Markdown colors (blue headings, orange-red bold and orange math), with a
 coordinated blue-gray heading background (`#354151`); it does not reproduce an
-Airline theme or every Vim highlight group.
+Airline theme or every Vim highlight group. Parentheses and brackets use a
+distinct yellow in the RGB presets: `#E5C07B` in One Dark and `#F9E2AF` in
+Catppuccin Mocha, separate from normal text.
 
 ```sh
 make install-colorschemes   # copies missing files; install-colorschemes-force overwrites
@@ -91,16 +94,21 @@ make install-colorschemes   # copies missing files; install-colorschemes-force o
 installs the binary, shared presets, syntax definitions and guides under
 `$(PREFIX)/share/tinyedit`. Personal presets take precedence over shared presets
 with the same filename; compatible presets from both locations appear together.
-Use `make install-binary` to install just the executable.
+Use `make install-binary` to install just the executable. Existing personal
+presets are not overwritten automatically: `make install-colorschemes-force`
+replaces them with the shipped versions, including the updated bracket colors.
+Re-select the preset and save Settings to update an already saved palette.
 
-Choose **Mode**, then activate **Choose Color Scheme >** with Enter or Right.
-The same row becomes **Choose Color Scheme (use < > to change) name**.
-Left/Right previews compatible schemes, Enter applies one to the draft, and
-Esc cancels the choice. Invalid presets and presets for the other mode are
-excluded. Changing Mode preserves both palettes and changes the available
-schemes; it does not automatically apply a theme.
+Choose **Mode**, then select the **Color scheme** row. Left/Right changes the
+scheme immediately in the shared Settings draft; there is no separate selector
+or Enter confirmation. The displayed name remains visible when you move to
+another row. Enter/Space or clicking the row also advances to the next preset;
+the mouse wheel over the row cycles backward/forward when mouse support is on.
+Only valid presets for the selected mode are offered. Changing Mode preserves
+both palettes and changes the available schemes without applying a theme.
+Esc returns from Colors to the main Settings page, retaining the current draft.
 
-Save Settings to write the confirmed colors to `~/.tinyeditrc`. Discarding
+Save Settings to write the selected colors to `~/.tinyeditrc`. Discarding
 Settings preserves the previous colors. The terminal truecolor/fallback
 preference and non-color settings are preserved when applying a scheme.
 

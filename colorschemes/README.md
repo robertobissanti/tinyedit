@@ -27,19 +27,25 @@ make install-colorschemes   # from the repository root; never overwrites existin
 ANSI files are `one-dark-ansi.conf` and `catppuccin-mocha-ansi.conf`.
 Their shades depend on the terminal palette and approximate the RGB originals.
 
-In **F2 → Colors**, choose **Mode** first. **Choose Color Scheme >** sits
-immediately below it and lists only valid presets declaring that mode.
+In **F2 → Colors**, choose **Mode** first. The **Color scheme** row always
+shows the name of the installed preset matching the active palette, or
+**Custom** for a palette that does not match. Left/Right immediately cycles
+compatible presets in the Settings draft. There is no separate selector or
+Enter confirmation; you can move to another row at once. Enter/Space or a click
+also advances one preset; the mouse wheel over the row cycles in either direction.
 Switching Mode changes the available schemes without replacing either palette.
-Activate **Choose Color Scheme >** with Enter or Right.
-The same row becomes **Choose Color Scheme (use < > to change) name**.
-Left/Right (or mouse wheel) cycles the installed presets and updates the color
-samples on the Colors page. Enter applies the displayed preset to the draft;
-Esc cancels and restores the previous draft. There is no separate screen or
-second confirmation. Invalid or incompatible presets are excluded from the list.
+Invalid or incompatible presets are excluded.
 
-Confirming a preset does not write configuration immediately. Ctrl-S/F2 in
-Settings saves all draft changes to `~/.tinyeditrc`; discarding Settings keeps
+Ctrl-S/F2 saves all draft changes to `~/.tinyeditrc`; Esc returns from Colors
+to the main Settings page while retaining the draft. Discarding Settings keeps
 the previous colors. A failed save retains the draft for retry or discard.
+
+Both RGB presets give parentheses and brackets a distinct yellow:
+One Dark uses `#E5C07B`, Catppuccin Mocha uses `#F9E2AF`. Existing personal copies
+are preserved by normal installation. To replace them with the updated shipped
+presets, run `make install-colorschemes-force` (this overwrites personal preset
+files), then re-select the theme and save Settings. Already saved palette values
+are not changed by copying preset files alone.
 
 ## File format
 

@@ -1776,29 +1776,33 @@ def test_color_scheme_selection(home):
     for name in ("one-dark-ansi.conf", "catppuccin-mocha-ansi.conf"):
         (directory / name).write_bytes((ROOT / "colorschemes" / name).read_bytes())
     config = case_home / ".tinyeditrc"
-    config.write_text("tab_stop = 7\ncolor_mode = rgb\n", encoding="utf-8")
+    config.write_text("tab_stop = 7\ncolor_mode = rgb\nmouse_enabled = true\n", encoding="utf-8")
     original = config.read_bytes()
     process, master = spawn_editor([], case_home)
     try:
         read_available(master)
         navigation, _ = setting_navigation("color_mode")
-        # Mode is directly above the scheme selector.
-        os.write(master, b"\x1bOQ" + navigation + b"\x1b[B\r")
+        # The current name is visible before the row is activated.
+        os.write(master, b"\x1bOQ" + navigation + b"\x1b[B")
         output = read_available(master)
-        assert b"Choose Color Scheme (use < > to change) catppuccin-mocha" in output
+        assert b"Color scheme: Custom" in output
+        os.write(master, b"\x1b[C")
+        output = read_available(master)
+        assert b"Color scheme: catppuccin-mocha" in output
         assert b"Settings > Colors >" not in output, "selector opened another screen"
         os.write(master, b"\x1b[C")
         output = read_available(master)
-        assert b"Choose Color Scheme (use < > to change) one-dark" in output
+        assert b"Color scheme: one-dark" in output
         assert b"one-dark-ansi" not in output, "ANSI scheme offered in RGB mode"
         os.write(master, b"\x1b[D")
-        assert b"Choose Color Scheme (use < > to change) catppuccin-mocha" in read_available(master)
-        os.write(master, b"\x1b")
-        read_available(master)
-        assert config.read_bytes() == original, "cancelled scheme wrote settings"
-        # Reopen, confirm, return to root and discard the entire draft.
-        os.write(master, b"\x1b[C\x1b[C\r")
-        assert b"Scheme applied to draft" in read_available(master)
+        assert b"Color scheme: catppuccin-mocha" in read_available(master)
+        os.write(master, b"\x1b[<65;20;5M")
+        assert b"Color scheme: one-dark" in read_available(master), "wheel over scheme cycles it"
+        os.write(master, b"\x1b[<0;20;5M\x1b[<0;20;5m")
+        assert b"Color scheme: catppuccin-mocha" in read_available(master), "click cycles immediately"
+        # Leaving the row keeps its choice without an Enter confirmation.
+        os.write(master, b"\x1b[A")
+        assert b"Color scheme: catppuccin-mocha" in read_available(master)
         os.write(master, b"\x1b")
         read_available(master)
         os.write(master, b"\x1b")
@@ -1806,25 +1810,28 @@ def test_color_scheme_selection(home):
         os.write(master, b"n")
         read_available(master)
         assert config.read_bytes() == original, "discarded scheme wrote settings"
-        # Apply again, then save through the shared Settings action.
-        os.write(master, b"\x1bOQ" + navigation + b"\x1b[B\r\x1b[C\r")
-        read_available(master)
+        # Cycle twice and save directly: no confirmation inside the selector.
+        os.write(master, b"\x1bOQ" + navigation + b"\x1b[B\x1b[C\x1b[C")
+        output = read_available(master)
+        assert b"Color scheme: one-dark" in output
         os.write(master, b"\x1bOQ")
         read_available(master)
         saved = config.read_text()
         assert "rgb_background = #282C34" in saved and "tab_stop = 7" in saved
+        assert "rgb_syntax_bracket = #E5C07B" in saved
         assert "color_mode = rgb" in saved
-        # Switching Mode changes which complete presets can be selected.
-        os.write(master, b"\x1bOQ" + navigation + b"\r\x1b[B\r")
+        # Reopening identifies the saved theme without entering another mode.
+        os.write(master, b"\x1bOQ" + navigation)
+        assert b"Color scheme: one-dark" in read_available(master)
+        # Switching Mode offers only compatible themes and preserves RGB.
+        os.write(master, b"\r\x1b[B\x1b[C")
         output = read_available(master)
-        assert b"Choose Color Scheme (use < > to change) catppuccin-mocha-ansi" in output
+        assert b"Color scheme: catppuccin-mocha-ansi" in output
         os.write(master, b"\x1b[C")
-        output = read_available(master)
-        assert b"Choose Color Scheme (use < > to change) one-dark-ansi" in output
+        assert b"Color scheme: one-dark-ansi" in read_available(master)
         os.write(master, b"\x1b[C")
-        output = read_available(master)
-        assert b"Choose Color Scheme (use < > to change) catppuccin-mocha-ansi" in output
-        os.write(master, b"\r\x1bOQ")
+        assert b"Color scheme: catppuccin-mocha-ansi" in read_available(master)
+        os.write(master, b"\x1bOQ")
         read_available(master)
         saved = config.read_text()
         assert "color_mode = ansi" in saved

@@ -76,7 +76,6 @@
 static struct editorConfig E;
 static struct editorSettings S;
 static enum settingsPage settings_page;
-static const char *settings_scheme_preview;
 static struct editorMenu M;
 static struct editorTree T;
 static struct timespec tree_click_time;
@@ -4420,6 +4419,87 @@ static void editorSettingsCycleEnum(const struct settingDescriptor *d, int32_t *
     *slot = value;
 }
 
+/** @brief Describe or cycle the preset matching the active draft palette.
+ * Personal presets take priority. Direction zero is read-only; no nested input
+ * loop is needed, so the selected scheme behaves like the other enum rows. */
+static void editorSettingsScheme(struct editorSettings *edited, int32_t direction,
+    char *name, size_t name_size, char *msg, size_t msg_size) {
+    const char *home = getenv("HOME");
+    char personal[1024];
+    int32_t n = snprintf(personal, sizeof(personal), "%s/.tinyedit/color-scheme", home ? home : "");
+    const char *directories[] = { personal, TE_DATADIR "/color-scheme" };
+    char **names = NULL;
+    int32_t count = 0;
+    for (int32_t d = 0; d < 2; d++) {
+        if (d == 0 && (!home || !*home || n < 0 || (size_t)n >= sizeof(personal))) continue;
+        const char *directory = directories[d];
+        DIR *dir = opendir(directory);
+        if (!dir) continue;
+        struct dirent *entry;
+        while ((entry = readdir(dir))) {
+            size_t len = strlen(entry->d_name);
+            if (len < 6 || strcmp(entry->d_name + len - 5, ".conf")) continue;
+            uint8_t safe = 1;
+            for (size_t i = 0; i < len; i++)
+                if ((uint8_t)entry->d_name[i] < 32 || entry->d_name[i] == 127) safe = 0;
+            if (!safe || count == INT32_MAX) continue;
+            char filepath[2048];
+            struct stat st;
+            int32_t pathlen = snprintf(filepath, sizeof(filepath), "%s/%s", directory, entry->d_name);
+            if (pathlen < 0 || (size_t)pathlen >= sizeof(filepath) || stat(filepath, &st) || !S_ISREG(st.st_mode)) continue;
+            uint8_t duplicate = 0;
+            for (int32_t i = 0; i < count; i++) {
+                const char *base = strrchr(names[i], '/');
+                if (strcmp(base ? base + 1 : names[i], entry->d_name) == 0) duplicate = 1;
+            }
+            if (duplicate) continue;
+            struct editorSettings candidate = *edited;
+            char error[128];
+            if (!settingsLoadColorScheme(filepath, &candidate, error, sizeof(error)) ||
+                candidate.color_mode != edited->color_mode) continue;
+            names = teRealloc(names, teArrayBytes((size_t)count + 1, sizeof(*names)));
+            int32_t at = count;
+            while (at > 0 && strcmp(strrchr(names[at - 1], '/') + 1, entry->d_name) > 0) {
+                names[at] = names[at - 1]; at--;
+            }
+            names[at] = teStrdup(filepath); count++;
+        }
+        closedir(dir);
+    }
+    int32_t current = -1;
+    for (int32_t i = 0; i < count; i++) {
+        struct editorSettings candidate = *edited;
+        char error[128];
+        if (settingsLoadColorScheme(names[i], &candidate, error, sizeof(error)) &&
+            memcmp(&candidate, edited, sizeof(candidate)) == 0) { current = i; break; }
+    }
+    int32_t chosen = current;
+    if (direction && count) {
+        chosen = current < 0 ? (direction < 0 ? count - 1 : 0) :
+            (current + (direction < 0 ? count - 1 : 1)) % count;
+        struct editorSettings candidate = *edited;
+        char error[128];
+        if (settingsLoadColorScheme(names[chosen], &candidate, error, sizeof(error)) &&
+            candidate.color_mode == edited->color_mode) {
+            *edited = candidate;
+            snprintf(msg, msg_size, "Scheme changed; Ctrl-S/F2 saves Settings");
+        } else {
+            chosen = current;
+            editorSetErrorMessage("Cannot apply color scheme; draft kept");
+            snprintf(msg, msg_size, "%s", E.ui.statusmsg);
+        }
+    } else if (direction) {
+        editorSetErrorMessage("No valid schemes for this mode; run make install");
+        snprintf(msg, msg_size, "%s", E.ui.statusmsg);
+    }
+    if (chosen >= 0) {
+        const char *base = strrchr(names[chosen], '/') + 1;
+        snprintf(name, name_size, "%.*s", (int32_t)strlen(base) - 5, base);
+    } else snprintf(name, name_size, "Custom");
+    for (int32_t i = 0; i < count; i++) free(names[i]);
+    free(names);
+}
+
 /**
  * @brief Append one settings entry with its value and preview.
  *
@@ -4434,16 +4514,19 @@ static void editorSettingsCycleEnum(const struct settingDescriptor *d, int32_t *
  */
 static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected,
     const struct editorSettings *edited, char scroll_indicator, int32_t label_width) {
-    if (idx == -5 && settings_scheme_preview) {
-        const char *label = " Choose Color Scheme (use < > to change) ";
-        abAppend(ab, "\x1b[7m", 4);
-        abAppend(ab, label, (int32_t)strlen(label));
-        abAppend(ab, settings_scheme_preview, (int32_t)strlen(settings_scheme_preview) - 5);
+    if (idx == -5) {
+        struct editorSettings candidate = *edited;
+        char name[256], msg[80];
+        editorSettingsScheme(&candidate, 0, name, sizeof(name), msg, sizeof(msg));
+        if (selected) abAppend(ab, "\x1b[7m", 4);
+        abAppend(ab, " Color scheme: ", 15);
+        abAppend(ab, name, (int32_t)strlen(name));
+        abAppend(ab, "  < >", 5);
         abAppend(ab, "\x1b[m\x1b[K\r\n", 8);
         return;
     }
     if (idx < 0) {
-        const char *label = idx == -5 ? " Choose Color Scheme >" : idx == -1 ? " Colors >" : idx == -2 ? " Interface" :
+        const char *label = idx == -1 ? " Colors >" : idx == -2 ? " Interface" :
             idx == -3 ? " Syntax highlighting" : " Back";
         if (idx == -2 || idx == -3) abAppend(ab, "\x1b[1m", 4);
         else if (selected) abAppend(ab, "\x1b[7m", 4);
@@ -4856,7 +4939,10 @@ static void editorSettingsRender(struct abuf *ab, const struct editorSettings *e
             editorPrimaryModifier(), editorPrimaryModifier());
     }
     int32_t hlen = (int32_t)strlen(help);
+    uint8_t error = msg && E.ui.statusmsg_error && !strcmp(msg, E.ui.statusmsg);
+    if (error) abAppend(ab, "\x1b[31m", 5);
     abAppend(ab, help, hlen);
+    if (error) abAppend(ab, "\x1b[39m", 5);
     abAppend(ab, "\x1b[K\r\n", 5);
     rows_used++;
 
@@ -4874,97 +4960,6 @@ static void editorSettingsRender(struct abuf *ab, const struct editorSettings *e
 
     abAppend(ab, "\x1b[H\x1b[?25h", 9);
     editorSettingsClip(ab);
-}
-
-/** @brief Choose and confirm a preset without committing the Settings draft. */
-static void editorSettingsChooseScheme(struct editorSettings *edited, int32_t scroll, char *msg, size_t msg_size) {
-    const char *home = getenv("HOME");
-    char personal[1024];
-    int32_t n = snprintf(personal, sizeof(personal), "%s/.tinyedit/color-scheme", home ? home : "");
-    const char *directories[] = { personal, TE_DATADIR "/color-scheme" };
-    char **names = NULL;
-    int32_t count = 0;
-    for (int32_t d = 0; d < 2; d++) {
-        if (d == 0 && (!home || !*home || n < 0 || (size_t)n >= sizeof(personal))) continue;
-        const char *directory = directories[d];
-        DIR *dir = opendir(directory);
-        if (!dir) continue;
-        struct dirent *entry;
-        while ((entry = readdir(dir))) {
-            size_t len = strlen(entry->d_name);
-            if (len < 6 || strcmp(entry->d_name + len - 5, ".conf")) continue;
-            uint8_t safe = 1;
-            for (size_t i = 0; i < len; i++)
-                if ((uint8_t)entry->d_name[i] < 32 || entry->d_name[i] == 127) safe = 0;
-            if (!safe || count == INT32_MAX) continue;
-            char filepath[2048];
-            struct stat st;
-            int32_t pathlen = snprintf(filepath, sizeof(filepath), "%s/%s", directory, entry->d_name);
-            if (pathlen < 0 || (size_t)pathlen >= sizeof(filepath) || stat(filepath, &st) || !S_ISREG(st.st_mode)) continue;
-            uint8_t duplicate = 0;
-            for (int32_t i = 0; i < count; i++) {
-                const char *base = strrchr(names[i], '/');
-                if (strcmp(base ? base + 1 : names[i], entry->d_name) == 0) duplicate = 1;
-            }
-            if (duplicate) continue;
-            struct editorSettings candidate = *edited;
-            char error[128];
-            if (!settingsLoadColorScheme(filepath, &candidate, error, sizeof(error)) ||
-                candidate.color_mode != edited->color_mode) continue;
-            names = teRealloc(names, teArrayBytes((size_t)count + 1, sizeof(*names)));
-            int32_t at = count;
-            while (at > 0 && strcmp(strrchr(names[at - 1], '/') + 1, entry->d_name) > 0) {
-                names[at] = names[at - 1]; at--;
-            }
-            names[at] = teStrdup(filepath); count++;
-        }
-        closedir(dir);
-    }
-    if (!count) { free(names); snprintf(msg, msg_size, "No valid schemes for this mode; run make install"); return; }
-    int32_t cursor = 0;
-    for (int32_t i = 0; i < count; i++) {
-        struct editorSettings candidate = *edited;
-        char path[2048], error[128];
-        n = snprintf(path, sizeof(path), "%s", names[i]);
-        if (n >= 0 && (size_t)n < sizeof(path) &&
-            settingsLoadColorScheme(path, &candidate, error, sizeof(error)) &&
-            memcmp(&candidate, edited, sizeof(candidate)) == 0) { cursor = i; break; }
-    }
-    while (1) {
-        struct editorSettings candidate = *edited;
-        char path[2048], error[128];
-        n = snprintf(path, sizeof(path), "%s", names[cursor]);
-        uint8_t valid = n >= 0 && (size_t)n < sizeof(path) &&
-            settingsLoadColorScheme(path, &candidate, error, sizeof(error));
-        if (n < 0 || (size_t)n >= sizeof(path)) snprintf(error, sizeof(error), "Path too long");
-        if (valid && candidate.color_mode != edited->color_mode) {
-            valid = 0;
-            snprintf(error, sizeof(error), "Scheme no longer matches Mode");
-        }
-        settings_scheme_preview = strrchr(names[cursor], '/') + 1;
-        struct abuf ab = ABUF_INIT;
-        editorSettingsRender(&ab, valid ? &candidate : edited, 2, scroll, valid ? "" : error);
-        if (!terminalWrite(ab.b, (size_t)ab.len)) terminalDie("write");
-        abFree(&ab);
-        int32_t c = editorReadKey();
-        if (c == MOUSE_EVENT_KEY && S.mouse_enabled) {
-            if (mouseEventButton == 64) c = ARROW_LEFT;
-            else if (mouseEventButton == 65) c = ARROW_RIGHT;
-            else if (mouseEventButton == 0 && mouseEventPress && mouseEventRow == 5 - scroll) c = '\r';
-            else continue;
-        }
-        if (c == '\x1b') break;
-        if (c == ARROW_LEFT || c == ARROW_RIGHT) {
-            cursor = (cursor + (c == ARROW_LEFT ? count - 1 : 1)) % count;
-        } else if (c == '\r' && valid) {
-            *edited = candidate;
-            snprintf(msg, msg_size, "Scheme applied to draft; Ctrl-S/F2 saves");
-            break;
-        }
-    }
-    settings_scheme_preview = NULL;
-    for (int32_t i = 0; i < count; i++) free(names[i]);
-    free(names);
 }
 
 /**
@@ -5141,6 +5136,15 @@ static void editorSettingsScreen(void) {
         int32_t c = editorReadKey();
         if (c == MOUSE_EVENT_KEY && S.mouse_enabled) {
             if (mouseEventButton == 64 || mouseEventButton == 65) {
+                int32_t hovered = scroll + mouseEventRow - 3;
+                if (mouseEventRow >= 3 && mouseEventRow < 3 + visible && hovered < count &&
+                    editorSettingsDescriptorAt(&edited, hovered) == -5) {
+                    char name[256];
+                    cursor = hovered;
+                    editorSettingsScheme(&edited, mouseEventButton == 64 ? -1 : 1,
+                        name, sizeof(name), msg, sizeof(msg));
+                    continue;
+                }
                 if (mouseEventButton == 64 && cursor > 0) cursor = editorSettingsMove(&edited, cursor, -1);
                 if (mouseEventButton == 65 && cursor + 1 < count) cursor = editorSettingsMove(&edited, cursor, 1);
                 continue;
@@ -5153,8 +5157,9 @@ static void editorSettingsScreen(void) {
             } else continue;
         }
         int32_t idx = editorSettingsDescriptorAt(&edited, cursor);
-        if (idx == -5 && (c == '\r' || c == ' ' || c == ARROW_RIGHT)) {
-            editorSettingsChooseScheme(&edited, scroll, msg, sizeof(msg));
+        if (idx == -5 && (c == '\r' || c == ' ' || c == ARROW_LEFT || c == ARROW_RIGHT)) {
+            char name[256];
+            editorSettingsScheme(&edited, c == ARROW_LEFT ? -1 : 1, name, sizeof(name), msg, sizeof(msg));
             continue;
         }
         if ((c == '\x1b' && settings_page != SETTINGS_MAIN) ||
