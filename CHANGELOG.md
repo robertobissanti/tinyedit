@@ -4,6 +4,11 @@
 
 ### New features
 
+- Open local Markdown image destinations in the operating system's default
+  application, with relative/encoded paths and the usual link gestures.
+  In live preview, hover and single-click the visible image path to open it
+  without replacing the current document.
+
 - Navigate Markdown links to explicit Pandoc IDs on headings, spans, inline
   images and fenced Divs, and to Obsidian paragraph/standalone block IDs.
   Reuse local-file fragments and existing link gestures; resolve local `@id`

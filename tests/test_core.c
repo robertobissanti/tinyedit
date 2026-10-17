@@ -1324,10 +1324,89 @@ static void testLinks(void) {
     check(file && fread(logged, 1, sizeof(logged) - 1, file) == strlen(mail) &&
         !strcmp(logged, mail), "mail launcher receives the literal URI without sending mail");
     fclose(file);
+    char image_path[256];
+    snprintf(image_path, sizeof(image_path), "%s/-é image $(echo-surprise).png", root);
+    file = fopen(image_path, "wb");
+    check(file && fputs("PNG fixture", file) >= 0 && fclose(file) == 0, "image fixture with literal shell punctuation");
+    char *image_absolute = realpath(image_path, NULL);
+    check(image_absolute != NULL, "canonical image path");
+    editorResetDocument();
+    settingsDefaults(&S);
+    S.show_menu = S.show_top_bar = S.show_line_numbers = 0;
+    S.mouse_enabled = S.markdown_live_preview = 1;
+    M.open = 0; T.visible = T.focused = 0;
+    E.view.screenrows = 20; E.view.screencols = 100;
+    E.document.file.filename = teStrdup(old_path);
+    const char *image_source = "![Diagramma](<-é image $(echo-surprise).png>){#fig:architettura .diagramma}";
+    editorInsertRow(0, image_source, strlen(image_source));
+    editorInsertRow(1, "cursor", 6);
+    E.document.cursor.cx = 20;
+    E.document.selection.active = 1; E.document.selection.anchor_x = 0;
+    E.document.file.dirty = 1;
+    editorOpenCursorLink();
+    check(!E.ui.statusmsg_error && E.document.file.dirty && E.document.selection.active &&
+        E.document.cursor.cx == 20 && !strcmp(E.document.file.filename, old_path),
+        "image dispatch preserves document, dirty state, cursor and selection without prompting");
+    for (int32_t attempt = 0; attempt < 100; attempt++) {
+        struct stat log_stat;
+        if (stat(log, &log_stat) == 0 && log_stat.st_size == (off_t)strlen(image_absolute)) break;
+        nanosleep(&pause, NULL);
+    }
+    file = fopen(log, "rb"); memset(logged, 0, sizeof(logged));
+    check(file && fread(logged, 1, sizeof(logged) - 1, file) == strlen(image_absolute) &&
+        !strcmp(logged, image_absolute), "image launcher receives one absolute Unicode path without shell evaluation");
+    fclose(file);
+    E.document.selection.active = 0;
+    E.document.cursor.cy = 1; E.document.cursor.cx = 0;
+    editorSyncMarkdownPreview();
+    struct textLink image_link;
+    check(linksFind(image_source, (int32_t)strlen(image_source), 20, &image_link) &&
+        markdownLinkIsImage(&E.document.buffer.rows[0], &image_link), "recognize Markdown image destination");
+    mouseEventRow = 1; mouseEventCol = image_link.target_start + 1;
+    mouseEventPress = 1; mouseEventButton = 35;
+    editorHandleMouseEvent(); editorUpdateLinkHover();
+    check(hovered_link_row == 0 && E.document.cursor.cy == 1, "hover over visible image path without moving cursor");
+    mouseEventButton = 0;
+    editorHandleMouseEvent();
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 1 && E.document.file.dirty &&
+        !strcmp(E.document.file.filename, old_path), "live-preview single click opens image without replacing document");
+    editorCancelMouseDrag();
+    const char *encoded_image = "![Encoded](-%C3%A9%20image%20%24%28echo-surprise%29.png)";
+    editorResetDocument();
+    E.document.file.filename = teStrdup(old_path);
+    editorInsertRow(0, encoded_image, strlen(encoded_image));
+    E.document.cursor.cx = 15;
+    unlink(log);
+    editorOpenCursorLink();
+    check(!E.ui.statusmsg_error, "percent-encoded image path resolves before desktop dispatch");
+    for (int32_t attempt = 0; attempt < 100; attempt++) {
+        struct stat log_stat;
+        if (stat(log, &log_stat) == 0 && log_stat.st_size == (off_t)strlen(image_absolute)) break;
+        nanosleep(&pause, NULL);
+    }
+    file = fopen(log, "rb"); memset(logged, 0, sizeof(logged));
+    check(file && fread(logged, 1, sizeof(logged) - 1, file) == strlen(image_absolute) &&
+        !strcmp(logged, image_absolute), "encoded image reaches the same desktop target");
+    fclose(file); free(image_absolute);
+    const char *bad_images[] = {"![missing](missing.png)", "![directory](.)",
+        "![scheme](mailto:x@example.org)", "![control](bad%00.png)"};
+    for (size_t i = 0; i < sizeof(bad_images) / sizeof(*bad_images); i++) {
+        editorResetDocument();
+        E.document.file.filename = teStrdup(old_path);
+        editorInsertRow(0, bad_images[i], strlen(bad_images[i]));
+        E.document.cursor.cx = 3;
+        editorOpenCursorLink();
+        check(E.ui.statusmsg_error && !strcmp(E.document.file.filename, old_path),
+            "invalid image target reports red error without replacing document");
+    }
+    check(!linksOpenFile("-relative.png") && errno == EINVAL &&
+        !linksOpenFile("/tmp/bad\n.png") && errno == EINVAL, "desktop file dispatch rejects options and controls");
 #ifndef __APPLE__
     unlink(mailer);
 #endif
     unlink(opener);
+    check(!linksOpenFile(image_path) && errno == ENOENT, "missing image launcher reported");
+    unlink(image_path);
     check(!linksOpenMailto(mail) && errno == ENOENT, "missing mail launcher reported");
     check(!linksOpenMailto("mailto:") && errno == EINVAL, "invalid mail URI refused before launch");
     check(!linksOpenWeb(url) && errno == ENOENT, "missing browser launcher reported");

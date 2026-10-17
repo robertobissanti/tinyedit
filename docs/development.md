@@ -73,7 +73,8 @@ not by itself handle termination signals; SIGTERM/SIGHUP cleanup remains pending
 - `src/command.c`, `inc/command.h`: Shared command labels, shortcuts, and
   links to settings toggles.
 - `src/links.c`, `inc/links.h`: Bounded general link recognition, decoded local
-  paths/fragments and shell-free HTTP(S) browser / mailto composer dispatch.
+  paths/fragments and shell-free browser, mail composer and default local-file
+  application dispatch.
 - `src/markdown.c`, `inc/markdown.h`: Markdown highlighting and row-owned source
   spans, compact-preview projection/edit state, heading slugs, explicit Pandoc
   and Obsidian anchor resolution, and local `@id` reference recognition.

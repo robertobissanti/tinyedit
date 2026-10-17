@@ -35,4 +35,7 @@ uint8_t linksOpenMailto(const char *target);
  * @details Reports launcher failure (0 with errno); browser loading happens
  * asynchronously and is not confirmed. */
 uint8_t linksOpenWeb(const char *target);
+/** Open an absolute local file with the default desktop application.
+ * Success confirms launcher execution only; never invokes a shell. */
+uint8_t linksOpenFile(const char *path);
 #endif

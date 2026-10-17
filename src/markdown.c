@@ -642,6 +642,19 @@ static int32_t markdownNext(const char *s, int32_t at, int32_t len) {
     return at + (int32_t)utf8NextCharLen(s, (size_t)at, (size_t)len);
 }
 
+uint8_t markdownLinkIsImage(const erow *row, const struct textLink *link) {
+    if (link->start <= 0 || row->chars[link->start - 1] != '!') return 0;
+    int32_t at = link->start - 1;
+    uint8_t escaped = 0;
+    while (at > 0) {
+        int32_t prev = at - (int32_t)utf8PrevCharLen(row->chars, (size_t)at);
+        if (row->chars[prev] != '\\') break;
+        escaped = !escaped;
+        at = prev;
+    }
+    return !escaped;
+}
+
 static uint8_t markdownSpace(char c) { return c == ' ' || c == '\t' || c == '\r'; }
 
 static int32_t markdownTrimStart(const erow *row) {

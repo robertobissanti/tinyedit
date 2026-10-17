@@ -310,3 +310,10 @@ uint8_t linksOpenMailto(const char *target) {
     if (!linksIsMailto(target)) { errno = EINVAL; return 0; }
     return linksOpenDesktop(target, 1);
 }
+
+uint8_t linksOpenFile(const char *path) {
+    if (!path || path[0] != '/') { errno = EINVAL; return 0; }
+    for (const uint8_t *p = (const uint8_t *)path; *p; p++)
+        if (*p < 32 || *p == 127) { errno = EINVAL; return 0; }
+    return linksOpenDesktop(path, 0);
+}

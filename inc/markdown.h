@@ -26,6 +26,7 @@ uint8_t markdownSourceVisible(const struct editorBuffer *buffer, int32_t row, in
 uint8_t markdownFindReference(const struct editorBuffer *buffer, int32_t row,
     int32_t cursor, struct textLink *link);
 char *markdownHeadingSlug(const char *text, int32_t length);
+uint8_t markdownLinkIsImage(const struct erow *row, const struct textLink *link);
 
 /* Rebuild row-owned Markdown highlights and spans, with incoming block state.
  * render must be current; spans borrow no source memory. */

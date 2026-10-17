@@ -22,7 +22,7 @@
  *   fileio.c       home-path expansion, staged loading and atomic replacement
  *   history.c      bounded row deltas, undo/redo and allocation-failure rollback
  *   linenoise.c    historical line-editor implementation; not built
- *   links.c        inline/bare links and safe browser/mail dispatch
+ *   links.c        inline/bare links and safe browser/mail/file dispatch
  *   menu.c         UTF-8 menu layout, viewport clipping and input navigation
  *   markdown.c     Markdown syntax, live preview, explicit IDs and source navigation
  *   render.c       shared row/wrapped-text layout and presentation adapters
@@ -1848,6 +1848,17 @@ static void editorLinkAnchor(const char *anchor) {
     else editorSetErrorMessage("Markdown anchor not found: %s", anchor);
 }
 
+static char *editorLocalLinkPath(const char *decoded) {
+    const char *filename = E.document.file.filename;
+    const char *separator = filename ? strrchr(filename, '/') : NULL;
+    if (decoded[0] == '/' || decoded[0] == '~' || !separator) return fileioExpandHomePath(decoded);
+    size_t prefix = (size_t)(separator - filename + 1);
+    char *path = teMalloc(teSizeAdd(teSizeAdd(prefix, strlen(decoded)), 1));
+    memcpy(path, filename, prefix);
+    strcpy(path + prefix, decoded);
+    return path;
+}
+
 /**
  * @brief Open a link destination: web URL, same-file anchor or local file.
  * @details target is a Markdown-level destination (percent escapes and an
@@ -1893,16 +1904,7 @@ static void editorFollowLink(const char *target) {
         free(decoded); free(anchor);
         return;
     }
-    char *path;
-    const char *filename = E.document.file.filename;
-    const char *separator = filename ? strrchr(filename, '/') : NULL;
-    if (decoded[0] == '/' || decoded[0] == '~' || !separator) path = fileioExpandHomePath(decoded);
-    else {
-        size_t prefix = (size_t)(separator - filename + 1);
-        path = teMalloc(teSizeAdd(teSizeAdd(prefix, strlen(decoded)), 1));
-        memcpy(path, filename, prefix);
-        strcpy(path + prefix, decoded);
-    }
+    char *path = editorLocalLinkPath(decoded);
     free(decoded);
     struct stat st;
     if (path && stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
@@ -1942,6 +1944,43 @@ static char *editorLinkTarget(int32_t row, const struct textLink *link) {
     return linksTarget(E.document.buffer.rows[row].chars, link);
 }
 
+static void editorFollowSourceLink(int32_t row, const struct textLink *link) {
+    char *target = editorLinkTarget(row, link);
+    if (!target) { editorSetErrorMessage("Invalid link target"); return; }
+    const char *ext = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
+    uint8_t image = ext && markdownIsExtension(ext + 1) &&
+        markdownLinkIsImage(&E.document.buffer.rows[row], link);
+    if (!image || linksIsWeb(target)) {
+        editorFollowLink(target);
+        free(target);
+        return;
+    }
+    char *fragment = strchr(target, '#');
+    if (fragment) *fragment = '\0';
+    const char *colon = strchr(target, ':');
+    const char *slash = strchr(target, '/');
+    if (!*target || (colon && (!slash || colon < slash))) {
+        editorSetErrorMessage("Image link must name a local file or HTTP(S) URL");
+        free(target);
+        return;
+    }
+    char *decoded = linksDecode(target);
+    free(target);
+    if (!decoded) { editorSetErrorMessage("Invalid image path"); return; }
+    char *path = editorLocalLinkPath(decoded);
+    free(decoded);
+    /* realpath owns its POSIX allocation; failure leaves the document intact. */
+    char *absolute = path ? realpath(path, NULL) : NULL;
+    free(path);
+    struct stat st;
+    if (!absolute || stat(absolute, &st) < 0 || !S_ISREG(st.st_mode))
+        editorSetErrorMessage("Image is not an accessible regular file");
+    else if (!linksOpenFile(absolute))
+        editorSetErrorMessage("Can't open image application: %s", strerror(errno));
+    else editorSetStatusMessage("Opened image in default application");
+    free(absolute);
+}
+
 /**
  * @brief Follow the link under the cursor (Alt+Enter or double click).
  * @details Reports "No link under cursor" or "Invalid link target" instead of
@@ -1950,9 +1989,7 @@ static char *editorLinkTarget(int32_t row, const struct textLink *link) {
 static void editorOpenCursorLink(void) {
     struct textLink link;
     if (!editorCursorLink(&link)) { editorSetStatusMessage("No link under cursor"); return; }
-    char *target = editorLinkTarget(E.document.cursor.cy, &link);
-    if (target) { editorFollowLink(target); free(target); }
-    else editorSetErrorMessage("Invalid link target");
+    editorFollowSourceLink(E.document.cursor.cy, &link);
 }
 
 /**
@@ -2347,6 +2384,16 @@ static uint8_t editorPreviewLinkAtMouse(int32_t screen_col, int32_t screen_row,
     if (rx >= end_rx) return 0;
     int32_t source = editorRowRxToCx(row, rx);
     struct textLink ordinary;
+    if (linksFind(row->chars, row->size, source, &ordinary) && markdownLinkIsImage(row, &ordinary) &&
+        source >= ordinary.target_start && source < ordinary.target_end &&
+        markdownSourceVisible(&E.document.buffer, cy, source)) {
+        int32_t from = markdownSourceRenderByte(row, ordinary.target_start, S.tab_stop);
+        int32_t to = markdownSourceRenderByte(row, ordinary.target_end, S.tab_stop);
+        *file_row = cy;
+        *link = ordinary;
+        *span = (struct markdownSpan){from, from, to, to, 1};
+        return 1;
+    }
     if (!linksFind(row->chars, row->size, source, &ordinary) &&
         markdownFindReference(&E.document.buffer, cy, source, link)) {
         int32_t from = markdownSourceRenderByte(row, link->start, S.tab_stop);
@@ -2574,8 +2621,9 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
                 syn_color = ansiColorCode(settingsColor(&S, color_syntax_normal));
             }
         }
-        if (!should_highlight && filerow == hovered_link_row &&
-            rendercol >= hovered_link_from && rendercol < hovered_link_to)
+        uint8_t link_hover = !should_highlight && filerow == hovered_link_row &&
+            rendercol >= hovered_link_from && rendercol < hovered_link_to;
+        if (link_hover)
             syn_color = ansiColorCode(settingsColor(&S, color_link_hover));
         if (syn_color) abAppend(ab, syn_color, (int32_t)strlen(syn_color));
         uint8_t styled = !should_highlight && markdown_styles && row->hl && rendercol < row->rsize;
@@ -2584,7 +2632,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
                 abAppend(ab, "\x1b[1m", 4);
             else if (row->hl[rendercol] == HL_EMPHASIS)
                 abAppend(ab, "\x1b[3m", 4);
-            else if (renderByteUnderlined(row, rendercol))
+            else if (renderByteUnderlined(row, rendercol) || link_hover)
                 abAppend(ab, "\x1b[4m", 4);
             else styled = 0;
         }
@@ -5972,9 +6020,7 @@ static int32_t editorHandleMouseEvent(void) {
             if (!shift_held && editorPreviewLinkAtMouse(mouseEventCol, mouseEventRow,
                 &link_row, &preview_link, &preview_span)) {
                 document_click_pending = 0;
-                char *target = editorLinkTarget(link_row, &preview_link);
-                if (target) { editorFollowLink(target); free(target); }
-                else editorSetErrorMessage("Link contains invalid control bytes");
+                editorFollowSourceLink(link_row, &preview_link);
                 return 0;
             }
             struct timespec now;

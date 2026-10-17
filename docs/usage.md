@@ -255,8 +255,19 @@ tinyedit does not send mail. The address and optional URI parameters (for exampl
 percent-encoded subject/body) are passed unchanged as one argument. This needs
 a desktop mail handler; starting the launcher does not confirm account setup
 or successful composition. Other URI schemes are unsupported. Reference-style Markdown links, HTML links, duplicate-heading
-suffixes and Setext heading anchors are not yet supported. Images are installed
-as resources; tinyedit does not display image files inline or open binary files.
+suffixes and Setext heading anchors are not yet supported. Markdown images such
+as `![Diagramma](../imgs/diagramma.png){#fig:diagramma}` open their local source
+file in the operating system's default application (`open` on macOS,
+`xdg-open` on Linux). Relative paths use the Markdown document's directory;
+spaces, UTF-8, percent encoding and escaped parentheses work as for other local
+links. A source fragment is ignored when opening the image file. Missing files,
+directories and launcher failures produce red errors. Opening an image keeps
+the current document and its unsaved changes, without a save prompt.
+Use Alt+Enter or double-click on the image label or destination; in live preview,
+hover the visible destination to highlight it and single-click to open it.
+Remote HTTP(S) image destinations open in the browser. tinyedit does not render
+images inline; successful launch does not confirm the external application
+displayed the image. Ordinary text-file links still open inside tinyedit.
 
 ### Markdown heading, attribute and block targets
 
