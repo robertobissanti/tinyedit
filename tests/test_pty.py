@@ -503,14 +503,14 @@ def test_menu_view_toggles_settings(home):
         finish(process, master)
 
 
-def test_markdown_live_preview(home):
-    case_home = pathlib.Path(home) / "markdown-live-preview"
+def test_markdown_live_preview(home, highlighting=True):
+    case_home = pathlib.Path(home) / ("markdown-live-preview" if highlighting else "markdown-preview-no-highlighting")
     case_home.mkdir()
     target = case_home / "preview.md"
     original = b"start\n**bold** and *italic* [label](https://example.org)\n"
     target.write_bytes(original)
     config = case_home / ".tinyeditrc"
-    config.write_text("show_menu = true\nbackup_interval = 0\n", encoding="utf-8")
+    config.write_text(f"show_menu = true\nbackup_interval = 0\nsyntax_highlight = {str(highlighting).lower()}\n", encoding="utf-8")
     process, master = spawn_editor([str(target)], case_home)
     try:
         read_available(master)
@@ -533,8 +533,8 @@ def test_markdown_live_preview(home):
         finish(process, master)
 
 
-def test_markdown_link_mouse(home):
-    case_home = pathlib.Path(home) / "markdown-link-mouse"
+def test_markdown_link_mouse(home, highlighting=True):
+    case_home = pathlib.Path(home) / ("markdown-link-mouse" if highlighting else "markdown-mouse-no-highlighting")
     case_home.mkdir()
     target = case_home / "links.md"
     original = b"start\n[label](#target) tail\n## Target\n[plain](plain.txt)\n"
@@ -542,7 +542,8 @@ def test_markdown_link_mouse(home):
     (case_home / "plain.txt").write_text("PLAIN_DESTINATION\n", encoding="utf-8")
     (case_home / ".tinyeditrc").write_text(
         "show_menu = false\nshow_line_numbers = false\nmouse_enabled = true\n"
-        "markdown_live_preview = true\ncolor_link_hover = red-dark\nbackup_interval = 0\n",
+        "markdown_live_preview = true\ncolor_link_hover = red-dark\nbackup_interval = 0\n"
+        f"syntax_highlight = {str(highlighting).lower()}\n",
         encoding="utf-8")
     process, master = spawn_editor([str(target)], case_home)
 
@@ -2018,7 +2019,9 @@ def main():
         test_menu_show_invisibles_refreshes_rows(home)
         test_menu_view_toggles_settings(home)
         test_markdown_live_preview(home)
+        test_markdown_live_preview(home, False)
         test_markdown_link_mouse(home)
+        test_markdown_link_mouse(home, False)
         test_typing_markdown_link(home)
         test_matching_bracket_highlight(home)
         test_very_long_wrapped_line(home)

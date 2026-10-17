@@ -49,6 +49,10 @@
 
 ### Important fixes
 
+- Keep Markdown live preview working when syntax highlighting is disabled:
+  preserve compact formatting, cursor expansion and link mouse actions without
+  enabling syntax colors. Refresh preview metadata when toggled from View/F2.
+
 - Keep the viewport at the mouse-wheel scroll position when the pointer moves
   or the screen redraws, even with the cursor off-screen. Resume following
   the cursor on keyboard input, text clicks, dragging or anchor navigation.

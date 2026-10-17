@@ -495,7 +495,9 @@ links retain their existing double-click and Alt+Enter actions.
 This also works with wrapping, Unicode text,
 and mouse positioning; the document and saved bytes are unchanged.
 
-Live preview is off by default and requires syntax highlighting. It enables
+Live preview is off by default and works even with syntax highlighting disabled.
+With highlighting off, delimiters still collapse, editing boundaries and link
+actions remain available, and syntax colors stay off. It enables
 bold and italic attributes independently of **Markdown bold and italic**.
 Selection and active search results temporarily reveal the full source.
 This is a partial view using the existing tokenizer: headings, images, code,

@@ -273,7 +273,12 @@ static int32_t editorReadPromptKey(void) {
 
 static uint8_t editorMarkdownPreviewEnabled(void) {
     const char *ext = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
-    return S.markdown_live_preview && S.syntax_highlight && ext && syntaxIsMarkdownExtension(ext + 1);
+    return S.markdown_live_preview && ext && syntaxIsMarkdownExtension(ext + 1);
+}
+
+/* Live preview consumes token metadata even when syntax colors are hidden. */
+static uint8_t editorSyntaxParsingEnabled(void) {
+    return S.syntax_highlight || editorMarkdownPreviewEnabled();
 }
 
 static void editorSyncMarkdownPreview(void) {
@@ -462,7 +467,7 @@ static void editorRehighlightFrom(int32_t from, uint8_t force) {
         uint8_t prev_math = E.document.buffer.rows[i].hl_open_math;
         uint8_t prev_frontmatter = E.document.buffer.rows[i].hl_open_frontmatter;
         uint8_t prev_emphasis = E.document.buffer.rows[i].hl_open_emphasis;
-        syntaxHighlightRow(&E.document.buffer.rows[i], E.document.file.filename, (uint8_t)S.syntax_highlight, open_comment, open_math,
+        syntaxHighlightRow(&E.document.buffer.rows[i], E.document.file.filename, editorSyntaxParsingEnabled(), open_comment, open_math,
             open_frontmatter, i, open_emphasis);
         open_comment = E.document.buffer.rows[i].hl_open_comment;
         open_math = E.document.buffer.rows[i].hl_open_math;
@@ -594,7 +599,7 @@ static void editorEndEdit(void) {
         for (int32_t i = first; i <= last && i < E.document.buffer.row_count; i++) {
             erow *row = &E.document.buffer.rows[i];
             erow *previous = i > 0 ? &E.document.buffer.rows[i - 1] : NULL;
-            syntaxHighlightRow(row, E.document.file.filename, (uint8_t)S.syntax_highlight,
+            syntaxHighlightRow(row, E.document.file.filename, editorSyntaxParsingEnabled(),
                 previous ? previous->hl_open_comment : 0,
                 previous ? previous->hl_open_math : 0,
                 previous ? previous->hl_open_frontmatter : 0, i,
@@ -2522,7 +2527,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
     if (len <= 0) return;
     const char *ext = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
     editorSyncMarkdownPreview();
-    uint8_t markdown_styles = (S.markdown_text_styles || S.markdown_live_preview) && S.syntax_highlight &&
+    uint8_t markdown_styles = ((S.markdown_text_styles && S.syntax_highlight) || S.markdown_live_preview) &&
         ext && syntaxIsMarkdownExtension(ext + 1);
 
     char *line = &row->render[seg_from];
@@ -2603,17 +2608,17 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
         /* Syntax color: same priority rule as invisibles above (outside
          * selection/search, and not already an invisible glyph -- a
          * glyph substituted for a space/tab has no syntax meaning of
-         * its own). row->hl is NULL whenever highlighting isn't active
-         * for this row (see editorUpdateRow()); plain brackets still use
-         * their configured color independently of language detection. */
+         * its own). Preview may retain row->hl as parsing metadata while
+         * syntax colors are disabled. Plain brackets still use their
+         * configured color independently of language detection. */
         const char *syn_color = NULL;
         if (!should_highlight && !is_invisible_glyph) {
             uint8_t plain_bracket = decoded.valid &&
                 decoded.codepoint > 0 && decoded.codepoint < 128 && strchr("()[]{}", (char)decoded.codepoint) &&
-                (!row->hl || (rendercol < row->rsize && row->hl[rendercol] == HL_NORMAL));
+                (!S.syntax_highlight || !row->hl || (rendercol < row->rsize && row->hl[rendercol] == HL_NORMAL));
             if (plain_bracket) {
                 syn_color = ansiColorCode(settingsColor(&S, color_syntax_bracket));
-            } else if (row->hl && rendercol < row->rsize) {
+            } else if (S.syntax_highlight && row->hl && rendercol < row->rsize) {
                 syn_color = syntaxColorFor((enum syntaxHighlight)row->hl[rendercol], &S);
             } else if (settingsColor(&S, color_syntax_normal) != COLOR_TERMINAL_DEFAULT) {
                 /* An unknown extension (and syntax highlighting turned
@@ -2842,7 +2847,7 @@ static void editorDrawSplashRow(struct abuf *ab, int32_t y, int32_t textcols) {
 static void editorBeginHeadingRow(struct abuf *ab, int32_t filerow) {
     uint8_t heading = filerow < E.document.buffer.row_count &&
         E.document.buffer.rows[filerow].hl_heading;
-    drawing_heading = heading && (S.color_mode == COLOR_MODE_RGB ?
+    drawing_heading = heading && S.syntax_highlight && (S.color_mode == COLOR_MODE_RGB ?
         S.rgb_markdown_heading_background != RGB_TERMINAL_DEFAULT : S.markdown_heading_reverse);
     drawing_heading_foreground = settingsColor(&S, color_syntax_preprocessor);
     drawing_heading_background = S.rgb_markdown_heading_background;
@@ -5093,7 +5098,8 @@ static uint8_t editorSettingsSave(const struct editorSettings *edited) {
         winsize_changed = 1;
     if (S.tab_stop != previous.tab_stop ||
         S.show_invisibles != previous.show_invisibles ||
-        S.syntax_highlight != previous.syntax_highlight)
+        S.syntax_highlight != previous.syntax_highlight ||
+        S.markdown_live_preview != previous.markdown_live_preview)
         editorUpdateAllRows();
     if (S.mouse_enabled != previous.mouse_enabled) {
         if (S.mouse_enabled) terminalEnableMouseReporting();

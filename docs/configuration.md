@@ -34,8 +34,9 @@ is saved as `cursor_blink = true` when enabled. The screenshot above predates
 this additional row.
 
 **Markdown live preview** is available in F2 and **View**, and is saved as
-`markdown_live_preview = true`. It defaults to `false` and requires syntax
-highlighting. See the [live preview behavior](usage.md#markdown-display-and-live-preview)
+`markdown_live_preview = true`. It defaults to `false` and works independently
+of syntax highlighting. With highlighting off, preview still hides delimiters
+and applies bold, italic and underlining without syntax colors. See the [live preview behavior](usage.md#markdown-display-and-live-preview)
 for supported constructs and cursor expansion. With mouse support enabled,
 compact links change color under the pointer and open with a single click.
 **Colors → Interface → Link hover color** controls the hovered label using

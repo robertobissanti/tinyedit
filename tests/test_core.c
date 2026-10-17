@@ -2181,7 +2181,31 @@ static void testMarkdownPreview(void) {
         E.document.buffer.rows[0].chars[3] == 'z', "redo rebuilds presentation spans");
     S.syntax_highlight = 0;
     editorRehighlightFrom(0, 1);
-    check(E.document.buffer.rows[0].markdown_count == 0, "syntax toggle clears presentation spans");
+    check(E.document.buffer.rows[0].markdown_count == 3, "syntax toggle preserves live preview spans");
+    E.document.cursor.cy = 1; E.document.cursor.cx = 0;
+    E.document.cursor.rx = 0;
+    row = &E.document.buffer.rows[0];
+    check(editorRowCxToRx(row, row->size) < bufferRowCxToRx(row, row->size, S.tab_stop),
+        "preview still compacts text without syntax colors");
+    S.color_syntax_keyword = S.color_syntax_json_key = COLOR_MAGENTA_LIGHT;
+    S.color_syntax_emphasis_strong = COLOR_RED_LIGHT;
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRowSegment(&ab, 0, 0, row->rsize, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    check(!strchr(ab.b, '*') && !strstr(ab.b, "https") && strstr(ab.b, "\x1b[1m") &&
+        strstr(ab.b, "\x1b[3m") && strstr(ab.b, "\x1b[4m"), "preview styles survive disabled highlighting");
+    check(!strstr(ab.b, "\x1b[95m") && !strstr(ab.b, "\x1b[91m"), "preview parsing does not enable syntax colors");
+    abFree(&ab);
+    E.document.cursor.cy = 0; E.document.cursor.cx = 0;
+    editorSyncMarkdownPreview();
+    check(!renderByteHidden(row, 0), "cursor still expands preview without syntax colors");
+    editorInsertChar('x');
+    editorUndo();
+    row = &E.document.buffer.rows[0];
+    check(row->markdown_count == 3, "editing and undo retain uncolored preview metadata");
+    S.markdown_live_preview = 0;
+    editorRehighlightFrom(0, 1);
+    check(!row->markdown_count && !row->hl, "both features off release parsing metadata");
     editorResetDocument();
     settingsDefaults(&S);
     editorSyncMarkdownPreview();

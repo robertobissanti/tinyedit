@@ -219,8 +219,8 @@ Enable **View → Markdown live preview**, or the same option in F2, to hide
 paired bold/italic markers and display inline links as underlined labels.
 Bold and italic reveal their source at the cursor; links enter source editing
 from either boundary and remain editable while you type the destination.
-The original file bytes are preserved. Live preview requires syntax
-highlighting and is off by default. See the
+The original file bytes are preserved. Live preview works with syntax
+highlighting on or off and is off by default. See the
 [Markdown display guide](docs/usage.md#markdown-display-and-live-preview).
 
 Use **Alt+Enter** or a mouse double-click to follow a link. With mouse support
