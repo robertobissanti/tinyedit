@@ -13,10 +13,13 @@
 - [Fast terminal paste](#fast-terminal-paste)
 - [Mouse support](#mouse-support)
 - [Links and installed documentation](#links-and-installed-documentation)
+- [Markdown images](#markdown-images)
+- [Markdown heading, attribute and block targets](#markdown-heading-attribute-and-block-targets)
 - [Menus](#menus)
 - [Indentation and tabs](#indentation-and-tabs)
 - [Automatic pair and tag closing](#automatic-pair-and-tag-closing)
 - [Soft wrapping and navigation](#soft-wrapping-and-navigation)
+- [Markdown display and live preview](#markdown-display-and-live-preview)
 - [Top and status bars](#top-and-status-bars)
 - [UTF-8 text](#utf-8-text)
 - [Find and replace](#find-and-replace)
@@ -255,8 +258,11 @@ tinyedit does not send mail. The address and optional URI parameters (for exampl
 percent-encoded subject/body) are passed unchanged as one argument. This needs
 a desktop mail handler; starting the launcher does not confirm account setup
 or successful composition. Other URI schemes are unsupported. Reference-style Markdown links, HTML links, duplicate-heading
-suffixes and Setext heading anchors are not yet supported. Markdown images such
-as `![Diagramma](../imgs/diagramma.png){#fig:diagramma}` open their local source
+suffixes and Setext heading anchors are not yet supported.
+
+### Markdown images
+
+Markdown images such as `![Diagramma](../imgs/diagramma.png){#fig:diagramma}` open their local source
 file in the operating system's default application (`open` on macOS,
 `xdg-open` on Linux). Relative paths use the Markdown document's directory;
 spaces, UTF-8, percent encoding and escaped parentheses work as for other local
@@ -268,6 +274,9 @@ hover the visible destination to highlight it and single-click to open it.
 Remote HTTP(S) image destinations open in the browser. tinyedit does not render
 images inline; successful launch does not confirm the external application
 displayed the image. Ordinary text-file links still open inside tinyedit.
+Opening the image destination is separate from following a link to its Pandoc
+ID: `#fig:diagramma` jumps to the image source within the Markdown document.
+For language-aware code blocks, see the [fenced-code guide](syntax-highlighting.md#fenced-code-blocks).
 
 ### Markdown heading, attribute and block targets
 
@@ -454,9 +463,7 @@ is `0`, which keeps the current edge-following behavior; values from `1` to
 Near the start or end of a file the viewport remains clamped to available
 text, so the requested margin may be smaller.
 
-## Top and status bars
-
-The filename and modified indicator are centered in the optional top bar.
+## Markdown display and live preview
 
 Enable **Markdown bold and italic** in F2 (or set
 `markdown_text_styles = true` in `~/.tinyeditrc`) to render Markdown emphasis
@@ -516,6 +523,9 @@ reverse video and inline bold/italic styles, including selected newline cells.
 The empty area to the right of an ATX heading retains its heading background.
 
 
+## Top and status bars
+
+The filename and modified indicator are centered in the optional top bar.
 The optional top bar (`show_top_bar`) shows only the filename (without its directory path) and
 unsaved-changes state as a persistent title. Its text and background use the
 reverse of the configured status bar colors, whether the menu is visible or hidden.

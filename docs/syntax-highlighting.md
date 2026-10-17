@@ -5,6 +5,7 @@
 ## Contents
 
 - [Syntax highlighting](#syntax-highlighting)
+- [Fenced code blocks](#fenced-code-blocks)
 - [Extending syntax highlighting](#extending-syntax-highlighting)
 - [Markup templates](#markup-templates)
 - [Ready-made syntax configurations](#ready-made-syntax-configurations)
@@ -37,7 +38,7 @@ embedded HTML tags), HTML/XML (`.html` `.htm`
 `.xml`, with tags, attributes, and `<!-- -->` comments), and CSS (`.css`, with
 properties, values, comments).
 
-Two constructs common in static-site Markdown get their own handling.
+### Fenced code blocks
 
 **Fenced code blocks** use the declared language's highlighter. For example:
 
@@ -65,6 +66,8 @@ Code remains literal source: Markdown links/emphasis and preview hiding are
 disabled inside the fence, and no code is executed. Changing the language tag
 or a code row refreshes the remainder of its fenced block, including across
 blank lines and undo/redo.
+
+### Other Markdown constructs
 
 A YAML **front matter** block, the `---` delimited metadata header
 used by Jekyll, Eleventy and Hugo, is highlighted as structured data

@@ -56,6 +56,10 @@
 
 ### Other minor fixing
 
+- Expand the README and documentation index with Markdown navigation, image
+  opening, fenced-code highlighting, live-preview editing and stable mouse
+  scrolling, with direct links to examples and implementation limits.
+
 - Move Markdown parsing, highlighting, preview projection and anchor resolution
   into a dedicated module, preparing a clearer boundary for a future vanilla
   build without changing the default build or adding dependencies.
