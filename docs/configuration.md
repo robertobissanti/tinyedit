@@ -53,8 +53,10 @@ Interface contains the editor background, gutter, selection, invisible
 characters and status-bar text/background. Syntax highlighting contains the
 same token roles in the same order in both modes, including function names,
 Markdown bold/italic text and LaTeX math. ANSI offers **reverse heading colors**;
-RGB offers a separate **heading background color**, with heading text using
-`rgb_syntax_preprocessor`. Colors remain editable when highlighting is off.
+RGB offers a **heading background color** control. Updated presets tint each
+heading background with 12% of its H1–H6 foreground over the editor background;
+`off` disables the background. Old palettes use the configured fixed background
+and inherit their foreground from `rgb_syntax_preprocessor`. Colors remain editable when highlighting is off.
 
 ![ANSI color settings and previews](../imgs/settings-panel-color-ansi.png)
 
@@ -84,7 +86,7 @@ Complete presets are included in [`colorschemes/`](../colorschemes/README.md):
 RGB presets use explicit colors; ANSI presets are approximations whose actual
 shades depend on the terminal palette. One Dark includes the customized
 Markdown colors (blue headings, orange-red bold and orange math), with a
-coordinated blue-gray heading background (`#354151`); it does not reproduce an
+blue-gray legacy heading background (`#354151`); it does not reproduce an
 Airline theme or every Vim highlight group. Parentheses and brackets use a
 distinct yellow in the RGB presets: `#E5C07B` in One Dark and `#F9E2AF` in
 Catppuccin Mocha, separate from normal text. Ordinary parentheses/brackets use
@@ -134,8 +136,8 @@ preference and non-color settings are preserved when applying a scheme.
 
 ![One Dark colorscheme editing Markdown](../imgs/color-scheme-one-dark.png)
 
-*One Dark interface and syntax example. This screenshot predates the Vim
-Markdown correction: headings now use blue text on blue-gray (`#354151`).*
+*One Dark interface and syntax example. This screenshot predates the independent
+H1–H6 foregrounds; updated RGB headings now have backgrounds tinted to match each level.*
 
 ![Catppuccin Mocha colorscheme editing C](../imgs/color-scheme-catppuccin-mocha.png)
 
@@ -261,6 +263,17 @@ there are more above, and `v` on the last one if there are more below.
 Markdown italic text has its own **Italic text color** row in Colors:
 `color_syntax_italic` (ANSI) / `rgb_syntax_italic` (RGB). One Dark RGB uses
 `#D19A67`. Older configurations without these keys retain the keyword color.
+
+Markdown H1–H6 have independent foregrounds in every shipped preset, editable
+as **H1 color** through **H6 color** in Colors. Their keys are
+`rgb_markdown_h1`…`rgb_markdown_h6` and `color_markdown_h1`…`color_markdown_h6`.
+RGB `off` / ANSI `terminal-default` inherits the preprocessor color, preserving old
+configurations. Updated RGB presets tint each background from its level’s
+foreground (12% foreground, 88% editor background). With a terminal-default
+editor background, the configured heading background supplies the blend base.
+The heading-background control remains the fallback for old palettes and its
+`off` value disables the tint. ANSI reverse-video headings use each level’s
+foreground hue, subject to the terminal palette.
 
 Theme provenance, Synthwave Pro color mapping and terminal limitations are documented
 in the [palette guide](../colorschemes/README.md#theme-sources-and-terminal-adaptations).

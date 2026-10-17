@@ -128,6 +128,9 @@ struct editorSettings {
     int32_t rgb_color_syntax_function;
     int32_t rgb_color_background;
     int32_t rgb_markdown_heading_background;
+    /* Terminal-default entries inherit the preprocessor foreground. */
+    int32_t color_markdown_heading[6];
+    int32_t rgb_color_markdown_heading[6];
 
     int32_t show_line_numbers;
     int32_t tab_stop;

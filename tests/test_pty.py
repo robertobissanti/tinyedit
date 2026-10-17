@@ -1767,6 +1767,24 @@ def test_vimrc_syntax_config(home):
             finish(process, master)
 
 
+def test_markdown_heading_levels(home):
+    case_home = pathlib.Path(home) / "heading-levels"
+    case_home.mkdir()
+    target = case_home / "levels.md"
+    target.write_text("".join("#" * level + " Titolo città\n" for level in range(1, 7)))
+    config = "color_mode = rgb\nsyntax_highlight = true\nrgb_background = #202020\nrgb_markdown_heading_background = #303030\n"
+    config += "".join(f"rgb_markdown_h{level} = #1020{47 + level:02X}\n" for level in range(1, 7))
+    (case_home / ".tinyeditrc").write_text(config)
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        output = read_available(master)
+        assert b"\x1b[48;2;30;32;34m" in output, "heading background must follow foreground tint"
+        for level in range(1, 7):
+            assert f"\x1b[38;2;16;32;{47 + level}m".encode() in output, f"H{level} foreground missing"
+    finally:
+        finish(process, master)
+
+
 def test_color_scheme_selection(home):
     case_home = pathlib.Path(home) / "scheme-selection"
     directory = case_home / ".tinyedit" / "color-scheme"
@@ -2025,6 +2043,7 @@ def main():
         test_no_save_prompt_when_undone(home)
         test_xml_tag_autoclose(home)
         test_color_scheme_selection(home)
+        test_markdown_heading_levels(home)
         test_vimrc_syntax_config(home)
         test_cursor_blink(home)
         test_bash_syntax_config(home)

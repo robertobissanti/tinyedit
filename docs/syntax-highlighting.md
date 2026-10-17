@@ -38,6 +38,12 @@ embedded HTML tags), HTML/XML (`.html` `.htm`
 `.xml`, with tags, attributes, and `<!-- -->` comments), and CSS (`.css`, with
 properties, values, comments).
 
+Markdown ATX headings (`#` through `######`, followed by whitespace or end
+of line) use their independent H1–H6 palette colors in source and live preview.
+RGB heading backgrounds follow their foreground hue with a 12% tint over the
+editor background; the background can be disabled. Bold styling remains available; code literals are
+excluded. See [heading colors](../colorschemes/README.md#markdown-heading-levels).
+
 Ordinary parentheses, square brackets and braces use the configured bracket
 color. Markdown link/image delimiters and Pandoc anchor delimiters/IDs use the
 JSON-key color instead. This includes `[text]{#id}`, image

@@ -19,13 +19,13 @@ Catppuccin editor integration. Their MIT notice is included in
 |---|---|
 | Editor background / normal text | Base / Text |
 | Gutter and comments / invisibles | Overlay 1 / Overlay 0 |
-| Selection / heading background | Surface 1 / Surface 0 |
+| Selection / legacy heading background | Surface 1 / Surface 0 |
 | Status bar background / text | Mantle / Subtext 0 |
 | Keywords / strings | Mauve / Green |
 | JSON keys, function names and Markdown link/anchor markers | Blue |
 | Parentheses and brackets | Yellow |
 | Numbers and bold emphasis | Peach |
-| Preprocessor and Markdown headings | Lavender |
+| Preprocessor | Lavender |
 | Math / italic text | Teal / Text |
 | Link hover | Sky |
 
@@ -35,13 +35,11 @@ Blue JSON-key role, distinguishing navigation syntax from
 ordinary punctuation. Labels and destinations share the navigation color, with underlined link text
 in both source and live preview when Markdown styles are enabled.
 Literal strings, comments and inline code retain their colors; selection/search
-and link-hover feedback still take precedence. Mocha's heading background now uses official Surface 0
+and link-hover feedback still take precedence. Mocha's legacy heading background uses official Surface 0
 (`#313244`), replacing the previous custom `#2D2E43`.
 
-One Dark includes the personal Vim Markdown overrides: blue headings
-(`#61AFEF`), orange-red bold (`#DE4000`), orange math (`#D19A66`). Tinyedit retains a heading background (`#354151`),
-using a medium blue-gray shade to separate headings from the editor. Heading text shares tinyedit's preprocessor color,
-so preprocessors also use blue. These overrides differ from stock Vim One.
+One Dark includes personal Vim Markdown overrides: orange-red bold
+(`#DE4000`), orange math (`#D19A66`) and a blue preprocessor (`#61AFEF`). Tinyedit retains a legacy heading background (`#354151`). Heading text now uses independent H1–H6 colors; preprocessors keep blue. These overrides differ from stock Vim One.
 
 These palettes do not add Vim's syntax parsers or duplicate every Vim
 highlight group. One uses its own status-line colors, not an Airline theme.
@@ -117,13 +115,45 @@ You can also replace the corresponding entries in `~/.tinyeditrc` manually.
 
 Synthwave Pro uses deep indigo `#1A1530`, warm text `#ECE6FF`, purple
 `#B56CFF` for link/anchor markers and labels, yellow `#FFD23F` for ordinary
-brackets and strings, cyan `#36E2EC` headings/hover, and magenta `#FF3EC8`
-bold text. The heading background `#1D2E47` is a terminal approximation of
-cyan at 12% over the editor background. Selection uses the palette's opaque
+brackets and strings, cyan `#36E2EC` H2/hover, and magenta `#FF3EC8`
+bold text. The legacy H2 background `#1D2E47` approximates cyan at 12% over the editor;
+updated H1–H6 backgrounds are computed from their own foregrounds. Selection uses the palette's opaque
 border color. Comments use muted text for readability. Syntax roles are shared:
 JSON keys use the link-marker purple, and keywords share the label purple.
 Only this default RGB variant is included; Obsidian's alternate palettes,
-per-heading-level colors, tag pills, code backgrounds, glow, rounded corners,
+tag pills, code backgrounds, glow, rounded corners,
 images and CSS layout are not reproduced by a color preset. Live-preview
 underlining and navigation retain tinyedit's existing behavior. MIT notices
 are in [LICENSE-THIRD-PARTY](../LICENSE-THIRD-PARTY).
+
+## Markdown heading levels
+
+Every shipped RGB and ANSI preset now defines independent ATX heading colors
+for `# H1` through `###### H6`. The same colors apply in source and live preview,
+including wrapped headings. In RGB, each level’s background is a 12% tint of its
+foreground over the editor background (rounded per RGB channel);
+Pandoc ID/attribute markers keep their navigation color. Fenced/inline code,
+seven hashes and hashes without the heading separator do not become headings.
+Setext headings are outside the existing ATX highlighting support.
+
+| Preset | H1 → H6 |
+|---|---|
+| Synthwave Pro | Magenta, Cyan, Purple, Yellow, Text, Muted (original theme order) |
+| Catppuccin (all four flavors) | Red, Peach, Yellow, Green, Blue, Mauve |
+| One Dark | Red, Blue, Purple, Yellow, Green, Cyan |
+| ANSI adaptations | Light red, dark yellow, light yellow, light green, light blue, light magenta |
+
+ANSI colors depend on the terminal palette. The Catppuccin and One Dark heading
+assignments are tinyedit adaptations using their source palettes, not claims
+about upstream editor heading mappings. Configure `rgb_markdown_h1` through
+`rgb_markdown_h6`, or `color_markdown_h1` through `color_markdown_h6`, in the
+preset, `~/.tinyeditrc`, or F2 → Colors → H1–H6 color. RGB `off` / ANSI `terminal-default`
+means inherit the preprocessor foreground. Old presets/configurations without
+these keys retain that single-color behavior; loading an old preset clears
+previous heading overrides for its active palette. Switching ANSI/RGB preserves
+the inactive palette. RGB heading-background `off` disables backgrounds. Its configured value is
+the fixed background for old palettes, or the blend base when the editor uses
+terminal-default background. ANSI reverse-video headings use the level’s
+foreground color as their background; exact shades depend on the terminal.
+Installing files alone does not replace saved settings:
+select the updated preset and save to activate the six colors.

@@ -124,7 +124,7 @@ int main(void) {
 
     initRow(&row, "# Heading **bold** $x+1$");
     highlight(&row, "demo.md", 0, 0);
-    expectClass(&row, 0, HL_PREPROCESSOR, "Markdown heading");
+    expectClass(&row, 0, HL_HEADING_1, "Markdown heading");
     freeRow(&row);
 
     /* show_invisibles replaces source spaces in render with a one-byte
@@ -133,8 +133,30 @@ int main(void) {
     initRow(&row, "## Chapter");
     strcpy(row.render, "##.Chapter");
     highlight(&row, "demo.md", 0, 0);
-    expectClass(&row, 0, HL_PREPROCESSOR, "Markdown heading with visible spaces");
-    expectClass(&row, 3, HL_PREPROCESSOR, "Markdown heading text with visible spaces");
+    expectClass(&row, 0, HL_HEADING_2, "Markdown heading with visible spaces");
+    expectClass(&row, 3, HL_HEADING_2, "Markdown heading text with visible spaces");
+    freeRow(&row);
+
+    for (int32_t level = 1; level <= 6; level++) {
+        char heading[64];
+        memset(heading, '#', (size_t)level);
+        snprintf(heading + level, sizeof(heading) - (size_t)level, " Titolo città");
+        initRow(&row, heading);
+        highlight(&row, "levels.md", 0, 0);
+        expectClass(&row, level + 1, (enum syntaxHighlight)(HL_HEADING_1 + level - 1), "heading level class");
+        freeRow(&row);
+    }
+    initRow(&row, "`### Titolo città`");
+    highlight(&row, "levels.md", 0, 0);
+    expectClass(&row, 1, HL_STRING, "inline code does not acquire heading color");
+    freeRow(&row);
+    initRow(&row, "### Titolo città");
+    highlight(&row, "levels.md", 1, 0);
+    expectClass(&row, 0, HL_STRING, "fenced code does not acquire heading color");
+    freeRow(&row);
+    initRow(&row, "####### Not a heading");
+    highlight(&row, "levels.md", 0, 0);
+    expectClass(&row, 0, HL_NORMAL, "seventh hash is not a heading");
     freeRow(&row);
 
     initRow(&row, "def saluta(): # comment");

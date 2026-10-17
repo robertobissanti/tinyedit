@@ -1889,6 +1889,35 @@ static void testHeadingReverse(void) {
     check(strstr(ab.b, "\x1b[38;2;68;85;102m") != NULL, "RGB heading foreground preserved");
     check(strstr(ab.b, "\x1b[7m") == NULL, "RGB headings ignore legacy inversion");
     abFree(&ab);
+    for (int32_t level = 0; level < 6; level++) {
+        S.rgb_color_markdown_heading[level] = 0x102030 + level;
+        S.color_markdown_heading[level] = COLOR_RED_LIGHT + level;
+        S.color_mode = COLOR_MODE_RGB;
+        char expected[64];
+        snprintf(expected, sizeof(expected), "\x1b[38;2;16;32;%dm", 48 + level);
+        check(strcmp(syntaxColorFor((enum syntaxHighlight)(HL_HEADING_1 + level), &S), expected) == 0,
+            "each heading level resolves independent RGB color");
+        S.color_mode = COLOR_MODE_ANSI;
+        check(strcmp(syntaxColorFor((enum syntaxHighlight)(HL_HEADING_1 + level), &S),
+            ansiColorCode(S.color_markdown_heading[level])) == 0, "each heading level resolves ANSI color");
+    }
+    S.color_mode = COLOR_MODE_RGB;
+    S.rgb_color_background = 0x202020;
+    S.rgb_color_markdown_heading[0] = 0xE02020;
+    ab = (struct abuf)ABUF_INIT;
+    editorBeginHeadingRow(&ab, 0);
+    abAppend(&ab, "", 1);
+    check(drawing_heading_background == 0x372020, "heading background uses twelve percent of foreground hue");
+    check(strstr(ab.b, "\x1b[48;2;55;32;32m") != NULL, "tinted heading background emitted");
+    editorEndHeadingRow(&ab);
+    check(!drawing_heading, "tinted heading background does not leak into plain text");
+    abFree(&ab);
+    S.rgb_color_markdown_heading[0] = 0x2020E0;
+    ab = (struct abuf)ABUF_INIT;
+    editorBeginHeadingRow(&ab, 0);
+    check(drawing_heading_background == 0x202037, "changing foreground updates heading background hue");
+    editorEndHeadingRow(&ab);
+    abFree(&ab);
     S.rgb_markdown_heading_background = RGB_TERMINAL_DEFAULT;
     ab = (struct abuf)ABUF_INIT;
     editorBeginHeadingRow(&ab, 0);

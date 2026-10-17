@@ -1318,6 +1318,14 @@ void syntaxHighlightRow(erow *row, const char *filename,
  * including terminal-default normal text.
  */
 const char *syntaxColorFor(enum syntaxHighlight hl, const struct editorSettings *s) {
+    if (hl >= HL_HEADING_1 && hl <= HL_HEADING_6) {
+        int32_t level = (int32_t)hl - HL_HEADING_1;
+        int32_t ansi = s->color_markdown_heading[level];
+        int32_t rgb = s->rgb_color_markdown_heading[level];
+        if (ansi == COLOR_TERMINAL_DEFAULT) ansi = s->color_syntax_preprocessor;
+        if (rgb == RGB_TERMINAL_DEFAULT) rgb = s->rgb_color_syntax_preprocessor;
+        return ansiColorCode(settingsResolveColor(s, ansi, rgb));
+    }
     switch (hl) {
         /* HL_NORMAL defaults to COLOR_TERMINAL_DEFAULT, which returns
          * NULL here rather than an escape sequence -- editorDrawRowSegment()

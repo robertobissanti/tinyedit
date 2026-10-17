@@ -4,6 +4,12 @@
 
 ### New features
 
+- Give Markdown H1–H6 independent foreground colors in every RGB/ANSI preset,
+  editable in Colors, using Synthwave Pro’s original level sequence and
+  theme-specific Catppuccin/One Dark colors. Tint each RGB heading background
+  from its level’s foreground hue, with an option to disable it. Preserve single-color fallback
+  for older configurations and presets.
+
 - Add the Synthwave Pro dark RGB preset, adapted from Roberto Bissanti’s
   Obsidian theme, with purple navigation markers, cyan headings and yellow
   ordinary brackets. Document sources and adaptation limits for all themes.

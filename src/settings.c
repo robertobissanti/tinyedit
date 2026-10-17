@@ -124,6 +124,12 @@ const struct settingDescriptor settingDescriptors[] = {
     { "rgb_syntax_emphasis_strong", "Markdown: bold text color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_emphasis_strong), 0, 0, NULL, 0 },
     { "rgb_syntax_italic", "Markdown: italic text color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_italic), 0, 0, NULL, 0 },
     { "rgb_syntax_math", "Markdown: LaTeX math color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_math), 0, 0, NULL, 0 },
+    { "rgb_markdown_h1", "Markdown: H1 color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_markdown_heading) + 0 * sizeof(int32_t), 0, 0, NULL, 0 },
+    { "rgb_markdown_h2", "Markdown: H2 color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_markdown_heading) + 1 * sizeof(int32_t), 0, 0, NULL, 0 },
+    { "rgb_markdown_h3", "Markdown: H3 color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_markdown_heading) + 2 * sizeof(int32_t), 0, 0, NULL, 0 },
+    { "rgb_markdown_h4", "Markdown: H4 color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_markdown_heading) + 3 * sizeof(int32_t), 0, 0, NULL, 0 },
+    { "rgb_markdown_h5", "Markdown: H5 color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_markdown_heading) + 4 * sizeof(int32_t), 0, 0, NULL, 0 },
+    { "rgb_markdown_h6", "Markdown: H6 color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_markdown_heading) + 5 * sizeof(int32_t), 0, 0, NULL, 0 },
     { "rgb_markdown_heading_background", "Markdown: heading background color", SETTING_RGB,
       offsetof(struct editorSettings, rgb_markdown_heading_background), 0, 0, NULL, 0 },
     { "rgb_background", "Editor background color (off=terminal default)", SETTING_RGB, offsetof(struct editorSettings, rgb_color_background), 0, 0, NULL, 0 },
@@ -222,6 +228,12 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, color_syntax_italic), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_syntax_math", "Markdown: LaTeX math color", SETTING_ENUM,
       offsetof(struct editorSettings, color_syntax_math), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_markdown_h1", "Markdown: H1 color", SETTING_ENUM, offsetof(struct editorSettings, color_markdown_heading) + 0 * sizeof(int32_t), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_markdown_h2", "Markdown: H2 color", SETTING_ENUM, offsetof(struct editorSettings, color_markdown_heading) + 1 * sizeof(int32_t), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_markdown_h3", "Markdown: H3 color", SETTING_ENUM, offsetof(struct editorSettings, color_markdown_heading) + 2 * sizeof(int32_t), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_markdown_h4", "Markdown: H4 color", SETTING_ENUM, offsetof(struct editorSettings, color_markdown_heading) + 3 * sizeof(int32_t), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_markdown_h5", "Markdown: H5 color", SETTING_ENUM, offsetof(struct editorSettings, color_markdown_heading) + 4 * sizeof(int32_t), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_markdown_h6", "Markdown: H6 color", SETTING_ENUM, offsetof(struct editorSettings, color_markdown_heading) + 5 * sizeof(int32_t), 0, 0, colorNames, SETTING_COLOR_COUNT },
 };
 const int32_t settingDescriptorCount = (int32_t)(sizeof(settingDescriptors) / sizeof(settingDescriptors[0]));
 
@@ -317,6 +329,10 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_invisibles = COLOR_GRAY_LIGHT;
     out->syntax_highlight = 1;
     out->markdown_heading_reverse = 0;
+    for (int32_t i = 0; i < 6; i++) {
+        out->color_markdown_heading[i] = COLOR_TERMINAL_DEFAULT;
+        out->rgb_color_markdown_heading[i] = RGB_TERMINAL_DEFAULT;
+    }
     out->rgb_markdown_heading_background = RGB_TERMINAL_DEFAULT;
     out->markdown_text_styles = 0;
     out->markdown_live_preview = 0;
@@ -647,6 +663,12 @@ uint8_t settingsLoadColorScheme(const char *path, struct editorSettings *draft,
         uint8_t required = candidate.color_mode == COLOR_MODE_RGB ? d->type == SETTING_RGB :
             (d->type == SETTING_ENUM && d->enum_names == colorNames) ||
             strcmp(d->key, "markdown_heading_reverse") == 0;
+        if (required && !seen[i] && (strncmp(d->key, "rgb_markdown_h", 14) == 0 ||
+            strncmp(d->key, "color_markdown_h", 16) == 0) &&
+            strcmp(d->key, "rgb_markdown_heading_background") != 0) {
+            *settingSlot(&candidate, d) = d->type == SETTING_RGB ? RGB_TERMINAL_DEFAULT : COLOR_TERMINAL_DEFAULT;
+            continue;
+        }
         if (required && !seen[i] && (!strcmp(d->key, "rgb_link_hover") || !strcmp(d->key, "color_link_hover"))) {
             /* Older presets predate pointer feedback; retain the current hover color. */
             continue;

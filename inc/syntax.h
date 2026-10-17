@@ -51,8 +51,8 @@
  * italic uses HL_EMPHASIS and its own color_syntax_italic slot) -- kept as its own class rather than
  * reused from another language's slot because bold and italic are
  * visually distinct concepts a user would reasonably want different
- * colors for, unlike (say) Markdown headings reusing HL_PREPROCESSOR's
- * "structural marker" meaning. HL_MATH (Markdown LaTeX math,
+ * colors for. HL_HEADING_1 through HL_HEADING_6 similarly distinguish
+ * Markdown heading levels without changing preprocessor highlighting. HL_MATH (Markdown LaTeX math,
  * "$...$"/"$$...$$") is the same case as HL_EMPHASIS_STRONG: initially
  * shared with HL_STRING (same "literal/non-prose" reasoning as code
  * spans), split into its own class on explicit request so math and
@@ -77,7 +77,13 @@ enum syntaxHighlight {
     HL_JSON_KEY,
     HL_LINK_MARKER,
     HL_LINK_LABEL,
-    HL_LINK_DESTINATION
+    HL_LINK_DESTINATION,
+    HL_HEADING_1,
+    HL_HEADING_2,
+    HL_HEADING_3,
+    HL_HEADING_4,
+    HL_HEADING_5,
+    HL_HEADING_6
 };
 
 struct syntaxLang {

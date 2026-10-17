@@ -139,9 +139,12 @@ int main(void) {
     char legacy_line[256];
     while (fgets(legacy_line, sizeof(legacy_line), legacy))
         if (strncmp(legacy_line, "rgb_syntax_italic", 16) != 0 &&
-            strncmp(legacy_line, "rgb_link_hover", 14) != 0) fputs(legacy_line, fp);
+            strncmp(legacy_line, "rgb_link_hover", 14) != 0 &&
+            !(strncmp(legacy_line, "rgb_markdown_h", 14) == 0 &&
+              legacy_line[14] >= '1' && legacy_line[14] <= '6')) fputs(legacy_line, fp);
     fclose(legacy); fclose(fp);
     if (!settingsLoadColorScheme(config, &scheme, scheme_error, sizeof(scheme_error)) ||
+        scheme.rgb_color_markdown_heading[0] != RGB_TERMINAL_DEFAULT ||
         scheme.rgb_color_link_hover != 0x56b6c2 ||
         scheme.rgb_color_syntax_italic != scheme.rgb_color_syntax_keyword ||
         scheme.color_syntax_italic != before_scheme.color_syntax_italic)
@@ -165,6 +168,24 @@ int main(void) {
         scheme.rgb_color_syntax_bracket != 0xffd23f ||
         scheme.rgb_color_syntax_preprocessor != 0x36e2ec)
         fail("Synthwave Pro palette rejected or navigation colors incorrect");
+    const char *heading_presets[] = {"one-dark", "catppuccin-latte", "catppuccin-frappe",
+        "catppuccin-macchiato", "catppuccin-mocha", "synthwave-pro",
+        "one-dark-ansi", "catppuccin-mocha-ansi"};
+    for (size_t i = 0; i < sizeof(heading_presets) / sizeof(*heading_presets); i++) {
+        char preset[128];
+        snprintf(preset, sizeof(preset), "colorschemes/%s.conf", heading_presets[i]);
+        struct editorSettings heading_scheme = scheme;
+        if (!settingsLoadColorScheme(preset, &heading_scheme, scheme_error, sizeof(scheme_error)))
+            fail("heading preset rejected");
+        const int32_t *colors = heading_scheme.color_mode == COLOR_MODE_RGB ?
+            heading_scheme.rgb_color_markdown_heading : heading_scheme.color_markdown_heading;
+        for (int32_t level = 0; level < 6; level++) {
+            if (colors[level] == (heading_scheme.color_mode == COLOR_MODE_RGB ?
+                RGB_TERMINAL_DEFAULT : COLOR_TERMINAL_DEFAULT)) fail("preset omits heading level color");
+            for (int32_t other = 0; other < level; other++)
+                if (colors[level] == colors[other]) fail("heading levels must use distinct palette colors");
+        }
+    }
     before_scheme = scheme;
     const char *invalid_schemes[] = {
         "color_mode = rgb\nrgb_background = #112233\n",

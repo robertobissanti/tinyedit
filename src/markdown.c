@@ -151,21 +151,9 @@ int32_t markdownPreviewEditStart(const erow *row) {
 }
 
 /* ---- Markdown (dedicated tokenizer) ----------------------------------
- *
- * Not "keywords + strings + comments" like the C-like languages above:
- * highlights ATX headings (leading '#'s -> HL_PREPROCESSOR, reusing that
- * class for "structural marker" rather than adding a parallel one),
- * inline code spans `...` and fenced code blocks ```...``` (-> HL_STRING,
- * reusing "literal text" semantics), LaTeX math "$...$"/"$$...$$"/
- * "\(...\)"/"\[...\]" (its own HL_MATH class, so it's independently
- * colorable from code spans even though both start from the same
- * "literal/non-prose" idea), and
- * emphasis wrapped in single or double asterisks/underscores (->
- * HL_KEYWORD, reusing "stands out from body text").
- * No nested Markdown-in-code-fence-language highlighting -- a code
- * fence's contents render as HL_STRING regardless of the language tag
- * after the opening ```, matching the "no nested/embedded syntax" scope
- * boundary from the original C-only version. */
+ * ATX headings retain their level, emphasis/math have independent styles,
+ * and literal code excludes Markdown navigation. Declared fenced languages
+ * reuse the existing language tokenizers; unknown languages remain literal. */
 /**
  * @brief Recognize extensions handled by the Markdown tokenizer.
  *
@@ -607,7 +595,8 @@ void markdownHighlightRow(erow *row, uint8_t prev_in_fence, uint8_t prev_in_math
         if (k - heading_start <= 6 &&
             (k == source_len || source[k] == ' ' || source[k] == '\t')) {
             row->hl_heading = 1;
-            for (int32_t i = 0; i < len; i++) row->hl[i] = HL_PREPROCESSOR;
+            for (int32_t i = 0; i < len; i++)
+                row->hl[i] = (uint8_t)(HL_HEADING_1 + k - heading_start - 1);
             row->hl_open_comment = 0;
             row->hl_open_math = 0;
             row->hl_open_frontmatter = 0;

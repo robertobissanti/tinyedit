@@ -96,6 +96,7 @@ static uint8_t document_click_pending;
 static struct timespec document_click_time;
 static int32_t document_click_x, document_click_y;
 static uint8_t drawing_heading;
+static int32_t drawing_heading_foreground, drawing_heading_background;
 static uint8_t drawing_heading_bold;
 
 static const char *const void_tags[] = {
@@ -2149,10 +2150,10 @@ static void abAppendReset(struct abuf *ab) {
     const char *bg = ansiBgColorCode(settingsColor(&S, color_background));
     if (bg[0]) abAppend(ab, bg, (int32_t)strlen(bg));
     if (drawing_heading) {
-        const char *fg = ansiColorCode(settingsColor(&S, color_syntax_preprocessor));
+        const char *fg = ansiColorCode(drawing_heading_foreground);
         abAppend(ab, fg, (int32_t)strlen(fg));
         if (S.color_mode == COLOR_MODE_RGB) {
-            const char *heading_bg = ansiBgColorCode(settingsResolveColor(&S, 0, S.rgb_markdown_heading_background));
+            const char *heading_bg = ansiBgColorCode(settingsResolveColor(&S, 0, drawing_heading_background));
             abAppend(ab, heading_bg, (int32_t)strlen(heading_bg));
         } else abAppend(ab, "\x1b[7m", 4);
     }
@@ -2843,6 +2844,29 @@ static void editorBeginHeadingRow(struct abuf *ab, int32_t filerow) {
         E.document.buffer.rows[filerow].hl_heading;
     drawing_heading = heading && (S.color_mode == COLOR_MODE_RGB ?
         S.rgb_markdown_heading_background != RGB_TERMINAL_DEFAULT : S.markdown_heading_reverse);
+    drawing_heading_foreground = settingsColor(&S, color_syntax_preprocessor);
+    drawing_heading_background = S.rgb_markdown_heading_background;
+    if (heading && E.document.buffer.rows[filerow].hl) {
+        int32_t level = E.document.buffer.rows[filerow].hl[0] - HL_HEADING_1;
+        if (level >= 0 && level < 6) {
+            int32_t ansi = S.color_markdown_heading[level];
+            int32_t rgb = S.rgb_color_markdown_heading[level];
+            if (ansi == COLOR_TERMINAL_DEFAULT) ansi = S.color_syntax_preprocessor;
+            if (rgb == RGB_TERMINAL_DEFAULT) rgb = S.rgb_color_syntax_preprocessor;
+            drawing_heading_foreground = settingsResolveColor(&S, ansi, rgb);
+            if (drawing_heading && S.color_mode == COLOR_MODE_RGB &&
+                S.rgb_color_markdown_heading[level] != RGB_TERMINAL_DEFAULT) {
+                int32_t base = S.rgb_color_background == RGB_TERMINAL_DEFAULT ?
+                    S.rgb_markdown_heading_background : S.rgb_color_background;
+                drawing_heading_background = 0;
+                for (int32_t shift = 0; shift <= 16; shift += 8) {
+                    int32_t channel = (((base >> shift) & 255) * 88 +
+                        ((rgb >> shift) & 255) * 12 + 50) / 100;
+                    drawing_heading_background |= channel << shift;
+                }
+            }
+        }
+    }
     drawing_heading_bold = heading && (S.markdown_text_styles || S.markdown_live_preview);
     if (drawing_heading || drawing_heading_bold) abAppendReset(ab);
     if (drawing_heading) {
@@ -4263,7 +4287,10 @@ static int32_t *settingsScreenSlot(struct editorSettings *s, const struct settin
  */
 static uint8_t editorSettingsIsSyntaxColor(const struct settingDescriptor *d) {
     return strncmp(d->key, "color_syntax_", 13) == 0 ||
-        strncmp(d->key, "rgb_syntax_", 11) == 0;
+        strncmp(d->key, "rgb_syntax_", 11) == 0 ||
+        strncmp(d->key, "color_markdown_h", 16) == 0 ||
+        (strncmp(d->key, "rgb_markdown_h", 14) == 0 &&
+         strcmp(d->key, "rgb_markdown_heading_background") != 0);
 }
 
 /**
@@ -4285,6 +4312,7 @@ static const char *editorSettingsSyntaxColorSample(const struct settingDescripto
     if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_emphasis_strong") == 0) return "**bold**";
     if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_math") == 0) return "$x^2$";
     if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_function") == 0) return "main()";
+    if (strstr(d->key, "markdown_h")) return "# Heading";
     return "sample";
 }
 
