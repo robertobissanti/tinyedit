@@ -23,8 +23,8 @@
  *   history.c      bounded row deltas, undo/redo and allocation-failure rollback
  *   linenoise.c    historical line-editor implementation; not built
  *   links.c        inline/bare links and safe browser/mail/file dispatch
- *   menu.c         UTF-8 menu layout, viewport clipping and input navigation
  *   markdown.c     Markdown syntax, fenced-code dispatch, preview and source navigation
+ *   menu.c         UTF-8 menu layout, viewport clipping and input navigation
  *   render.c       shared row/wrapped-text layout and presentation adapters
  *   search.c       compiled queries, text search and source-coordinate results
  *   settings.c     persistent configuration, color scheme loading and color escapes
@@ -1982,6 +1982,8 @@ static void editorFollowSourceLink(int32_t row, const struct textLink *link) {
     struct stat st;
     if (!absolute || stat(absolute, &st) < 0 || !S_ISREG(st.st_mode))
         editorSetErrorMessage("Image is not an accessible regular file");
+    else if (!linksIsImagePath(absolute) || (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)))
+        editorSetErrorMessage("Refusing to open: not a non-executable image file");
     else if (!linksOpenFile(absolute))
         editorSetErrorMessage("Can't open image application: %s", strerror(errno));
     else editorSetStatusMessage("Opened image in default application");
@@ -2852,7 +2854,11 @@ static void editorBeginHeadingRow(struct abuf *ab, int32_t filerow) {
     drawing_heading_foreground = settingsColor(&S, color_syntax_preprocessor);
     drawing_heading_background = S.rgb_markdown_heading_background;
     if (heading && E.document.buffer.rows[filerow].hl) {
-        int32_t level = E.document.buffer.rows[filerow].hl[0] - HL_HEADING_1;
+        const erow *hrow = &E.document.buffer.rows[filerow];
+        int32_t first = 0;
+        /* Up to three leading spaces are allowed before the marker. */
+        while (first < hrow->rsize && hrow->render[first] == ' ') first++;
+        int32_t level = first < hrow->rsize ? hrow->hl[first] - HL_HEADING_1 : -1;
         if (level >= 0 && level < 6) {
             int32_t ansi = S.color_markdown_heading[level];
             int32_t rgb = S.rgb_color_markdown_heading[level];

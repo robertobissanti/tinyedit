@@ -49,6 +49,16 @@
 
 ### Important fixes
 
+- Open only non-executable image files (PNG, JPEG, GIF, WebP, SVG, BMP, TIFF,
+  HEIC, AVIF, ICO) from Markdown image links: a crafted `![x](payload.command)`
+  or `.desktop` target could otherwise run code through the desktop opener with
+  one click. Other targets now produce a red error.
+- Apply per-level heading colors and backgrounds to headings indented by one to
+  three spaces.
+- Keep `@id.` references and `_`/`*` emphasis after non-ASCII letters (e.g.
+  `città_nuova`) from being misread: code spans no longer cut references and an
+  underscore inside a word no longer opens emphasis.
+
 - Keep Markdown live preview working when syntax highlighting is disabled:
   preserve compact formatting, cursor expansion and link mouse actions without
   enabling syntax colors. Refresh preview metadata when toggled from View/F2.

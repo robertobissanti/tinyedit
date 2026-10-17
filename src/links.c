@@ -311,8 +311,22 @@ uint8_t linksOpenMailto(const char *target) {
     return linksOpenDesktop(target, 1);
 }
 
+uint8_t linksIsImagePath(const char *path) {
+    static const char *const extensions[] = {
+        "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tif", "tiff", "heic", "avif", "ico"
+    };
+    const char *slash = path ? strrchr(path, '/') : NULL;
+    const char *dot = path ? strrchr(path, '.') : NULL;
+    if (!dot || (slash && dot < slash)) return 0;
+    for (size_t i = 0; i < sizeof(extensions) / sizeof(extensions[0]); i++)
+        if (strcasecmp(dot + 1, extensions[i]) == 0) return 1;
+    return 0;
+}
+
 uint8_t linksOpenFile(const char *path) {
-    if (!path || path[0] != '/') { errno = EINVAL; return 0; }
+    /* The desktop opener dispatches by file type, so an arbitrary target such
+     * as a .command or .desktop file could run code from one click. */
+    if (!path || path[0] != '/' || !linksIsImagePath(path)) { errno = EINVAL; return 0; }
     for (const uint8_t *p = (const uint8_t *)path; *p; p++)
         if (*p < 32 || *p == 127) { errno = EINVAL; return 0; }
     return linksOpenDesktop(path, 0);

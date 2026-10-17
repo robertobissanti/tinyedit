@@ -37,5 +37,6 @@ uint8_t linksOpenMailto(const char *target);
 uint8_t linksOpenWeb(const char *target);
 /** Open an absolute local file with the default desktop application.
  * Success confirms launcher execution only; never invokes a shell. */
+uint8_t linksIsImagePath(const char *path);
 uint8_t linksOpenFile(const char *path);
 #endif

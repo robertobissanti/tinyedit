@@ -1353,6 +1353,9 @@ static void testLinks(void) {
         !linksIsMailto("mailto:") && !linksIsMailto("mailto:a b@example.org") &&
         !linksIsMailto("mailto:a@example.org\n") && !linksIsMailto("javascript:alert(1)"),
         "mailto transport checks preserve URI parameters and reject unsafe raw bytes");
+    check(linksIsImagePath("/a/b.PNG") && linksIsImagePath("x.jpeg") && !linksIsImagePath("/a/run.command") &&
+        !linksIsImagePath("/a.png/tool") && !linksIsImagePath("/a/noext") && !linksOpenFile("/tmp/x.desktop"),
+        "image opener accepts only image extensions");
     editorFollowLink(mail);
     check(!E.ui.statusmsg_error && strstr(E.ui.statusmsg, "mail application"), "mailto uses desktop mail dispatch");
     for (int32_t attempt = 0; attempt < 100; attempt++) {

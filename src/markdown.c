@@ -646,7 +646,8 @@ void markdownHighlightRow(erow *row, uint8_t prev_in_fence, uint8_t prev_in_math
             if (end >= 0) { i = end; continue; }
         }
         if ((s[i] == '*' || s[i] == '_') &&
-            !(i > 0 && isalnum((unsigned char)s[i - 1]))) {
+            !(i > 0 && (isalnum((unsigned char)s[i - 1]) ||
+                        (uint8_t)s[i - (int32_t)utf8PrevCharLen(s, (size_t)i)] >= 128))) {
             char marker = s[i];
             int32_t run = 1;
             while (i + run < len && s[i + run] == marker) run++;
@@ -1057,7 +1058,8 @@ uint8_t markdownFindReference(const struct editorBuffer *buffer, int32_t y, int3
         while (end < row->size && mask[end] && markdownReferenceChar(s, end, row->size)) end = markdownNext(s, end, row->size);
         if (start > 0 && s[start - 1] == '[' && end < row->size && s[end] == ']') start--;
         int32_t visible_end = end < row->size && s[end] == ']' && start < at ? end + 1 : end;
-        if (end + 1 < row->size && s[end] == '.' && markdownReferenceChar(s, end + 1, row->size)) {
+        if (end + 1 < row->size && mask[end] && mask[end + 1] && s[end] == '.' &&
+            markdownReferenceChar(s, end + 1, row->size)) {
             at = end + 1;
             continue;
         }

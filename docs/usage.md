@@ -266,7 +266,8 @@ Markdown images such as `![Diagramma](../imgs/diagramma.png){#fig:diagramma}` op
 file in the operating system's default application (`open` on macOS,
 `xdg-open` on Linux). Relative paths use the Markdown document's directory;
 spaces, UTF-8, percent encoding and escaped parentheses work as for other local
-links. A source fragment is ignored when opening the image file. Missing files,
+links. A source fragment is ignored when opening the image file. Only files with an image extension (PNG, JPEG, GIF, WebP, SVG, BMP,
+TIFF, HEIC, AVIF, ICO) and without execute permission are opened. Missing files,
 directories and launcher failures produce red errors. Opening an image keeps
 the current document and its unsaved changes, without a save prompt.
 Use Alt+Enter or double-click on the image label or destination; in live preview,

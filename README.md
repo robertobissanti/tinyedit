@@ -255,7 +255,8 @@ for tables, lists, quoted blocks, namespaces, UTF-8 and encoded fragments.
 In an image such as `![Diagramma](imgs/diagramma.png){#fig:diagramma}`, the
 source path opens in the default desktop application using `open` on macOS or
 `xdg-open` on Linux. Hover and single-click the visible path in live preview,
-or use the usual link gestures. The Markdown document and unsaved changes stay
+or use the usual link gestures. Only non-executable files with an image
+extension are opened. The Markdown document and unsaved changes stay
 open. A link to `#fig:diagramma` instead jumps to the image's source in the
 document. See [image navigation](docs/usage.md#markdown-images).
 
