@@ -533,6 +533,57 @@ def test_markdown_live_preview(home):
         finish(process, master)
 
 
+def test_markdown_link_mouse(home):
+    case_home = pathlib.Path(home) / "markdown-link-mouse"
+    case_home.mkdir()
+    target = case_home / "links.md"
+    original = b"start\n[label](#target) tail\n## Target\n[plain](plain.txt)\n"
+    target.write_bytes(original)
+    (case_home / "plain.txt").write_text("PLAIN_DESTINATION\n", encoding="utf-8")
+    (case_home / ".tinyeditrc").write_text(
+        "show_menu = false\nshow_line_numbers = false\nmouse_enabled = true\n"
+        "markdown_live_preview = true\ncolor_link_hover = red-dark\nbackup_interval = 0\n",
+        encoding="utf-8")
+    process, master = spawn_editor([str(target)], case_home)
+
+    def frame(output):
+        return output.rsplit(b"\x1b[H", 1)[-1]
+
+    def text(output):
+        return re.sub(rb"\x1b\[[0-9;?]*[ -/]*[@-~]", b"", frame(output))
+
+    try:
+        initial = read_available(master)
+        assert b"\x1b[?1003h" in initial, "preview must request hover reports"
+        os.write(master, b"\x1b[<35;2;2M")
+        hovered = read_available(master)
+        assert b"\x1b[31m\x1b[4ml" in frame(hovered)
+        assert b"#target" not in text(hovered) and b"1/4: C 1" in text(hovered)
+        os.write(master, b"\x1b[<35;20;2M")
+        assert b"\x1b[31m\x1b[4ml" not in frame(read_available(master)), "hover did not clear"
+        os.write(master, b"\x1b[<0;2;2M\x1b[<0;2;2m")
+        followed = read_available(master)
+        assert b"3/4: C 1" in text(followed), "single click did not follow heading anchor"
+        assert b"#target" not in text(followed), "following exposed source markup"
+        os.write(master, b"\x1b[<0;6;2M\x1b[<0;6;2m")
+        editing = read_available(master)
+        assert b"[label](#target) tail" in text(editing), "right border did not enter source editing"
+        os.write(master, b"\x1b[<0;3;2M\x1b[<0;3;2m")
+        editing = read_available(master)
+        assert b"[label](#target) tail" in text(editing) and b"2/4:" in text(editing)
+        os.write(master, b"X")
+        read_available(master)
+        os.write(master, b"\x1b[<0;2;4M\x1b[<0;2;4m\x1b[<35;3;4M")
+        assert b"Save changes before" in read_available(master), "dirty link navigation needs confirmation"
+        os.write(master, b"n")
+        opened = read_available(master)
+        assert b"PLAIN_DESTINATION" in text(opened), "single click did not open local destination"
+        assert b"\x1b[?1003l\x1b[?1002h" in opened, "non-Markdown view retained hover reporting"
+        assert target.read_bytes() == original, "mouse navigation changed source on disk"
+    finally:
+        finish(process, master)
+
+
 def test_very_long_wrapped_line(home):
     target = pathlib.Path(home) / "long-line.txt"
     target.write_bytes((b"word " * 12000) + b"TAIL_SENTINEL\n")
@@ -1907,6 +1958,7 @@ def main():
         test_menu_show_invisibles_refreshes_rows(home)
         test_menu_view_toggles_settings(home)
         test_markdown_live_preview(home)
+        test_markdown_link_mouse(home)
         test_matching_bracket_highlight(home)
         test_very_long_wrapped_line(home)
         test_utf8_word_jumps(home)

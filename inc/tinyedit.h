@@ -146,6 +146,7 @@ typedef struct erow {
     struct markdownSpan *markdown_spans; /* Owned, rebuilt with highlighting. */
     int32_t markdown_count, markdown_capacity;
     int32_t seg_preview_cursor;
+    int32_t seg_preview_edit_start;
     uint8_t seg_preview_enabled;
     uint8_t render_dirty;
     /* Whether this row ends inside an unclosed block comment, carried

@@ -368,10 +368,22 @@ Enable **View → Markdown live preview**, or the same option in F2
 (`markdown_live_preview = true` in `~/.tinyeditrc`), for a compact Markdown
 view. Paired single-line `**bold**` / `__bold__` and `*italic*` / `_italic_`
 keep their terminal styles while hiding their delimiters. Inline `[label](https://example.org)`
-links display an underlined label. Placing the cursor anywhere inside a
-construct, or immediately before its opening delimiter or after its closing
-delimiter, reveals its complete source for editing, including link destinations.
-Moving away compacts it again. This also works with wrapping, Unicode text,
+links display an underlined label. For bold and italic, placing the cursor
+inside the construct or at either boundary reveals its complete source for
+editing; moving away compacts it again. For links, enter source editing by
+placing the cursor at the left or right boundary. Moving directly into a link
+label keeps it compact until a boundary is reached. Once expanded from a
+boundary, the link stays editable while the cursor remains inside it,
+including its destination.
+
+With mouse support enabled, hovering over a compact link changes its color.
+A single click on its label follows the link without moving the cursor into
+its source or expanding it. Clicking immediately after the label enters source
+editing from its right boundary; arrow keys can reach either boundary.
+Shift-click and selection retain their editing behavior. Outside live preview,
+links retain their existing double-click and Alt+Enter actions.
+
+This also works with wrapping, Unicode text,
 and mouse positioning; the document and saved bytes are unchanged.
 
 Live preview is off by default and requires syntax highlighting. It enables

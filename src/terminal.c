@@ -405,9 +405,8 @@ uint8_t terminalInputReady(void) {
  * selection (e.g. Cmd+C/Cmd+V on Ghostty), so it must be an explicit opt-in.
  * Still registered with atexit() once turned on, same reasoning as bracketed
  * paste: must not leak into whatever runs in this terminal after tinyedit
- * quits, regardless of how the setting was left. While a menu is open, ?1003
- * enables motion without a button so hovering can select items; closing the
- * menu restores ?1002 behavior.
+ * quits, regardless of how the setting was left. Menus and Markdown live preview use ?1003
+ * motion without a button for hover feedback; other views use ?1002.
  */
 void terminalDisableMouseReporting(void) {
     (void)terminalWrite("\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[>0s", 29);
@@ -425,7 +424,7 @@ void terminalEnableMouseReporting(void) {
 }
 
 /**
- * @brief Switch between menu hover and document drag reporting.
+ * @brief Switch between hover and button-motion reporting.
  *
  * @details enabled selects all-motion reporting; disabling restores button-
  * motion reporting. Call while editor mouse support is active.

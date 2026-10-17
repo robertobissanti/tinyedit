@@ -4,6 +4,11 @@
 
 ### New features
 
+- In Markdown live preview, change a compact link's color under the mouse and
+  follow it with one click without expanding its source. Enter link editing
+  from either boundary; keep it editable until the cursor leaves. Configure
+  the hover color independently in ANSI and RGB from Colors.
+
 - Add optional Markdown live preview in View and F2: hide paired bold/italic
   delimiters and show inline links as underlined labels. Reveal the complete
   construct at the cursor for editing while preserving original saved text,

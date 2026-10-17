@@ -86,7 +86,11 @@ static struct editorSelection edit_saved_selection;
 static uint8_t edit_saved_dirty, edit_saved_final_newline;
 static enum historyError edit_last_error;
 static uint8_t replay_preparing;
-static uint8_t menu_mouse_motion_enabled;
+static uint8_t mouse_motion_enabled;
+static uint8_t document_pointer_valid;
+static int32_t document_pointer_col, document_pointer_row;
+static int32_t hovered_link_row = -1;
+static int32_t hovered_link_from, hovered_link_to;
 static uint8_t document_click_pending;
 static struct timespec document_click_time;
 static int32_t document_click_x, document_click_y;
@@ -258,10 +262,20 @@ static int32_t editorReadKey(void) {
 }
 
 
-static void editorSyncMarkdownPreview(void) {
+/* Hover and the release following a link click are not prompt answers. */
+static int32_t editorReadPromptKey(void) {
+    int32_t key;
+    do { key = editorReadKey(); } while (key == MOUSE_EVENT_KEY);
+    return key;
+}
+
+static uint8_t editorMarkdownPreviewEnabled(void) {
     const char *ext = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
-    uint8_t enabled = S.markdown_live_preview && S.syntax_highlight &&
-        ext && syntaxIsMarkdownExtension(ext + 1) && !E.document.selection.active &&
+    return S.markdown_live_preview && S.syntax_highlight && ext && syntaxIsMarkdownExtension(ext + 1);
+}
+
+static void editorSyncMarkdownPreview(void) {
+    uint8_t enabled = editorMarkdownPreviewEnabled() && !E.document.selection.active &&
         E.search.search_match_y < 0;
     erow *active = E.document.cursor.cy >= 0 && E.document.cursor.cy < E.document.buffer.row_count ?
         &E.document.buffer.rows[E.document.cursor.cy] : NULL;
@@ -909,6 +923,7 @@ static char *editorRowsToString(size_t *buflen) {
 static void editorSetStatusMessage(const char *fmt, ...);
 static void editorSetStatusMessageSticky(const char *fmt, ...);
 static void editorRefreshScreen(void);
+static void editorSyncMenuMouseMotion(void);
 static int32_t editorReadKey(void);
 static int32_t editorReadMultiByteKey(uint8_t lead, char *out);
 static void editorFreeUndoRedo(void);
@@ -1448,7 +1463,7 @@ static void editorOfferBackupRecovery(void) {
     if (!E.document.file.filename || !backupExists(E.document.file.filename)) return;
 
     editorRecoveryScreen();
-    int32_t c = editorReadKey();
+    int32_t c = editorReadPromptKey();
     if (c != 'y' && c != 'Y') {
         editorSetStatusMessage("");
         return;
@@ -1532,7 +1547,7 @@ static uint8_t editorConfirmOverwrite(const char *name) {
     if (!exists || same) return 1;
     editorSetStatusMessage("%s exists. Replace it? (y/n)", name);
     editorRefreshScreen();
-    int32_t key = editorReadKey();
+    int32_t key = editorReadPromptKey();
     return key == 'y' || key == 'Y';
 }
 
@@ -1663,7 +1678,7 @@ static uint8_t editorConfirmDocumentChange(const char *action) {
 
     editorSetStatusMessage("Save changes before %s? (y/n/Esc to cancel)", action);
     editorRefreshScreen();
-    int32_t c = editorReadKey();
+    int32_t c = editorReadPromptKey();
     if (c == 'y' || c == 'Y') {
         editorSave();
         return !E.document.file.dirty;
@@ -1685,6 +1700,9 @@ static uint8_t editorConfirmDocumentChange(const char *action) {
  * starts with independent cursor, selection, search, backup, and undo state.
  */
 static void editorResetDocument(void) {
+    renderSetMarkdownPreview(0, NULL, 0, S.tab_stop);
+    document_pointer_valid = 0;
+    hovered_link_row = -1;
     document_click_pending = 0;
     searchQueryFree(&E.search.query);
     E.search = (struct editorSearch){0};
@@ -2274,6 +2292,64 @@ static void editorMouseToCursor(int32_t screen_col, int32_t screen_row, int32_t 
     *out_cx = cx;
 }
 
+/** Resolve only actual visible label cells, excluding clamped whitespace and
+ * source-editing links. The returned link uses source bytes, span render bytes. */
+static uint8_t editorPreviewLinkAtMouse(int32_t screen_col, int32_t screen_row,
+    int32_t *file_row, struct textLink *link, struct markdownSpan *span) {
+    if (!S.mouse_enabled || !editorMarkdownPreviewEnabled() || M.open ||
+        E.document.selection.active || E.search.search_match_y >= 0) return 0;
+    int32_t top = (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0);
+    if (screen_col < 1 || screen_row < 1) return 0;
+    int32_t column = screen_col - 1 - editorGutterWidth() - editorSidebarWidth();
+    if (screen_row <= top || screen_row > top + E.view.screenrows || column < 0 ||
+        screen_col > E.view.screencols || E.document.buffer.row_count == 0) return 0;
+    int32_t relative = screen_row - 1 - top;
+    if (E.view.rowoff > INT32_MAX - relative) return 0;
+    int32_t video = relative + E.view.rowoff;
+    int32_t cy, seg;
+    int32_t wrapcols = editorSoftWrapCols();
+    editorFileRowAtVideoRow(video, wrapcols, &cy, &seg);
+    erow *row = &E.document.buffer.rows[cy];
+    int32_t nseg = editorRowSegments(row, wrapcols);
+    int32_t first_video = editorVideoRowOf(cy, 0, wrapcols);
+    if (video < first_video || video >= first_video + nseg) return 0;
+    if (column > INT32_MAX - row->seg_start_rx[seg]) return 0;
+    int32_t rx = row->seg_start_rx[seg] + column;
+    int32_t end = seg + 1 < nseg ? row->seg_start[seg + 1] : row->rsize;
+    int32_t byte = renderByteAtColumn(row, rx);
+    while (byte < end && renderByteHidden(row, byte))
+        byte += (int32_t)utf8NextCharLen(row->render, (size_t)byte, (size_t)row->rsize);
+    if (byte >= end) return 0;
+    /* Reject padding beyond the segment, including the right margin. */
+    int32_t end_rx = seg + 1 < nseg ? row->seg_start_rx[seg + 1] :
+        editorRowCxToRx(row, row->size);
+    if (rx >= end_rx) return 0;
+    for (int32_t i = 0; i < row->markdown_count; i++) {
+        const struct markdownSpan *candidate = &row->markdown_spans[i];
+        if (!candidate->link || byte < candidate->content_start || byte >= candidate->content_end ||
+            !renderByteHidden(row, candidate->start)) continue;
+        int32_t cx = editorRowRxToCx(row, rx);
+        if (!linksFind(row->chars, row->size, cx, link)) return 0;
+        *file_row = cy;
+        *span = *candidate;
+        return 1;
+    }
+    return 0;
+}
+
+static void editorUpdateLinkHover(void) {
+    hovered_link_row = -1;
+    if (!document_pointer_valid) return;
+    struct textLink link;
+    struct markdownSpan span;
+    int32_t cy;
+    if (editorPreviewLinkAtMouse(document_pointer_col, document_pointer_row, &cy, &link, &span)) {
+        hovered_link_row = cy;
+        hovered_link_from = span.content_start;
+        hovered_link_to = span.content_end;
+    }
+}
+
 /**
  * @brief Update cursor display coordinates and keep its context in view.
  *
@@ -2478,6 +2554,9 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
                 syn_color = ansiColorCode(settingsColor(&S, color_syntax_normal));
             }
         }
+        if (!should_highlight && filerow == hovered_link_row &&
+            rendercol >= hovered_link_from && rendercol < hovered_link_to)
+            syn_color = ansiColorCode(settingsColor(&S, color_link_hover));
         if (syn_color) abAppend(ab, syn_color, (int32_t)strlen(syn_color));
         uint8_t styled = !should_highlight && markdown_styles && row->hl && rendercol < row->rsize;
         if (styled) {
@@ -2726,6 +2805,7 @@ static void editorEndHeadingRow(struct abuf *ab) {
  * and bracket highlighting are computed for this frame.
  */
 static void editorDrawRows(struct abuf *ab) {
+    editorUpdateLinkHover();
     int32_t sel_y0 = 0, sel_x0 = 0, sel_y1 = 0, sel_x1 = 0;
     uint8_t has_sel = editorSelectionRange(&E.document.selection, &E.document.cursor, &sel_y0, &sel_x0, &sel_y1, &sel_x1);
     int32_t pair_y0 = -1, pair_x0 = -1, pair_y1 = -1, pair_x1 = -1;
@@ -3190,6 +3270,7 @@ static void editorDrawSidebar(struct abuf *ab) {
  * writes it to stdout; also draws the menu overlay when open.
  */
 static void editorRefreshScreen(void) {
+    editorSyncMenuMouseMotion();
     uint8_t need_full_clear = 0;
     if (winsize_changed) {
         winsize_changed = 0;
@@ -4037,7 +4118,7 @@ static void editorFindAndReplace(const char *query) {
             editorSetStatusMessage(
                 "Replace this occurrence? y/n/a(ll)/q(uit)");
             editorRefreshScreen();
-            int32_t c = editorReadKey();
+            int32_t c = editorReadPromptKey();
             if (c == 'q' || c == '\x1b') break;
             if (c == 'a') { all = 1; do_replace = 1; }
             else if (c == 'y') do_replace = 1;
@@ -4593,7 +4674,7 @@ static void editorInfoScreen(void) {
     if (!terminalWrite(ab.b, (size_t)ab.len)) terminalDie("write");
     abFree(&ab);
 
-    editorReadKey(); /* any key closes it */
+    editorReadPromptKey(); /* any key closes it */
 }
 
 /**
@@ -4923,6 +5004,7 @@ static uint8_t editorSettingsSave(const struct editorSettings *edited) {
     if (S.mouse_enabled != previous.mouse_enabled) {
         if (S.mouse_enabled) terminalEnableMouseReporting();
         else terminalDisableMouseReporting();
+        mouse_motion_enabled = 0;
     }
 #ifdef __APPLE__
     if (S.mac_command_keys != previous.mac_command_keys) {
@@ -5085,7 +5167,7 @@ static void editorSettingsScreen(void) {
                 if (!terminalWrite(ab2.b, (size_t)ab2.len)) terminalDie("write");
                 abFree(&ab2);
 
-                int32_t confirm = editorReadKey();
+                int32_t confirm = editorReadPromptKey();
                 if (confirm == 'y' || confirm == 'Y') {
                     if (editorSettingsSave(&edited)) return;
                     snprintf(msg, sizeof(msg), "Could not save; draft kept.");
@@ -5529,16 +5611,16 @@ static void editorToggleMenuSetting(enum editorCommand command) {
 }
 
 /**
- * @brief Keep terminal hover reporting aligned with the open menu.
+ * @brief Enable hover reports for an open menu or Markdown live preview.
  *
  * @details Call after menu state changes. Emits a mode change only when the
  * required reporting state differs from the previous one.
  */
 static void editorSyncMenuMouseMotion(void) {
-    uint8_t enabled = S.mouse_enabled && S.show_menu && M.open;
-    if (enabled == menu_mouse_motion_enabled) return;
-    terminalSetMenuMouseMotion(enabled);
-    menu_mouse_motion_enabled = enabled;
+    uint8_t enabled = S.mouse_enabled && ((S.show_menu && M.open) || editorMarkdownPreviewEnabled());
+    if (enabled == mouse_motion_enabled) return;
+    if (S.mouse_enabled) terminalSetMenuMouseMotion(enabled);
+    mouse_motion_enabled = enabled;
 }
 
 /**
@@ -5760,6 +5842,10 @@ static uint8_t editorTreeKey(int32_t c) {
  * a burst, passes through the same menu/text routing and release handling.
  */
 static int32_t editorHandleMouseEvent(void) {
+    document_pointer_valid = 1;
+    document_pointer_col = mouseEventCol;
+    document_pointer_row = mouseEventRow;
+    if ((mouseEventButton & ~28) == 35 && !(S.show_menu && M.open)) return 0;
     if (mouseEventPress && (mouseEventRow <= (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0) ||
         mouseEventRow > E.view.screenrows + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0) ||
         mouseEventCol <= editorSidebarWidth() + editorGutterWidth()))
@@ -5859,6 +5945,17 @@ static int32_t editorHandleMouseEvent(void) {
              * cursor position immediately before the click. */
             int32_t cy, cx;
             editorMouseToCursor(mouseEventCol, mouseEventRow, &cy, &cx);
+            struct textLink preview_link;
+            int32_t link_row;
+            struct markdownSpan preview_span;
+            if (!shift_held && editorPreviewLinkAtMouse(mouseEventCol, mouseEventRow,
+                &link_row, &preview_link, &preview_span)) {
+                document_click_pending = 0;
+                char *target = linksTarget(E.document.buffer.rows[link_row].chars, &preview_link);
+                if (target) { editorFollowLink(target); free(target); }
+                else editorSetErrorMessage("Link contains invalid control bytes");
+                return 0;
+            }
             struct timespec now;
             uint8_t timed = clock_gettime(CLOCK_MONOTONIC, &now) == 0;
             double elapsed = timed ? difftime(now.tv_sec, document_click_time.tv_sec) +

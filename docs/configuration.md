@@ -36,7 +36,10 @@ this additional row.
 **Markdown live preview** is available in F2 and **View**, and is saved as
 `markdown_live_preview = true`. It defaults to `false` and requires syntax
 highlighting. See the [live preview behavior](usage.md#top-and-status-bars)
-for supported constructs and cursor expansion.
+for supported constructs and cursor expansion. With mouse support enabled,
+compact links change color under the pointer and open with a single click.
+**Colors → Interface → Link hover color** controls the hovered label using
+independent `color_link_hover` (ANSI) and `rgb_link_hover` (RGB) values.
 
 ## Colors page and RGB
 

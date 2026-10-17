@@ -110,6 +110,7 @@ struct editorSettings {
     int32_t rgb_output;
     int32_t rgb_color_gutter;
     int32_t rgb_color_selection;
+    int32_t rgb_color_link_hover;
     int32_t rgb_color_statusbar;
     int32_t rgb_color_statusbar_text;
     int32_t rgb_color_invisibles;
@@ -135,6 +136,7 @@ struct editorSettings {
     int32_t undo_memory_mb; /* Applied at startup or document reset. */
     int32_t color_gutter;
     int32_t color_selection;
+    int32_t color_link_hover;
     int32_t color_statusbar;
     int32_t color_statusbar_text;
     int32_t show_top_bar;

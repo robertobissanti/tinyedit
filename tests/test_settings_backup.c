@@ -66,6 +66,8 @@ int main(void) {
         fail("legacy italic colors do not follow customized keywords");
     if (settings.markdown_live_preview) fail("live preview defaults off for old configurations");
     settings.markdown_live_preview = 1;
+    settings.color_link_hover = COLOR_MAGENTA_DARK;
+    settings.rgb_color_link_hover = 0x123456;
     settings.color_syntax_italic = COLOR_RED_DARK;
     settings.rgb_color_syntax_italic = 0xd19a67;
     if (!settingsSave(&settings)) fail("settingsSave");
@@ -73,6 +75,8 @@ int main(void) {
     if (settings.color_syntax_italic != COLOR_RED_DARK || settings.rgb_color_syntax_italic != 0xd19a67)
         fail("independent italic palette persistence");
     if (!settings.markdown_live_preview) fail("live preview persistence");
+    if (settings.color_link_hover != COLOR_MAGENTA_DARK || settings.rgb_color_link_hover != 0x123456)
+        fail("independent link hover palette persistence");
     if (settings.undo_memory_mb != 32) fail("undo memory budget persistence");
     if (settings.color_syntax_json_key != COLOR_RED_DARK ||
         settings.color_syntax_bracket != COLOR_MAGENTA_LIGHT) fail("new color persistence");
@@ -134,9 +138,11 @@ int main(void) {
     if (!legacy || !fp) fail("open legacy scheme");
     char legacy_line[256];
     while (fgets(legacy_line, sizeof(legacy_line), legacy))
-        if (strncmp(legacy_line, "rgb_syntax_italic", 16) != 0) fputs(legacy_line, fp);
+        if (strncmp(legacy_line, "rgb_syntax_italic", 16) != 0 &&
+            strncmp(legacy_line, "rgb_link_hover", 14) != 0) fputs(legacy_line, fp);
     fclose(legacy); fclose(fp);
     if (!settingsLoadColorScheme(config, &scheme, scheme_error, sizeof(scheme_error)) ||
+        scheme.rgb_color_link_hover != 0x56b6c2 ||
         scheme.rgb_color_syntax_italic != scheme.rgb_color_syntax_keyword ||
         scheme.color_syntax_italic != before_scheme.color_syntax_italic)
         fail("legacy scheme italic inheritance preserves inactive palette");

@@ -107,6 +107,7 @@ const struct settingDescriptor settingDescriptors[] = {
     { "color_mode", "Mode", SETTING_ENUM, offsetof(struct editorSettings, color_mode), 0, 0, colorModeNames, 2 },
     { "rgb_output", "RGB output", SETTING_ENUM, offsetof(struct editorSettings, rgb_output), 0, 0, rgbOutputNames, 2 },
     { "rgb_gutter", "Gutter color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_gutter), 0, 0, NULL, 0 },
+    { "rgb_link_hover", "Link hover color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_link_hover), 0, 0, NULL, 0 },
     { "rgb_selection", "Selection color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_selection), 0, 0, NULL, 0 },
     { "rgb_statusbar", "Status bar color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_statusbar), 0, 0, NULL, 0 },
     { "rgb_statusbar_text", "Status bar text color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_statusbar_text), 0, 0, NULL, 0 },
@@ -151,6 +152,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, undo_max_depth), 10, 2000, NULL, 0 },
     { "color_gutter", "Gutter color", SETTING_ENUM,
       offsetof(struct editorSettings, color_gutter), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_link_hover", "Link hover color", SETTING_ENUM,
+      offsetof(struct editorSettings, color_link_hover), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_selection", "Selection color", SETTING_ENUM,
       offsetof(struct editorSettings, color_selection), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_statusbar", "Status bar color", SETTING_ENUM,
@@ -297,6 +300,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->undo_memory_mb = 64;
     out->color_gutter = COLOR_GRAY_LIGHT;
     out->color_selection = COLOR_WHITE_DARK;
+    out->color_link_hover = COLOR_CYAN_LIGHT;
     out->color_statusbar = COLOR_WHITE_DARK;
     out->color_statusbar_text = COLOR_WHITE_LIGHT;
     out->show_top_bar = 0;
@@ -330,6 +334,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_syntax_function = COLOR_YELLOW_LIGHT;
     out->color_background = COLOR_TERMINAL_DEFAULT;
     out->rgb_color_gutter = out->color_gutter == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_gutter];
+    out->rgb_color_link_hover = rgbPalette[out->color_link_hover];
     out->rgb_color_selection = out->color_selection == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_selection];
     out->rgb_color_statusbar = out->color_statusbar == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_statusbar];
     out->rgb_color_statusbar_text = out->color_statusbar_text == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_statusbar_text];
@@ -642,7 +647,10 @@ uint8_t settingsLoadColorScheme(const char *path, struct editorSettings *draft,
         uint8_t required = candidate.color_mode == COLOR_MODE_RGB ? d->type == SETTING_RGB :
             (d->type == SETTING_ENUM && d->enum_names == colorNames) ||
             strcmp(d->key, "markdown_heading_reverse") == 0;
-        if (required && !seen[i] && strcmp(d->key, "rgb_syntax_italic") == 0) {
+        if (required && !seen[i] && (!strcmp(d->key, "rgb_link_hover") || !strcmp(d->key, "color_link_hover"))) {
+            /* Older presets predate pointer feedback; retain the current hover color. */
+            continue;
+        } else if (required && !seen[i] && strcmp(d->key, "rgb_syntax_italic") == 0) {
             candidate.rgb_color_syntax_italic = candidate.rgb_color_syntax_keyword;
         } else if (required && !seen[i] && strcmp(d->key, "color_syntax_italic") == 0) {
             candidate.color_syntax_italic = candidate.color_syntax_keyword;

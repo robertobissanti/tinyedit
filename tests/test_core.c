@@ -1702,6 +1702,91 @@ static void testMarkdownPreview(void) {
     editorSyncMarkdownPreview();
 }
 
+static void testMarkdownLinkMouse(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    S.markdown_live_preview = S.mouse_enabled = 1;
+    S.show_line_numbers = S.show_menu = S.show_top_bar = 0;
+    S.color_link_hover = COLOR_RED_DARK;
+    T.visible = T.focused = 0;
+    E.view.screenrows = 12; E.view.screencols = 80;
+    E.view.rowoff = E.view.coloff = 0;
+    E.document.file.filename = teStrdup("hover.md");
+    editorInsertRow(0, "ok", 2);
+    const char *source = "[é界](#target) tail";
+    editorInsertRow(1, source, strlen(source));
+    editorInsertRow(2, "## Target", 9);
+    struct textLink link;
+    struct markdownSpan span;
+    int32_t cy;
+    check(editorPreviewLinkAtMouse(1, 2, &cy, &link, &span) && cy == 1,
+        "hover recognizes first visible label cell behind hidden opener");
+    check(editorPreviewLinkAtMouse(3, 2, &cy, &link, &span), "hover recognizes second cell of wide label glyph");
+    check(!editorPreviewLinkAtMouse(INT32_MAX, INT32_MAX, &cy, &link, &span),
+        "out-of-screen mouse coordinates do not overflow hit testing");
+    check(!editorPreviewLinkAtMouse(4, 2, &cy, &link, &span) &&
+        !editorPreviewLinkAtMouse(1, 8, &cy, &link, &span), "hover ignores whitespace and EOF padding");
+    mouseEventButton = 35; mouseEventPress = 1; mouseEventCol = 2; mouseEventRow = 2;
+    editorHandleMouseEvent();
+    struct abuf ab = ABUF_INIT;
+    editorDrawRows(&ab); abAppend(&ab, "", 1);
+    check(hovered_link_row == 1 && E.document.cursor.cy == 0 &&
+        strstr(ab.b, "\x1b[31m\x1b[4mé") && !strstr(ab.b, "#target"),
+        "hover colors underlined label without moving cursor or exposing markup");
+    abFree(&ab);
+    S.color_mode = COLOR_MODE_RGB; S.rgb_color_link_hover = 0x123456;
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRows(&ab); abAppend(&ab, "", 1);
+    check(strstr(ab.b, "\x1b[38;2;18;52;86m\x1b[4mé") != NULL, "hover honors RGB palette");
+    abFree(&ab);
+    S.color_mode = COLOR_MODE_ANSI;
+    mouseEventRow = 8;
+    editorHandleMouseEvent();
+    editorUpdateLinkHover();
+    check(hovered_link_row == -1, "moving pointer away clears hover");
+    E.document.cursor.cy = 1; E.document.cursor.cx = 3;
+    editorSyncMarkdownPreview();
+    erow *row = &E.document.buffer.rows[1];
+    check(renderByteHidden(row, 0), "entering link label vertically leaves it compact");
+    E.document.cursor.cx = 0;
+    editorSyncMarkdownPreview();
+    check(!renderByteHidden(row, 0), "left border opens link for editing");
+    E.document.cursor.cx = 3;
+    editorSyncMarkdownPreview();
+    check(!renderByteHidden(row, 0) && !editorPreviewLinkAtMouse(3, 2, &cy, &link, &span),
+        "link remains editable inside after entering from border and clicks edit its source");
+    E.document.cursor.cy = 0; E.document.cursor.cx = 0;
+    editorSyncMarkdownPreview();
+    E.document.cursor.cy = 1; E.document.cursor.cx = row->markdown_spans[0].end;
+    editorSyncMarkdownPreview();
+    check(!renderByteHidden(row, 0), "right border opens link for editing");
+    E.document.cursor.cy = 0; E.document.cursor.cx = 0;
+    editorSyncMarkdownPreview();
+    check(editorRowRxToCx(row, 3) == row->markdown_spans[0].end,
+        "right label insertion boundary maps after hidden destination");
+    S.soft_wrap = 2;
+    check(editorPreviewLinkAtMouse(2, 3, &cy, &link, &span) && cy == 1,
+        "wrapped wide link label remains clickable");
+    mouseEventButton = 0; mouseEventPress = 1; mouseEventCol = 2; mouseEventRow = 3;
+    editorHandleMouseEvent();
+    check(E.document.cursor.cy == 2 && E.document.cursor.cx == 0 &&
+        !E.document.mouse.dragging && !E.document.selection.active &&
+        !strcmp(E.document.buffer.rows[1].chars, source), "single click follows anchor and preserves source");
+    editorSyncMarkdownPreview();
+    check(renderByteHidden(&E.document.buffer.rows[1], 0), "following link leaves its markup compact");
+    S.soft_wrap = 0;
+    S.markdown_live_preview = 0;
+    check(!editorPreviewLinkAtMouse(3, 2, &cy, &link, &span), "ordinary editing has no preview activation");
+    E.document.cursor.cy = 0;
+    mouseEventButton = 0; mouseEventPress = 1; mouseEventCol = 3; mouseEventRow = 2;
+    editorHandleMouseEvent();
+    check(E.document.cursor.cy == 1 && E.document.cursor.cx == 3,
+        "single click without preview retains normal cursor placement");
+    editorResetDocument();
+    settingsDefaults(&S);
+    editorSyncMarkdownPreview();
+}
+
 static void testRedrawCaches(void) {
     editorResetDocument();
     settingsDefaults(&S);
@@ -2071,6 +2156,7 @@ int main(void) {
     testBracketColors();
     testMarkdownStyles();
     testMarkdownPreview();
+    testMarkdownLinkMouse();
     testHeadingReverse();
     testRedrawCaches();
     puts("core tests: ok");

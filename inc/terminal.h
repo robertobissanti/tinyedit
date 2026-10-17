@@ -117,7 +117,7 @@ void terminalEnableMouseReporting(void);
  */
 void terminalDisableMouseReporting(void);
 /**
- * @brief Switch between menu hover and document drag reporting.
+ * @brief Switch between hover and button-motion reporting.
  *
  * @details enabled selects all-motion reporting; disabling restores button-
  * motion reporting. Call while editor mouse support is active.
