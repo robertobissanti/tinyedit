@@ -4,6 +4,9 @@
 
 ### New features
 
+- Open `mailto:` links in the configured desktop mail composer (`open` on macOS,
+  `xdg-email` on Linux), preserving the URI and its parameters without sending mail.
+
 - In Markdown live preview, change a compact link's color under the mouse and
   follow it with one click without expanding its source. Enter link editing
   from either boundary; keep it editable until the cursor leaves. Configure
@@ -15,6 +18,10 @@
   Unicode positioning and wrapping; selection and search show full source.
 
 ### Important fixes
+
+- Keep Markdown links in source editing while typing their destination with
+  live preview and automatic pair closing enabled. Empty destinations stay
+  literal; completing a link no longer hides its address before typing finishes.
 
 - Keep backward UTF-8 navigation consistent with forward grapheme boundaries
   for combining marks, joiner sequences and regional indicators, preventing

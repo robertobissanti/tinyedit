@@ -8,6 +8,9 @@
  * Reconfigure after buffer mutations and before layout/drawing. */
 void renderSetMarkdownPreview(uint8_t enabled, const erow *active_row,
     int32_t cursor, int32_t tab_stop);
+/** Preserve source editing after a successful text edit inside a link.
+ * Uses the most recently configured preview context; does not modify source. */
+void renderKeepMarkdownLinkEditing(void);
 /** Render-byte queries use the current presentation context. */
 uint8_t renderByteHidden(const erow *row, int32_t byte);
 uint8_t renderByteUnderlined(const erow *row, int32_t byte);

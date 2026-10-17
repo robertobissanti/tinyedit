@@ -244,8 +244,12 @@ move the cursor without replacing the document.
 
 Web links open the system browser using `open` on macOS or `xdg-open` on Linux,
 with a literal argument vector. tinyedit reports a missing launcher but cannot
-confirm whether the browser subsequently loads the page. Other URI schemes
-are unsupported. Reference-style Markdown links, HTML links, duplicate-heading
+confirm whether the browser subsequently loads the page. Inline `mailto:` links
+open the configured mail composer using `open` on macOS or `xdg-email` on Linux;
+tinyedit does not send mail. The address and optional URI parameters (for example,
+percent-encoded subject/body) are passed unchanged as one argument. This needs
+a desktop mail handler; starting the launcher does not confirm account setup
+or successful composition. Other URI schemes are unsupported. Reference-style Markdown links, HTML links, duplicate-heading
 suffixes and Setext heading anchors are not yet supported. Images are installed
 as resources; tinyedit does not display image files inline or open binary files.
 
@@ -374,7 +378,9 @@ editing; moving away compacts it again. For links, enter source editing by
 placing the cursor at the left or right boundary. Moving directly into a link
 label keeps it compact until a boundary is reached. Once expanded from a
 boundary, the link stays editable while the cursor remains inside it,
-including its destination.
+including its destination. While typing or pasting a link, source editing stays
+active so that automatically inserted parentheses do not hide the destination
+being entered. Empty destinations remain literal text.
 
 With mouse support enabled, hovering over a compact link changes its color.
 A single click on its label follows the link without moving the cursor into

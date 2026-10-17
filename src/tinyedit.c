@@ -22,7 +22,7 @@
  *   fileio.c       home-path expansion, staged loading and atomic replacement
  *   history.c      bounded row deltas, undo/redo and allocation-failure rollback
  *   linenoise.c    historical line-editor implementation; not built
- *   links.c        inline links, heading slugs and safe browser dispatch
+ *   links.c        inline links, heading slugs and safe browser/mail dispatch
  *   menu.c         UTF-8 menu layout, viewport clipping and input navigation
  *   render.c       Markdown presentation and shared row/wrapped-text layout
  *   search.c       compiled queries, text search and source-coordinate results
@@ -597,6 +597,8 @@ static void editorEndEdit(void) {
                 previous ? previous->hl_open_emphasis : 0);
         }
         if (last + 1 < E.document.buffer.row_count) editorRehighlightFrom(last + 1, 0);
+        editorSyncMarkdownPreview();
+        renderKeepMarkdownLinkEditing();
         if (E.document.history.dropped_count)
             editorSetStatusMessage("Undo limit: %d oldest action(s) removed",
                 E.document.history.dropped_count);
@@ -1854,13 +1856,18 @@ static void editorLinkAnchor(const char *anchor) {
 /**
  * @brief Open a link destination: web URL, same-file anchor or local file.
  * @details target is a Markdown-level destination (percent escapes and an
- * optional #fragment are interpreted). Web URLs go to the system browser; other
+ * optional #fragment are interpreted). Web/mail URIs go to their desktop apps; other
  * URI schemes are refused. Relative paths resolve against the current file's
  * directory, and a directory opens its README.md. Switching files uses the
  * save/discard/cancel gate, and every failure leaves the current document
  * untouched. Results are reported in the message bar.
  */
 static void editorFollowLink(const char *target) {
+    if (linksIsMailto(target)) {
+        if (linksOpenMailto(target)) editorSetStatusMessage("Opened link in mail application");
+        else editorSetErrorMessage("Can't open mail application: %s", strerror(errno));
+        return;
+    }
     if (linksIsWeb(target)) {
         if (linksOpenWeb(target)) editorSetStatusMessage("Opened link in browser");
         else editorSetErrorMessage("Can't open browser: %s", strerror(errno));

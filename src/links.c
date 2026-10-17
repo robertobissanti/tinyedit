@@ -246,20 +246,19 @@ static uint8_t linksReportError(int fd, int error) {
 }
 
 /**
- * @brief Ask the desktop to open an HTTP(S) URL without invoking a shell.
- * @details Runs open (macOS) or xdg-open with target as a single argument from
- * a detached grandchild, so the editor never waits for the browser. The pipe
+ * @brief Ask the desktop to open a validated web or mail URI without a shell.
+ * @details Runs open (macOS), xdg-open (web) or xdg-email (mail) with target
+ * as a single argument from
+ * a detached grandchild, so the editor never waits for the desktop application. The pipe
  * to the parent is close-on-exec: a successful exec closes it and the parent
  * sees EOF; fork or exec failure sends the errno instead, retrying
  * interrupted and short writes. If the intermediate child cannot deliver a
  * fork failure it exits with status 126, which the parent reports as failure.
  * The detached grandchild is never waited for, so a report lost there (a pipe
  * write failing after all retries) cannot be observed.
- * @return 1 when the launcher started, otherwise 0 with errno (EINVAL for a
- * target rejected by linksIsWeb()).
+ * @return 1 when the launcher started, otherwise 0 with errno.
  */
-uint8_t linksOpenWeb(const char *target) {
-    if (!linksIsWeb(target)) { errno = EINVAL; return 0; }
+static uint8_t linksOpenDesktop(const char *target, uint8_t mail) {
     int channel[2];
     if (pipe(channel) < 0) return 0;
     if (fcntl(channel[1], F_SETFD, FD_CLOEXEC) < 0) {
@@ -278,9 +277,11 @@ uint8_t linksOpenWeb(const char *target) {
                 if (sink > STDERR_FILENO) close(sink);
             }
 #ifdef __APPLE__
+            (void)mail;
             execlp("open", "open", target, (char *)NULL);
 #else
-            execlp("xdg-open", "xdg-open", target, (char *)NULL);
+            if (mail) execlp("xdg-email", "xdg-email", target, (char *)NULL);
+            else execlp("xdg-open", "xdg-open", target, (char *)NULL);
 #endif
             _exit(linksReportError(channel[1], errno) ? 127 : 126);
         }
@@ -306,4 +307,21 @@ uint8_t linksOpenWeb(const char *target) {
     if (read_failed) { errno = read_errno; return 0; }
     if (received > 0 || !WIFEXITED(status) || WEXITSTATUS(status) == 126) { errno = EIO; return 0; }
     return 1;
+}
+
+uint8_t linksIsMailto(const char *target) {
+    if (strncasecmp(target, "mailto:", 7) || !target[7]) return 0;
+    for (const unsigned char *p = (const unsigned char *)target + 7; *p; p++)
+        if (*p <= 32 || *p == 127) return 0;
+    return 1;
+}
+
+uint8_t linksOpenWeb(const char *target) {
+    if (!linksIsWeb(target)) { errno = EINVAL; return 0; }
+    return linksOpenDesktop(target, 0);
+}
+
+uint8_t linksOpenMailto(const char *target) {
+    if (!linksIsMailto(target)) { errno = EINVAL; return 0; }
+    return linksOpenDesktop(target, 1);
 }

@@ -1162,7 +1162,10 @@ static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t 
     for (int32_t u = label_end + 2; u < url_end; u++) row->hl[u] = HL_STRING;
     row->hl[url_end] = HL_PREPROCESSOR;
     row->markdown_count = span_count;
-    if (start == bracket)
+    int32_t destination = label_end + 2;
+    while (destination < url_end && (s[destination] == ' ' || s[destination] == '\t'))
+        destination += (int32_t)utf8NextCharLen(s, (size_t)destination, (size_t)url_end);
+    if (start == bracket && destination < url_end)
         syntaxMarkdownSpan(row, start, bracket + 1, label_end, url_end + 1, 1);
     return url_end + 1;
 }

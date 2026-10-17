@@ -584,6 +584,36 @@ def test_markdown_link_mouse(home):
         finish(process, master)
 
 
+def test_typing_markdown_link(home):
+    case_home = pathlib.Path(home) / "typing-markdown-link"
+    case_home.mkdir()
+    target = case_home / "typing.md"
+    target.write_bytes(b"")
+    (case_home / ".tinyeditrc").write_text(
+        "show_menu = false\nshow_line_numbers = false\nmarkdown_live_preview = true\n"
+        "auto_close_pairs = true\nbackup_interval = 0\n", encoding="utf-8")
+    process, master = spawn_editor([str(target)], case_home)
+
+    def text(output):
+        output = output.rsplit(b"\x1b[H", 1)[-1]
+        return re.sub(rb"\x1b\[[0-9;?]*[ -/]*[@-~]", b"", output)
+
+    try:
+        read_available(master)
+        os.write(master, b"[Roberto](")
+        assert b"[Roberto]()" in text(read_available(master)), "empty automatic pair collapsed"
+        os.write(master, b"mailto:roberto@example.org")
+        assert b"[Roberto](mailto:roberto@example.org)" in text(read_available(master)), "typed destination collapsed"
+        os.write(master, b") ")
+        compact = text(read_available(master))
+        assert b"Roberto" in compact and b"[Roberto]" not in compact and b"mailto:" not in compact, "completed link did not compact after leaving"
+        os.write(master, b"\x13")
+        read_available(master)
+        assert target.read_bytes() == b"[Roberto](mailto:roberto@example.org) \n"
+    finally:
+        finish(process, master)
+
+
 def test_very_long_wrapped_line(home):
     target = pathlib.Path(home) / "long-line.txt"
     target.write_bytes((b"word " * 12000) + b"TAIL_SENTINEL\n")
@@ -1959,6 +1989,7 @@ def main():
         test_menu_view_toggles_settings(home)
         test_markdown_live_preview(home)
         test_markdown_link_mouse(home)
+        test_typing_markdown_link(home)
         test_matching_bracket_highlight(home)
         test_very_long_wrapped_line(home)
         test_utf8_word_jumps(home)

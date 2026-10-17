@@ -1080,7 +1080,35 @@ static void testLinks(void) {
     char logged[256] = {0};
     check(file && fread(logged, 1, sizeof(logged) - 1, file) == strlen(url) &&
         !strcmp(logged, url), "browser gets literal URL without shell expansion");
-    fclose(file); unlink(opener);
+    fclose(file);
+#ifndef __APPLE__
+    char mailer[256];
+    snprintf(mailer, sizeof(mailer), "%s/xdg-email", root);
+    check(symlink("xdg-open", mailer) == 0, "isolated mail launcher");
+#endif
+    const char *mail = "mailto:roberto@example.org?subject=Hello%20world&body=Line1%0ALine2";
+    check(linksIsMailto(mail) && linksIsMailto("MAILTO:roberto@example.org") &&
+        !linksIsMailto("mailto:") && !linksIsMailto("mailto:a b@example.org") &&
+        !linksIsMailto("mailto:a@example.org\n") && !linksIsMailto("javascript:alert(1)"),
+        "mailto transport checks preserve URI parameters and reject unsafe raw bytes");
+    editorFollowLink(mail);
+    check(!E.ui.statusmsg_error && strstr(E.ui.statusmsg, "mail application"), "mailto uses desktop mail dispatch");
+    for (int32_t attempt = 0; attempt < 100; attempt++) {
+        struct stat log_stat;
+        if (stat(log, &log_stat) == 0 && log_stat.st_size == (off_t)strlen(mail)) break;
+        nanosleep(&pause, NULL);
+    }
+    file = fopen(log, "rb");
+    memset(logged, 0, sizeof(logged));
+    check(file && fread(logged, 1, sizeof(logged) - 1, file) == strlen(mail) &&
+        !strcmp(logged, mail), "mail launcher receives the literal URI without sending mail");
+    fclose(file);
+#ifndef __APPLE__
+    unlink(mailer);
+#endif
+    unlink(opener);
+    check(!linksOpenMailto(mail) && errno == ENOENT, "missing mail launcher reported");
+    check(!linksOpenMailto("mailto:") && errno == EINVAL, "invalid mail URI refused before launch");
     check(!linksOpenWeb(url) && errno == ENOENT, "missing browser launcher reported");
     if (old_env) { setenv("PATH", old_env, 1); free(old_env); } else unsetenv("PATH");
     unsetenv("TINYEDIT_LINK_LOG"); unlink(log);
@@ -1702,6 +1730,44 @@ static void testMarkdownPreview(void) {
     editorSyncMarkdownPreview();
 }
 
+static void testTypingMarkdownLink(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    S.markdown_live_preview = 1;
+    T.visible = T.focused = 0;
+    E.document.file.filename = teStrdup("typing.md");
+    const char *label = "[Roberto](";
+    for (size_t i = 0; label[i]; i++) {
+        editorDispatchKey((uint8_t)label[i]);
+        editorSyncMarkdownPreview();
+    }
+    erow *row = &E.document.buffer.rows[0];
+    check(!strcmp(row->chars, "[Roberto]()") && E.document.cursor.cx == 10 &&
+        row->markdown_count == 0 && !renderByteHidden(row, 0),
+        "auto-closed empty destination remains literal and editable");
+    const char *destination = "mailto:roberto@example.org";
+    for (size_t i = 0; destination[i]; i++) {
+        editorDispatchKey((uint8_t)destination[i]);
+        editorSyncMarkdownPreview();
+        row = &E.document.buffer.rows[0];
+        check(!renderByteHidden(row, 0) && !renderByteHidden(row, row->rsize - 1),
+            "destination stays in source editing after every typed byte");
+    }
+    editorDispatchKey(')');
+    check(!strcmp(row->chars, "[Roberto](mailto:roberto@example.org)") &&
+        E.document.cursor.cx == row->size, "typing closes destination without losing characters");
+    editorDispatchKey(' ');
+    editorSyncMarkdownPreview();
+    check(renderByteHidden(row, 0), "leaving the completed typed link compacts it");
+    editorUndo();
+    editorRedo();
+    check(!strcmp(E.document.buffer.rows[0].chars, "[Roberto](mailto:roberto@example.org) "),
+        "undo and redo retain the typed link bytes");
+    editorResetDocument();
+    settingsDefaults(&S);
+    editorSyncMarkdownPreview();
+}
+
 static void testMarkdownLinkMouse(void) {
     editorResetDocument();
     settingsDefaults(&S);
@@ -2157,6 +2223,7 @@ int main(void) {
     testMarkdownStyles();
     testMarkdownPreview();
     testMarkdownLinkMouse();
+    testTypingMarkdownLink();
     testHeadingReverse();
     testRedrawCaches();
     puts("core tests: ok");

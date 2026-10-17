@@ -73,7 +73,7 @@ not by itself handle termination signals; SIGTERM/SIGHUP cleanup remains pending
 - `src/command.c`, `inc/command.h`: Shared command labels, shortcuts, and
   links to settings toggles.
 - `src/links.c`, `inc/links.h`: Bounded inline link recognition, decoded local
-  targets, heading slugs and shell-free HTTP(S) browser dispatch.
+  targets, heading slugs and shell-free HTTP(S) browser / mailto composer dispatch.
 - `src/menu.c`, `inc/menu.h`: Menu bar and popup drawing, plus keyboard and
   mouse navigation.
 - `src/syntax.c`, `inc/syntax.h`: Syntax highlighting, with a generic tokenizer

@@ -49,6 +49,18 @@ void renderSetMarkdownPreview(uint8_t enabled, const erow *active_row,
     preview_edit_start = edit_start;
 }
 
+void renderKeepMarkdownLinkEditing(void) {
+    if (!preview_enabled || !preview_row) return;
+    for (int32_t i = 0; i < preview_row->markdown_count; i++) {
+        const struct markdownSpan *span = &preview_row->markdown_spans[i];
+        if (span->link && preview_cursor >= span->start && preview_cursor <= span->end) {
+            preview_edit_row = preview_row;
+            preview_edit_start = span->start;
+            return;
+        }
+    }
+}
+
 static const struct markdownSpan *renderSpanAt(const erow *row, int32_t byte) {
     int32_t lo = 0, hi = row->markdown_count;
     while (lo < hi) {
