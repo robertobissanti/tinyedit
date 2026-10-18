@@ -1,6 +1,7 @@
 """Build identity across archives, commits, local edits and packaging overrides."""
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
@@ -67,5 +68,6 @@ with tempfile.TemporaryDirectory(prefix="tinyedit-build-") as directory:
         raise AssertionError("invalid override accepted")
 
 version = subprocess.check_output([str(ROOT / "bin/tinyedit"), "--version"], stdin=subprocess.DEVNULL)
-assert version.startswith(b"tinyedit 0.3.8 Build ") and b"\x1b" not in version
+match = re.search(rb'^#define TE_VERSION "([^"]+)"$', (ROOT / "inc/tinyedit.h").read_bytes(), re.M)
+assert match and version.startswith(b"tinyedit " + match.group(1) + b" Build ") and b"\x1b" not in version
 print("build identity tests passed")

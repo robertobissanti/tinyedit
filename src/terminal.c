@@ -6,6 +6,7 @@
 
 #include "terminal.h"
 #include "alloc.h"
+#include "fileio.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -24,6 +25,7 @@
 static struct termios orig_termios;
 static uint8_t alternate_screen_active = 0;
 volatile sig_atomic_t winsize_changed = 0;
+static volatile sig_atomic_t termination_requested = 0;
 int32_t mouseEventButton;
 int32_t mouseEventCol, mouseEventRow;
 uint8_t mouseEventPress;
@@ -88,7 +90,11 @@ void terminalDie(const char *s) {
      * the exit handlers switch back, which would hide the reason for the exit.
      * Raw mode still disables output post-processing, hence the explicit CR. */
     terminalRestoreVisualState();
-    fprintf(stderr, "%s: %s\r\n", s, strerror(saved_errno));
+    uint8_t colored = isatty(STDERR_FILENO) != 0;
+    if (colored) fputs("\x1b[31m", stderr);
+    fprintf(stderr, "%s: %s", s, strerror(saved_errno));
+    if (colored) fputs("\x1b[0m", stderr);
+    fputs("\r\n", stderr);
     exit(1);
 }
 
@@ -125,6 +131,7 @@ void terminalRestoreVisualState(void) {
 void terminalEnterAlternateScreen(void) {
     if (alternate_screen_active) return;
     atexit(terminalRestoreVisualState);
+    teSetFatalCleanup(terminalRestoreVisualState);
     alternate_screen_active = 1;
     if (!terminalWrite("\x1b[?1049h", 8)) terminalDie("write");
 }
@@ -267,7 +274,12 @@ uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
     }
     if (!path[0]) return 0;
 
-    FILE *in = fopen(path, "r");
+    char *resolved = fileioResolveSavePath(path);
+    if (!resolved) return 0;
+    int32_t path_length = snprintf(path, sizeof(path), "%s", resolved);
+    free(resolved);
+    if (path_length < 0 || (size_t)path_length >= sizeof(path)) { errno = ENAMETOOLONG; return 0; }
+    FILE *in = fileioOpenRead(path);
     if (!in) return 0;
     char tmppath[PATH_MAX];
     if (snprintf(tmppath, sizeof(tmppath), "%s.tinyedit-XXXXXX", path) >= (int)sizeof(tmppath)) {
@@ -289,8 +301,11 @@ uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
 
     uint8_t ok = 1;
     uint8_t output_ends_newline = 1;
-    char line[4096];
-    while (fgets(line, sizeof(line), in)) {
+    char *line = NULL;
+    size_t capacity = 0;
+    ssize_t length;
+    while ((length = getline(&line, &capacity, in)) >= 0) {
+        if (memchr(line, '\0', (size_t)length)) { errno = EILSEQ; ok = 0; break; }
         uint8_t managed = strcmp(line, managed_start) == 0 ||
                           strcmp(line, managed_end) == 0 ||
                           strcmp(line, legacy_header) == 0;
@@ -299,10 +314,11 @@ uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
         }
         if (!managed) {
             if (fputs(line, out) == EOF) ok = 0;
-            output_ends_newline = line[strlen(line) - 1] == '\n';
+            output_ends_newline = length > 0 && line[length - 1] == '\n';
         }
     }
-    if (ferror(in)) ok = 0;
+    free(line);
+    if (ferror(in) || !feof(in)) ok = 0;
     if (enabled && ok) {
         if (!output_ends_newline && fputc('\n', out) == EOF) ok = 0;
         if (fputs(managed_start, out) == EOF) ok = 0;
@@ -315,8 +331,9 @@ uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
     struct stat st;
     if (stat(path, &st) == 0 && fchmod(fd, st.st_mode) != 0) ok = 0;
     if (fclose(in) != 0) ok = 0;
+    if (fflush(out) != 0 || fsync(fd) != 0) ok = 0;
     if (fclose(out) != 0) ok = 0;
-    if (ok && rename(tmppath, path) == 0)
+    if (ok && fileioReplace(tmppath, path) == FILE_SAVE_DURABLE)
         return terminalReloadGhosttyConfiguration();
     unlink(tmppath);
     return 0;
@@ -405,9 +422,8 @@ uint8_t terminalInputReady(void) {
  * selection (e.g. Cmd+C/Cmd+V on Ghostty), so it must be an explicit opt-in.
  * Still registered with atexit() once turned on, same reasoning as bracketed
  * paste: must not leak into whatever runs in this terminal after tinyedit
- * quits, regardless of how the setting was left. While a menu is open, ?1003
- * enables motion without a button so hovering can select items; closing the
- * menu restores ?1002 behavior.
+ * quits, regardless of how the setting was left. Menus and Markdown live preview use ?1003
+ * motion without a button for hover feedback; other views use ?1002.
  */
 void terminalDisableMouseReporting(void) {
     (void)terminalWrite("\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[>0s", 29);
@@ -425,7 +441,7 @@ void terminalEnableMouseReporting(void) {
 }
 
 /**
- * @brief Switch between menu hover and document drag reporting.
+ * @brief Switch between hover and button-motion reporting.
  *
  * @details enabled selects all-motion reporting; disabling restores button-
  * motion reporting. Call while editor mouse support is active.
@@ -445,6 +461,23 @@ void terminalSetMenuMouseMotion(uint8_t enabled) {
 static void handleWinch(int sig) {
     (void)sig;
     winsize_changed = 1;
+}
+
+static void handleTermination(int sig) {
+    termination_requested = sig;
+}
+
+void terminalEnableTerminationHandling(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handleTermination;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGTERM, &sa, NULL) != 0 || sigaction(SIGHUP, &sa, NULL) != 0)
+        terminalDie("sigaction");
+}
+
+void terminalCheckTermination(void) {
+    if (termination_requested) exit(128 + termination_requested);
 }
 
 /**
@@ -539,6 +572,7 @@ int32_t terminalReadKey(
     void
 #endif
 ) {
+    terminalCheckTermination();
     if (pending_key >= 0) {
         int32_t key = pending_key;
         pending_key = -1;
@@ -547,10 +581,12 @@ int32_t terminalReadKey(
     ssize_t nread;
     uint8_t c;
     while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
+        terminalCheckTermination();
         if (nread == -1 && errno == EINTR && winsize_changed)
             return CTRL_KEY('l'); /* no-op key: lets the main loop redraw */
         if (nread == -1 && errno != EAGAIN && errno != EINTR) terminalDie("read");
     }
+    terminalCheckTermination();
 
     if (c == '\x1b') {
         uint8_t seq[3];
@@ -904,8 +940,12 @@ char *terminalReadPastedText(size_t *outlen) {
     int32_t matched = 0;
 
     while (1) {
+        terminalCheckTermination();
         uint8_t c;
-        if (read(STDIN_FILENO, &c, 1) != 1) break; /* stream ended unexpectedly; return what we have */
+        if (read(STDIN_FILENO, &c, 1) != 1) {
+            terminalCheckTermination();
+            break; /* stream ended unexpectedly; return what we have */
+        }
 
         if (c == (uint8_t)paste_end_marker[matched]) {
             matched++;
@@ -947,6 +987,27 @@ char *terminalReadPastedText(size_t *outlen) {
     return buf;
 }
 
+/* A terminal report can be supplied by a remote PTY; reject overflow and
+ * malformed coordinates before they reach layout arithmetic. */
+static uint8_t terminalParseCursorPosition(const char *report, int32_t *rows, int32_t *cols) {
+    if (report[0] != '\x1b' || report[1] != '[') return 0;
+    const char *at = report + 2;
+    int32_t values[2] = {0};
+    for (int32_t field = 0; field < 2; field++) {
+        if (*at < '0' || *at > '9') return 0;
+        while (*at >= '0' && *at <= '9') {
+            int32_t digit = *at++ - '0';
+            if (values[field] > (UINT16_MAX - digit) / 10) return 0;
+            values[field] = values[field] * 10 + digit;
+        }
+        if (values[field] == 0 || *at != (field == 0 ? ';' : 'R')) return 0;
+        at++;
+    }
+    if (*at) return 0;
+    *rows = values[0]; *cols = values[1];
+    return 1;
+}
+
 /**
  * @brief Query the terminal's one-based cursor row and column.
  *
@@ -957,16 +1018,18 @@ char *terminalReadPastedText(size_t *outlen) {
 static int32_t getCursorPosition(int32_t *rows, int32_t *cols) {
     char buf[32];
     uint32_t i = 0;
+    uint8_t complete = 0;
     if (!terminalWrite("\x1b[6n", 4)) return -1;
     while (i < sizeof(buf) - 1) {
-        if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
-        if (buf[i] == 'R') break;
+        if (read(STDIN_FILENO, &buf[i], 1) != 1) {
+            terminalCheckTermination();
+            break;
+        }
+        if (buf[i] == 'R') { complete = 1; i++; break; }
         i++;
     }
     buf[i] = '\0';
-    if (buf[0] != '\x1b' || buf[1] != '[') return -1;
-    if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
-    return 0;
+    return complete && terminalParseCursorPosition(buf, rows, cols) ? 0 : -1;
 }
 
 /**

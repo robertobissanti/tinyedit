@@ -19,15 +19,16 @@
  *   clipboard.c    system clipboard integration and local fallback
  *   command.c      shared command metadata and setting-toggle links
  *   editor_state.c selection ranges and shared ASCII auto-close policy
- *   fileio.c       home-path expansion, staged loading and atomic replacement
+ *   fileio.c       validated regular-file I/O, staged loading and atomic replacement
  *   history.c      bounded row deltas, undo/redo and allocation-failure rollback
  *   linenoise.c    historical line-editor implementation; not built
- *   links.c        inline links, heading slugs and safe browser dispatch
+ *   links.c        inline/bare links and safe browser/mail/file dispatch
+ *   markdown.c     Markdown syntax, fenced-code dispatch, preview and source navigation
  *   menu.c         UTF-8 menu layout, viewport clipping and input navigation
- *   render.c       shared layout calculations for rows and wrapped text
+ *   render.c       shared row/wrapped-text layout and presentation adapters
  *   search.c       compiled queries, text search and source-coordinate results
  *   settings.c     persistent configuration, color scheme loading and color escapes
- *   syntax.c       filetype detection and syntax highlighting
+ *   syntax.c       filetype dispatch, shared helpers and other language tokenizers
  *   terminal.c     raw terminal setup, input decoding, and terminal I/O
  *   tree.c         owned filesystem tree and lazy directory expansion
  *   tinyedit.c     application flow, editor commands, screens, and drawing
@@ -46,6 +47,7 @@
 #include "fileio.h"
 #include "history.h"
 #include "links.h"
+#include "markdown.h"
 #include "render.h"
 #include "resources.h"
 #include "clipboard.h"
@@ -74,7 +76,6 @@
 static struct editorConfig E;
 static struct editorSettings S;
 static enum settingsPage settings_page;
-static const char *settings_scheme_preview;
 static struct editorMenu M;
 static struct editorTree T;
 static struct timespec tree_click_time;
@@ -86,11 +87,16 @@ static struct editorSelection edit_saved_selection;
 static uint8_t edit_saved_dirty, edit_saved_final_newline;
 static enum historyError edit_last_error;
 static uint8_t replay_preparing;
-static uint8_t menu_mouse_motion_enabled;
+static uint8_t mouse_motion_enabled;
+static uint8_t document_pointer_valid;
+static int32_t document_pointer_col, document_pointer_row;
+static int32_t hovered_link_row = -1;
+static int32_t hovered_link_from, hovered_link_to;
 static uint8_t document_click_pending;
 static struct timespec document_click_time;
 static int32_t document_click_x, document_click_y;
 static uint8_t drawing_heading;
+static int32_t drawing_heading_foreground, drawing_heading_background;
 static uint8_t drawing_heading_bold;
 
 static const char *const void_tags[] = {
@@ -258,6 +264,31 @@ static int32_t editorReadKey(void) {
 }
 
 
+/* Hover and the release following a link click are not prompt answers. */
+static int32_t editorReadPromptKey(void) {
+    int32_t key;
+    do { key = editorReadKey(); } while (key == MOUSE_EVENT_KEY);
+    return key;
+}
+
+static uint8_t editorMarkdownPreviewEnabled(void) {
+    const char *ext = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
+    return S.markdown_live_preview && ext && syntaxIsMarkdownExtension(ext + 1);
+}
+
+/* Live preview consumes token metadata even when syntax colors are hidden. */
+static uint8_t editorSyntaxParsingEnabled(void) {
+    return S.syntax_highlight || editorMarkdownPreviewEnabled();
+}
+
+static void editorSyncMarkdownPreview(void) {
+    uint8_t enabled = editorMarkdownPreviewEnabled() && !E.document.selection.active &&
+        E.search.search_match_y < 0;
+    erow *active = E.document.cursor.cy >= 0 && E.document.cursor.cy < E.document.buffer.row_count ?
+        &E.document.buffer.rows[E.document.cursor.cy] : NULL;
+    renderSetMarkdownPreview(enabled, active, E.document.cursor.cx, S.tab_stop);
+}
+
 /**
  * @brief Translate a source-byte cursor offset into a display column.
  *
@@ -265,7 +296,8 @@ static int32_t editorReadKey(void) {
  * layout, with the current tab width.
  */
 static int32_t editorRowCxToRx(erow *row, int32_t cx) {
-    return bufferRowCxToRx(row, cx, S.tab_stop);
+    editorSyncMarkdownPreview();
+    return renderRowCxToRx(row, cx, S.tab_stop);
 }
 
 /**
@@ -275,7 +307,8 @@ static int32_t editorRowCxToRx(erow *row, int32_t cx) {
  * the text map to the row end.
  */
 static int32_t editorRowRxToCx(erow *row, int32_t target_rx) {
-    return bufferRowRxToCx(row, target_rx, S.tab_stop);
+    editorSyncMarkdownPreview();
+    return renderRowRxToCx(row, target_rx, S.tab_stop);
 }
 
 /**
@@ -417,7 +450,8 @@ static void editorTouchRowsFrom(int32_t from) {
  * @brief Propagate syntax changes through the rows that depend on them.
  *
  * @details Pass a valid starting row; force retokenizes all following rows.
- * Otherwise stop once comment, math, front matter and emphasis states settle.
+ * Otherwise stop once lexical states settle. Fenced code is propagated through
+ * its closing delimiter so changing a language tag recolors the whole block.
  */
 static void editorRehighlightFrom(int32_t from, uint8_t force) {
     if (edit_batch.depth) {
@@ -433,13 +467,14 @@ static void editorRehighlightFrom(int32_t from, uint8_t force) {
         uint8_t prev_math = E.document.buffer.rows[i].hl_open_math;
         uint8_t prev_frontmatter = E.document.buffer.rows[i].hl_open_frontmatter;
         uint8_t prev_emphasis = E.document.buffer.rows[i].hl_open_emphasis;
-        syntaxHighlightRow(&E.document.buffer.rows[i], E.document.file.filename, (uint8_t)S.syntax_highlight, open_comment, open_math,
+        syntaxHighlightRow(&E.document.buffer.rows[i], E.document.file.filename, editorSyntaxParsingEnabled(), open_comment, open_math,
             open_frontmatter, i, open_emphasis);
         open_comment = E.document.buffer.rows[i].hl_open_comment;
         open_math = E.document.buffer.rows[i].hl_open_math;
         open_frontmatter = E.document.buffer.rows[i].hl_open_frontmatter;
         open_emphasis = E.document.buffer.rows[i].hl_open_emphasis;
-        if (!force && i > from && open_comment == prev_comment && open_math == prev_math &&
+        if (!force && i > from && !E.document.buffer.rows[i].markdown_code.marker &&
+            open_comment == prev_comment && open_math == prev_math &&
             open_frontmatter == prev_frontmatter && open_emphasis == prev_emphasis) break;
     }
 }
@@ -564,13 +599,15 @@ static void editorEndEdit(void) {
         for (int32_t i = first; i <= last && i < E.document.buffer.row_count; i++) {
             erow *row = &E.document.buffer.rows[i];
             erow *previous = i > 0 ? &E.document.buffer.rows[i - 1] : NULL;
-            syntaxHighlightRow(row, E.document.file.filename, (uint8_t)S.syntax_highlight,
+            syntaxHighlightRow(row, E.document.file.filename, editorSyntaxParsingEnabled(),
                 previous ? previous->hl_open_comment : 0,
                 previous ? previous->hl_open_math : 0,
                 previous ? previous->hl_open_frontmatter : 0, i,
                 previous ? previous->hl_open_emphasis : 0);
         }
         if (last + 1 < E.document.buffer.row_count) editorRehighlightFrom(last + 1, 0);
+        editorSyncMarkdownPreview();
+        renderKeepMarkdownLinkEditing();
         if (E.document.history.dropped_count)
             editorSetStatusMessage("Undo limit: %d oldest action(s) removed",
                 E.document.history.dropped_count);
@@ -897,6 +934,7 @@ static char *editorRowsToString(size_t *buflen) {
 static void editorSetStatusMessage(const char *fmt, ...);
 static void editorSetStatusMessageSticky(const char *fmt, ...);
 static void editorRefreshScreen(void);
+static void editorSyncMenuMouseMotion(void);
 static int32_t editorReadKey(void);
 static int32_t editorReadMultiByteKey(uint8_t lead, char *out);
 static void editorFreeUndoRedo(void);
@@ -1436,7 +1474,7 @@ static void editorOfferBackupRecovery(void) {
     if (!E.document.file.filename || !backupExists(E.document.file.filename)) return;
 
     editorRecoveryScreen();
-    int32_t c = editorReadKey();
+    int32_t c = editorReadPromptKey();
     if (c != 'y' && c != 'Y') {
         editorSetStatusMessage("");
         return;
@@ -1520,7 +1558,7 @@ static uint8_t editorConfirmOverwrite(const char *name) {
     if (!exists || same) return 1;
     editorSetStatusMessage("%s exists. Replace it? (y/n)", name);
     editorRefreshScreen();
-    int32_t key = editorReadKey();
+    int32_t key = editorReadPromptKey();
     return key == 'y' || key == 'Y';
 }
 
@@ -1651,7 +1689,7 @@ static uint8_t editorConfirmDocumentChange(const char *action) {
 
     editorSetStatusMessage("Save changes before %s? (y/n/Esc to cancel)", action);
     editorRefreshScreen();
-    int32_t c = editorReadKey();
+    int32_t c = editorReadPromptKey();
     if (c == 'y' || c == 'Y') {
         editorSave();
         return !E.document.file.dirty;
@@ -1673,6 +1711,9 @@ static uint8_t editorConfirmDocumentChange(const char *action) {
  * starts with independent cursor, selection, search, backup, and undo state.
  */
 static void editorResetDocument(void) {
+    renderSetMarkdownPreview(0, NULL, 0, S.tab_stop);
+    document_pointer_valid = 0;
+    hovered_link_row = -1;
     document_click_pending = 0;
     searchQueryFree(&E.search.query);
     E.search = (struct editorSearch){0};
@@ -1788,8 +1829,10 @@ static uint8_t editorCursorLink(struct textLink *link) {
     if (T.focused || cy < 0 || cy >= E.document.buffer.row_count) return 0;
     erow *row = &E.document.buffer.rows[cy];
     const char *extension = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
-    if (extension && syntaxIsMarkdownExtension(extension + 1) && row->hl_open_comment) return 0;
-    return linksFind(row->chars, row->size, E.document.cursor.cx, link);
+    uint8_t markdown = extension && markdownIsExtension(extension + 1);
+    if (markdown && !markdownSourceVisible(&E.document.buffer, cy, E.document.cursor.cx)) return 0;
+    if (linksFind(row->chars, row->size, E.document.cursor.cx, link)) return 1;
+    return markdown && markdownFindReference(&E.document.buffer, cy, E.document.cursor.cx, link);
 }
 
 /**
@@ -1801,37 +1844,56 @@ static uint8_t editorCursorLink(struct textLink *link) {
  */
 static void editorLinkAnchor(const char *anchor) {
     if (!anchor || !*anchor) return;
-    for (int32_t y = 0; y < E.document.buffer.row_count; y++) {
-        erow *row = &E.document.buffer.rows[y];
-        int32_t at = 0;
-        while (at < row->size && at < 4 && row->chars[at] == ' ') at++;
-        if (at >= row->size || row->chars[at] != '#' || row->hl_open_comment) continue;
-        char *slug = linksHeadingSlug(row->chars, row->size);
-        uint8_t match = !strcmp(slug, anchor);
-        free(slug);
-        if (match) {
-            E.document.cursor.cy = y;
-            E.document.cursor.cx = 0;
-            E.document.selection.active = E.document.selection.pinned = 0;
-            E.view.rowoff = E.view.coloff = E.view.free_scroll = 0;
-            editorSetStatusMessage("Heading: %s", anchor);
-            return;
-        }
-    }
-    editorSetErrorMessage("Heading not found: %s", anchor);
+    int32_t y, x;
+    enum markdownAnchorResult result = markdownResolveAnchor(&E.document.buffer, anchor, &y, &x);
+    if (result == MARKDOWN_ANCHOR_FOUND) {
+        E.document.cursor.cy = y; E.document.cursor.cx = x;
+        E.document.selection.active = E.document.selection.pinned = 0;
+        E.view.rowoff = E.view.coloff = E.view.free_scroll = 0;
+        editorSetStatusMessage("Anchor: %s", anchor);
+    } else if (result == MARKDOWN_ANCHOR_DUPLICATE) editorSetErrorMessage("Duplicate Markdown ID: %s", anchor);
+    else editorSetErrorMessage("Markdown anchor not found: %s", anchor);
+}
+
+static char *editorLocalLinkPath(const char *decoded) {
+    const char *filename = E.document.file.filename;
+    const char *separator = filename ? strrchr(filename, '/') : NULL;
+    if (decoded[0] == '/' || decoded[0] == '~' || !separator) return fileioExpandHomePath(decoded);
+    size_t prefix = (size_t)(separator - filename + 1);
+    char *path = teMalloc(teSizeAdd(teSizeAdd(prefix, strlen(decoded)), 1));
+    memcpy(path, filename, prefix);
+    strcpy(path + prefix, decoded);
+    return path;
 }
 
 /**
  * @brief Open a link destination: web URL, same-file anchor or local file.
  * @details target is a Markdown-level destination (percent escapes and an
- * optional #fragment are interpreted). Web URLs go to the system browser; other
+ * optional #fragment are interpreted). Web/mail URIs go to their desktop apps; other
  * URI schemes are refused. Relative paths resolve against the current file's
  * directory, and a directory opens its README.md. Switching files uses the
  * save/discard/cancel gate, and every failure leaves the current document
  * untouched. Results are reported in the message bar.
  */
+static uint8_t editorConfirmExternalOpen(const char *kind, const char *target) {
+    editorSetStatusMessage("Open external %s: %.60s%s (y/n)", kind, target,
+        strlen(target) > 60 ? "..." : "");
+    editorRefreshScreen();
+    int32_t key = editorReadPromptKey();
+    if (key == 'y' || key == 'Y') return 1;
+    editorSetStatusMessage("External %s not opened", kind);
+    return 0;
+}
+
 static void editorFollowLink(const char *target) {
+    if (linksIsMailto(target)) {
+        if (!editorConfirmExternalOpen("mail link", target)) return;
+        if (linksOpenMailto(target)) editorSetStatusMessage("Opened link in mail application");
+        else editorSetErrorMessage("Can't open mail application: %s", strerror(errno));
+        return;
+    }
     if (linksIsWeb(target)) {
+        if (!editorConfirmExternalOpen("web link", target)) return;
         if (linksOpenWeb(target)) editorSetStatusMessage("Opened link in browser");
         else editorSetErrorMessage("Can't open browser: %s", strerror(errno));
         return;
@@ -1839,7 +1901,8 @@ static void editorFollowLink(const char *target) {
     /* Reject URI schemes rather than interpreting them as local filenames. */
     const char *colon = strchr(target, ':');
     const char *slash = strchr(target, '/');
-    if (colon && (!slash || colon < slash)) {
+    const char *hash = strchr(target, '#');
+    if (colon && (!hash || colon < hash) && (!slash || colon < slash)) {
         editorSetErrorMessage("Unsupported link type");
         return;
     }
@@ -1860,16 +1923,7 @@ static void editorFollowLink(const char *target) {
         free(decoded); free(anchor);
         return;
     }
-    char *path;
-    const char *filename = E.document.file.filename;
-    const char *separator = filename ? strrchr(filename, '/') : NULL;
-    if (decoded[0] == '/' || decoded[0] == '~' || !separator) path = fileioExpandHomePath(decoded);
-    else {
-        size_t prefix = (size_t)(separator - filename + 1);
-        path = teMalloc(teSizeAdd(teSizeAdd(prefix, strlen(decoded)), 1));
-        memcpy(path, filename, prefix);
-        strcpy(path + prefix, decoded);
-    }
+    char *path = editorLocalLinkPath(decoded);
     free(decoded);
     struct stat st;
     if (path && stat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
@@ -1891,6 +1945,65 @@ static void editorFollowLink(const char *target) {
     free(path); free(anchor);
 }
 
+/* A local reference borrows source coordinates like a normal link, but its
+ * target is an explicit ID rather than a file path. */
+static char *editorLinkTarget(int32_t row, const struct textLink *link) {
+    struct textLink reference;
+    const char *ext = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
+    if (ext && markdownIsExtension(ext + 1) &&
+        markdownFindReference(&E.document.buffer, row, link->start, &reference) &&
+        reference.start == link->start && reference.end == link->end) {
+        size_t length = (size_t)(reference.target_end - reference.target_start);
+        char *target = teMalloc(teSizeAdd(length, 2));
+        target[0] = '#';
+        memcpy(target + 1, E.document.buffer.rows[row].chars + reference.target_start, length);
+        target[length + 1] = '\0';
+        return target;
+    }
+    return linksTarget(E.document.buffer.rows[row].chars, link);
+}
+
+static void editorFollowSourceLink(int32_t row, const struct textLink *link) {
+    char *target = editorLinkTarget(row, link);
+    if (!target) { editorSetErrorMessage("Invalid link target"); return; }
+    const char *ext = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
+    uint8_t image = ext && markdownIsExtension(ext + 1) &&
+        markdownLinkIsImage(&E.document.buffer.rows[row], link);
+    if (!image || linksIsWeb(target)) {
+        editorFollowLink(target);
+        free(target);
+        return;
+    }
+    char *fragment = strchr(target, '#');
+    if (fragment) *fragment = '\0';
+    const char *colon = strchr(target, ':');
+    const char *slash = strchr(target, '/');
+    if (!*target || (colon && (!slash || colon < slash))) {
+        editorSetErrorMessage("Image link must name a local file or HTTP(S) URL");
+        free(target);
+        return;
+    }
+    char *decoded = linksDecode(target);
+    free(target);
+    if (!decoded) { editorSetErrorMessage("Invalid image path"); return; }
+    char *path = editorLocalLinkPath(decoded);
+    free(decoded);
+    /* realpath owns its POSIX allocation; failure leaves the document intact. */
+    char *absolute = path ? realpath(path, NULL) : NULL;
+    free(path);
+    struct stat st;
+    if (!absolute || stat(absolute, &st) < 0 || !S_ISREG(st.st_mode))
+        editorSetErrorMessage("Image is not an accessible regular file");
+    else if (!linksVerifyImageFile(absolute))
+        editorSetErrorMessage("Refusing to open: image type, content or permissions are unsafe");
+    else if (editorConfirmExternalOpen("image", absolute)) {
+        if (!linksOpenFile(absolute))
+            editorSetErrorMessage("Can't open image application: %s", strerror(errno));
+        else editorSetStatusMessage("Opened image in default application");
+    }
+    free(absolute);
+}
+
 /**
  * @brief Follow the link under the cursor (Alt+Enter or double click).
  * @details Reports "No link under cursor" or "Invalid link target" instead of
@@ -1899,9 +2012,7 @@ static void editorFollowLink(const char *target) {
 static void editorOpenCursorLink(void) {
     struct textLink link;
     if (!editorCursorLink(&link)) { editorSetStatusMessage("No link under cursor"); return; }
-    char *target = linksTarget(E.document.buffer.rows[E.document.cursor.cy].chars, &link);
-    if (target) { editorFollowLink(target); free(target); }
-    else editorSetErrorMessage("Invalid link target");
+    editorFollowSourceLink(E.document.cursor.cy, &link);
 }
 
 /**
@@ -2060,10 +2171,10 @@ static void abAppendReset(struct abuf *ab) {
     const char *bg = ansiBgColorCode(settingsColor(&S, color_background));
     if (bg[0]) abAppend(ab, bg, (int32_t)strlen(bg));
     if (drawing_heading) {
-        const char *fg = ansiColorCode(settingsColor(&S, color_syntax_preprocessor));
+        const char *fg = ansiColorCode(drawing_heading_foreground);
         abAppend(ab, fg, (int32_t)strlen(fg));
         if (S.color_mode == COLOR_MODE_RGB) {
-            const char *heading_bg = ansiBgColorCode(settingsResolveColor(&S, 0, S.rgb_markdown_heading_background));
+            const char *heading_bg = ansiBgColorCode(settingsResolveColor(&S, 0, drawing_heading_background));
             abAppend(ab, heading_bg, (int32_t)strlen(heading_bg));
         } else abAppend(ab, "\x1b[7m", 4);
     }
@@ -2125,6 +2236,7 @@ static int32_t editorSoftWrapCols(void) {
  * display-column offsets.
  */
 static int32_t editorRowSegments(erow *row, int32_t wrapcols) {
+    editorSyncMarkdownPreview();
     return renderRowSegments(row, wrapcols);
 }
 
@@ -2161,6 +2273,7 @@ static int32_t editorSegVisibleEndRx(erow *row, int32_t nseg, const int32_t *seg
  * with wrap active.
  */
 static void editorRxToSegment(erow *row, int32_t wrapcols, int32_t rx, int32_t *seg_idx, int32_t *seg_col) {
+    editorSyncMarkdownPreview();
     renderRxToSegment(row, wrapcols, rx, seg_idx, seg_col);
 }
 
@@ -2171,6 +2284,7 @@ static void editorRxToSegment(erow *row, int32_t wrapcols, int32_t rx, int32_t *
  * preceding wrapped rows.
  */
 static int32_t editorVideoRowOf(int32_t filerow, int32_t seg, int32_t wrapcols) {
+    editorSyncMarkdownPreview();
     return renderVideoRowOf(&E.document.buffer, filerow, seg, wrapcols);
 }
 
@@ -2181,6 +2295,7 @@ static int32_t editorVideoRowOf(int32_t filerow, int32_t seg, int32_t wrapcols) 
  * the last logical row and segment zero.
  */
 static void editorFileRowAtVideoRow(int32_t vy, int32_t wrapcols, int32_t *out_filerow, int32_t *out_seg) {
+    editorSyncMarkdownPreview();
     renderFileRowAtVideoRow(&E.document.buffer, vy, wrapcols, out_filerow, out_seg);
 }
 
@@ -2190,6 +2305,7 @@ static void editorFileRowAtVideoRow(int32_t vy, int32_t wrapcols, int32_t *out_f
  * @details Use to bound viewport scrolling; an empty document returns zero.
  */
 static int32_t editorTotalVideoRows(int32_t wrapcols) {
+    editorSyncMarkdownPreview();
     return renderTotalVideoRows(&E.document.buffer, wrapcols);
 }
 
@@ -2257,29 +2373,96 @@ static void editorMouseToCursor(int32_t screen_col, int32_t screen_row, int32_t 
     *out_cx = cx;
 }
 
+/** Resolve only actual visible label cells, excluding clamped whitespace and
+ * source-editing links. The returned link uses source bytes, span render bytes. */
+static uint8_t editorPreviewLinkAtMouse(int32_t screen_col, int32_t screen_row,
+    int32_t *file_row, struct textLink *link, struct markdownSpan *span) {
+    if (!S.mouse_enabled || !editorMarkdownPreviewEnabled() || M.open ||
+        E.document.selection.active || E.search.search_match_y >= 0) return 0;
+    int32_t top = (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0);
+    if (screen_col < 1 || screen_row < 1) return 0;
+    int32_t column = screen_col - 1 - editorGutterWidth() - editorSidebarWidth();
+    if (screen_row <= top || screen_row > top + E.view.screenrows || column < 0 ||
+        screen_col > E.view.screencols || E.document.buffer.row_count == 0) return 0;
+    int32_t relative = screen_row - 1 - top;
+    if (E.view.rowoff > INT32_MAX - relative) return 0;
+    int32_t video = relative + E.view.rowoff;
+    int32_t cy, seg;
+    int32_t wrapcols = editorSoftWrapCols();
+    editorFileRowAtVideoRow(video, wrapcols, &cy, &seg);
+    erow *row = &E.document.buffer.rows[cy];
+    int32_t nseg = editorRowSegments(row, wrapcols);
+    int32_t first_video = editorVideoRowOf(cy, 0, wrapcols);
+    if (video < first_video || video >= first_video + nseg) return 0;
+    if (column > INT32_MAX - row->seg_start_rx[seg]) return 0;
+    int32_t rx = row->seg_start_rx[seg] + column;
+    int32_t end = seg + 1 < nseg ? row->seg_start[seg + 1] : row->rsize;
+    int32_t byte = renderByteAtColumn(row, rx);
+    while (byte < end && renderByteHidden(row, byte))
+        byte += (int32_t)utf8NextCharLen(row->render, (size_t)byte, (size_t)row->rsize);
+    if (byte >= end) return 0;
+    /* Reject padding beyond the segment, including the right margin. */
+    int32_t end_rx = seg + 1 < nseg ? row->seg_start_rx[seg + 1] :
+        editorRowCxToRx(row, row->size);
+    if (rx >= end_rx) return 0;
+    int32_t source = editorRowRxToCx(row, rx);
+    struct textLink ordinary;
+    if (linksFind(row->chars, row->size, source, &ordinary) && markdownLinkIsImage(row, &ordinary) &&
+        source >= ordinary.target_start && source < ordinary.target_end &&
+        markdownSourceVisible(&E.document.buffer, cy, source)) {
+        int32_t from = markdownSourceRenderByte(row, ordinary.target_start, S.tab_stop);
+        int32_t to = markdownSourceRenderByte(row, ordinary.target_end, S.tab_stop);
+        *file_row = cy;
+        *link = ordinary;
+        *span = (struct markdownSpan){from, from, to, to, 1};
+        return 1;
+    }
+    if (!linksFind(row->chars, row->size, source, &ordinary) &&
+        markdownFindReference(&E.document.buffer, cy, source, link)) {
+        int32_t from = markdownSourceRenderByte(row, link->start, S.tab_stop);
+        int32_t to = markdownSourceRenderByte(row, link->end, S.tab_stop);
+        *file_row = cy;
+        *span = (struct markdownSpan){from, from, to, to, 1};
+        return 1;
+    }
+    for (int32_t i = 0; i < row->markdown_count; i++) {
+        const struct markdownSpan *candidate = &row->markdown_spans[i];
+        if (!candidate->link || byte < candidate->content_start || byte >= candidate->content_end ||
+            !renderByteHidden(row, candidate->start)) continue;
+        int32_t cx = editorRowRxToCx(row, rx);
+        if (!linksFind(row->chars, row->size, cx, link)) return 0;
+        *file_row = cy;
+        *span = *candidate;
+        return 1;
+    }
+    return 0;
+}
+
+static void editorUpdateLinkHover(void) {
+    hovered_link_row = -1;
+    if (!document_pointer_valid) return;
+    struct textLink link;
+    struct markdownSpan span;
+    int32_t cy;
+    if (editorPreviewLinkAtMouse(document_pointer_col, document_pointer_row, &cy, &link, &span)) {
+        hovered_link_row = cy;
+        hovered_link_from = span.content_start;
+        hovered_link_to = span.content_end;
+    }
+}
+
 /**
  * @brief Update cursor display coordinates and keep its context in view.
  *
- * @details Call before drawing. Consumes the one-shot free_scroll flag so
- * mouse-wheel scrolling can leave the cursor stationary.
+ * @details Call before drawing. A detached viewport survives passive redraws
+ * until an input action explicitly restores cursor-following.
  */
 static void editorScroll(void) {
     E.document.cursor.rx = 0;
     if (E.document.cursor.cy < E.document.buffer.row_count)
         E.document.cursor.rx = editorRowCxToRx(&E.document.buffer.rows[E.document.cursor.cy], E.document.cursor.cx);
 
-    /* See E.view.free_scroll's declaration in tinyedit.h: the mouse wheel
-     * sets this to scroll the view without the cursor being dragged
-     * along to follow it -- consumed (and cleared) here, right before
-     * the normal follow-the-cursor logic would otherwise immediately
-     * undo that by re-centering E.view.rowoff around the (stationary)
-     * cursor. One-shot: any redraw after this one goes through the
-     * normal path again, so real cursor movement still keeps the
-     * cursor on screen as usual. */
-    if (E.view.free_scroll) {
-        E.view.free_scroll = 0;
-        return;
-    }
+    if (E.view.free_scroll) return;
 
     int32_t wrapcols = editorSoftWrapCols();
     /* A margin wider than half the viewport has no stable position:
@@ -2359,7 +2542,8 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
     int32_t len = seg_to - seg_from;
     if (len <= 0) return;
     const char *ext = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
-    uint8_t markdown_styles = S.markdown_text_styles && S.syntax_highlight &&
+    editorSyncMarkdownPreview();
+    uint8_t markdown_styles = ((S.markdown_text_styles && S.syntax_highlight) || S.markdown_live_preview) &&
         ext && syntaxIsMarkdownExtension(ext + 1);
 
     char *line = &row->render[seg_from];
@@ -2398,6 +2582,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
         size_t char_len = utf8NextCharLen(line, (size_t)j, (size_t)len);
         if (char_len == 0 || (size_t)j + char_len > (size_t)len) char_len = 1;
         int32_t emitted_len = (int32_t)char_len;
+        if (renderByteHidden(row, rendercol)) { j += emitted_len; continue; }
         struct utf8DecodeResult decoded = utf8DecodeChar(line + j, (size_t)(len - j));
         uint8_t should_sel = (row_sel_start >= 0 &&
             filecol >= row_sel_start && filecol < row_sel_end) ||
@@ -2439,17 +2624,17 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
         /* Syntax color: same priority rule as invisibles above (outside
          * selection/search, and not already an invisible glyph -- a
          * glyph substituted for a space/tab has no syntax meaning of
-         * its own). row->hl is NULL whenever highlighting isn't active
-         * for this row (see editorUpdateRow()); plain brackets still use
-         * their configured color independently of language detection. */
+         * its own). Preview may retain row->hl as parsing metadata while
+         * syntax colors are disabled. Plain brackets still use their
+         * configured color independently of language detection. */
         const char *syn_color = NULL;
         if (!should_highlight && !is_invisible_glyph) {
             uint8_t plain_bracket = decoded.valid &&
                 decoded.codepoint > 0 && decoded.codepoint < 128 && strchr("()[]{}", (char)decoded.codepoint) &&
-                (!row->hl || (rendercol < row->rsize && row->hl[rendercol] == HL_NORMAL));
+                (!S.syntax_highlight || !row->hl || (rendercol < row->rsize && row->hl[rendercol] == HL_NORMAL));
             if (plain_bracket) {
                 syn_color = ansiColorCode(settingsColor(&S, color_syntax_bracket));
-            } else if (row->hl && rendercol < row->rsize) {
+            } else if (S.syntax_highlight && row->hl && rendercol < row->rsize) {
                 syn_color = syntaxColorFor((enum syntaxHighlight)row->hl[rendercol], &S);
             } else if (settingsColor(&S, color_syntax_normal) != COLOR_TERMINAL_DEFAULT) {
                 /* An unknown extension (and syntax highlighting turned
@@ -2459,6 +2644,10 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
                 syn_color = ansiColorCode(settingsColor(&S, color_syntax_normal));
             }
         }
+        uint8_t link_hover = !should_highlight && filerow == hovered_link_row &&
+            rendercol >= hovered_link_from && rendercol < hovered_link_to;
+        if (link_hover)
+            syn_color = ansiColorCode(settingsColor(&S, color_link_hover));
         if (syn_color) abAppend(ab, syn_color, (int32_t)strlen(syn_color));
         uint8_t styled = !should_highlight && markdown_styles && row->hl && rendercol < row->rsize;
         if (styled) {
@@ -2466,6 +2655,9 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
                 abAppend(ab, "\x1b[1m", 4);
             else if (row->hl[rendercol] == HL_EMPHASIS)
                 abAppend(ab, "\x1b[3m", 4);
+            else if (renderByteUnderlined(row, rendercol) || link_hover ||
+                row->hl[rendercol] == HL_LINK_LABEL || row->hl[rendercol] == HL_LINK_DESTINATION)
+                abAppend(ab, "\x1b[4m", 4);
             else styled = 0;
         }
 
@@ -2671,9 +2863,36 @@ static void editorDrawSplashRow(struct abuf *ab, int32_t y, int32_t textcols) {
 static void editorBeginHeadingRow(struct abuf *ab, int32_t filerow) {
     uint8_t heading = filerow < E.document.buffer.row_count &&
         E.document.buffer.rows[filerow].hl_heading;
-    drawing_heading = heading && (S.color_mode == COLOR_MODE_RGB ?
+    drawing_heading = heading && S.syntax_highlight && (S.color_mode == COLOR_MODE_RGB ?
         S.rgb_markdown_heading_background != RGB_TERMINAL_DEFAULT : S.markdown_heading_reverse);
-    drawing_heading_bold = heading && S.markdown_text_styles;
+    drawing_heading_foreground = settingsColor(&S, color_syntax_preprocessor);
+    drawing_heading_background = S.rgb_markdown_heading_background;
+    if (heading && E.document.buffer.rows[filerow].hl) {
+        const erow *hrow = &E.document.buffer.rows[filerow];
+        int32_t first = 0;
+        /* Up to three leading spaces are allowed before the marker. */
+        while (first < hrow->rsize && hrow->render[first] == ' ') first++;
+        int32_t level = first < hrow->rsize ? hrow->hl[first] - HL_HEADING_1 : -1;
+        if (level >= 0 && level < 6) {
+            int32_t ansi = S.color_markdown_heading[level];
+            int32_t rgb = S.rgb_color_markdown_heading[level];
+            if (ansi == COLOR_TERMINAL_DEFAULT) ansi = S.color_syntax_preprocessor;
+            if (rgb == RGB_TERMINAL_DEFAULT) rgb = S.rgb_color_syntax_preprocessor;
+            drawing_heading_foreground = settingsResolveColor(&S, ansi, rgb);
+            if (drawing_heading && S.color_mode == COLOR_MODE_RGB &&
+                S.rgb_color_markdown_heading[level] != RGB_TERMINAL_DEFAULT) {
+                int32_t base = S.rgb_color_background == RGB_TERMINAL_DEFAULT ?
+                    S.rgb_markdown_heading_background : S.rgb_color_background;
+                drawing_heading_background = 0;
+                for (int32_t shift = 0; shift <= 16; shift += 8) {
+                    int32_t channel = (((base >> shift) & 255) * 88 +
+                        ((rgb >> shift) & 255) * 12 + 50) / 100;
+                    drawing_heading_background |= channel << shift;
+                }
+            }
+        }
+    }
+    drawing_heading_bold = heading && (S.markdown_text_styles || S.markdown_live_preview);
     if (drawing_heading || drawing_heading_bold) abAppendReset(ab);
     if (drawing_heading) {
         /* Erase-to-end does not reliably paint reverse-video blanks. Write
@@ -2705,6 +2924,7 @@ static void editorEndHeadingRow(struct abuf *ab) {
  * and bracket highlighting are computed for this frame.
  */
 static void editorDrawRows(struct abuf *ab) {
+    editorUpdateLinkHover();
     int32_t sel_y0 = 0, sel_x0 = 0, sel_y1 = 0, sel_x1 = 0;
     uint8_t has_sel = editorSelectionRange(&E.document.selection, &E.document.cursor, &sel_y0, &sel_x0, &sel_y1, &sel_x1);
     int32_t pair_y0 = -1, pair_x0 = -1, pair_y1 = -1, pair_x1 = -1;
@@ -2726,10 +2946,11 @@ static void editorDrawRows(struct abuf *ab) {
                     abAppend(ab, "~", 1);
                 }
             } else {
-                int32_t len = E.document.buffer.rows[filerow].rsize - E.view.coloff;
-                if (len < 0) len = 0;
-                if (len > textcols) len = textcols;
-                editorDrawRowSegment(ab, filerow, E.view.coloff, E.view.coloff + len,
+                erow *row = &E.document.buffer.rows[filerow];
+                editorSyncMarkdownPreview();
+                int32_t from = renderByteAtColumn(row, E.view.coloff);
+                int32_t to = renderByteAtColumn(row, E.view.coloff + textcols);
+                editorDrawRowSegment(ab, filerow, from, to,
                     has_sel, sel_y0, sel_x0, sel_y1, sel_x1,
                     has_pair, pair_y0, pair_x0, pair_y1, pair_x1);
                 if (editorRowTerminatorHighlighted(filerow, has_sel, sel_y0, sel_y1))
@@ -3168,6 +3389,7 @@ static void editorDrawSidebar(struct abuf *ab) {
  * writes it to stdout; also draws the menu overlay when open.
  */
 static void editorRefreshScreen(void) {
+    editorSyncMenuMouseMotion();
     uint8_t need_full_clear = 0;
     if (winsize_changed) {
         winsize_changed = 0;
@@ -3308,22 +3530,7 @@ static void editorSetStatusMessageSticky(const char *fmt, ...) {
  * E.document.cursor.rx via editorRowCxToRx()/clamping below.
  */
 static int32_t editorSegColToCx(erow *row, int32_t seg_from_rx, int32_t target_col) {
-    int32_t target_rx = seg_from_rx + target_col;
-    int32_t rx = 0, j = 0;
-    while (j < row->size) {
-        if (rx >= target_rx) break;
-        if (row->chars[j] == '\t') {
-            rx += (S.tab_stop - 1) - (rx % S.tab_stop);
-            rx++;
-            j++;
-            continue;
-        }
-        size_t clen = utf8NextCharLen(row->chars, (size_t)j, (size_t)row->size);
-        if (clen == 0) clen = 1;
-        rx += utf8SingleCharWidth(row->chars + j, clen);
-        j += (int32_t)clen;
-    }
-    return j;
+    return editorRowRxToCx(row, seg_from_rx + target_col);
 }
 
 /**
@@ -4030,7 +4237,7 @@ static void editorFindAndReplace(const char *query) {
             editorSetStatusMessage(
                 "Replace this occurrence? y/n/a(ll)/q(uit)");
             editorRefreshScreen();
-            int32_t c = editorReadKey();
+            int32_t c = editorReadPromptKey();
             if (c == 'q' || c == '\x1b') break;
             if (c == 'a') { all = 1; do_replace = 1; }
             else if (c == 'y') do_replace = 1;
@@ -4105,7 +4312,10 @@ static int32_t *settingsScreenSlot(struct editorSettings *s, const struct settin
  */
 static uint8_t editorSettingsIsSyntaxColor(const struct settingDescriptor *d) {
     return strncmp(d->key, "color_syntax_", 13) == 0 ||
-        strncmp(d->key, "rgb_syntax_", 11) == 0;
+        strncmp(d->key, "rgb_syntax_", 11) == 0 ||
+        strncmp(d->key, "color_markdown_h", 16) == 0 ||
+        (strncmp(d->key, "rgb_markdown_h", 14) == 0 &&
+         strcmp(d->key, "rgb_markdown_heading_background") != 0);
 }
 
 /**
@@ -4127,6 +4337,7 @@ static const char *editorSettingsSyntaxColorSample(const struct settingDescripto
     if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_emphasis_strong") == 0) return "**bold**";
     if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_math") == 0) return "$x^2$";
     if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_function") == 0) return "main()";
+    if (strstr(d->key, "markdown_h")) return "# Heading";
     return "sample";
 }
 
@@ -4262,6 +4473,87 @@ static void editorSettingsCycleEnum(const struct settingDescriptor *d, int32_t *
     *slot = value;
 }
 
+/** @brief Describe or cycle the preset matching the active draft palette.
+ * Personal presets take priority. Direction zero is read-only; no nested input
+ * loop is needed, so the selected scheme behaves like the other enum rows. */
+static void editorSettingsScheme(struct editorSettings *edited, int32_t direction,
+    char *name, size_t name_size, char *msg, size_t msg_size) {
+    const char *home = getenv("HOME");
+    char personal[1024];
+    int32_t n = snprintf(personal, sizeof(personal), "%s/.tinyedit/color-scheme", home ? home : "");
+    const char *directories[] = { personal, TE_DATADIR "/color-scheme" };
+    char **names = NULL;
+    int32_t count = 0;
+    for (int32_t d = 0; d < 2; d++) {
+        if (d == 0 && (!home || !*home || n < 0 || (size_t)n >= sizeof(personal))) continue;
+        const char *directory = directories[d];
+        DIR *dir = opendir(directory);
+        if (!dir) continue;
+        struct dirent *entry;
+        while ((entry = readdir(dir))) {
+            size_t len = strlen(entry->d_name);
+            if (len < 6 || strcmp(entry->d_name + len - 5, ".conf")) continue;
+            uint8_t safe = 1;
+            for (size_t i = 0; i < len; i++)
+                if ((uint8_t)entry->d_name[i] < 32 || entry->d_name[i] == 127) safe = 0;
+            if (!safe || count == INT32_MAX) continue;
+            char filepath[2048];
+            struct stat st;
+            int32_t pathlen = snprintf(filepath, sizeof(filepath), "%s/%s", directory, entry->d_name);
+            if (pathlen < 0 || (size_t)pathlen >= sizeof(filepath) || stat(filepath, &st) || !S_ISREG(st.st_mode)) continue;
+            uint8_t duplicate = 0;
+            for (int32_t i = 0; i < count; i++) {
+                const char *base = strrchr(names[i], '/');
+                if (strcmp(base ? base + 1 : names[i], entry->d_name) == 0) duplicate = 1;
+            }
+            if (duplicate) continue;
+            struct editorSettings candidate = *edited;
+            char error[128];
+            if (!settingsLoadColorScheme(filepath, &candidate, error, sizeof(error)) ||
+                candidate.color_mode != edited->color_mode) continue;
+            names = teRealloc(names, teArrayBytes((size_t)count + 1, sizeof(*names)));
+            int32_t at = count;
+            while (at > 0 && strcmp(strrchr(names[at - 1], '/') + 1, entry->d_name) > 0) {
+                names[at] = names[at - 1]; at--;
+            }
+            names[at] = teStrdup(filepath); count++;
+        }
+        closedir(dir);
+    }
+    int32_t current = -1;
+    for (int32_t i = 0; i < count; i++) {
+        struct editorSettings candidate = *edited;
+        char error[128];
+        if (settingsLoadColorScheme(names[i], &candidate, error, sizeof(error)) &&
+            memcmp(&candidate, edited, sizeof(candidate)) == 0) { current = i; break; }
+    }
+    int32_t chosen = current;
+    if (direction && count) {
+        chosen = current < 0 ? (direction < 0 ? count - 1 : 0) :
+            (current + (direction < 0 ? count - 1 : 1)) % count;
+        struct editorSettings candidate = *edited;
+        char error[128];
+        if (settingsLoadColorScheme(names[chosen], &candidate, error, sizeof(error)) &&
+            candidate.color_mode == edited->color_mode) {
+            *edited = candidate;
+            snprintf(msg, msg_size, "Scheme changed; Ctrl-S/F2 saves Settings");
+        } else {
+            chosen = current;
+            editorSetErrorMessage("Cannot apply color scheme; draft kept");
+            snprintf(msg, msg_size, "%s", E.ui.statusmsg);
+        }
+    } else if (direction) {
+        editorSetErrorMessage("No valid schemes for this mode; run make install");
+        snprintf(msg, msg_size, "%s", E.ui.statusmsg);
+    }
+    if (chosen >= 0) {
+        const char *base = strrchr(names[chosen], '/') + 1;
+        snprintf(name, name_size, "%.*s", (int32_t)strlen(base) - 5, base);
+    } else snprintf(name, name_size, "Custom");
+    for (int32_t i = 0; i < count; i++) free(names[i]);
+    free(names);
+}
+
 /**
  * @brief Append one settings entry with its value and preview.
  *
@@ -4276,16 +4568,19 @@ static void editorSettingsCycleEnum(const struct settingDescriptor *d, int32_t *
  */
 static void editorSettingsDrawRow(struct abuf *ab, int32_t idx, uint8_t selected,
     const struct editorSettings *edited, char scroll_indicator, int32_t label_width) {
-    if (idx == -5 && settings_scheme_preview) {
-        const char *label = " Choose Color Scheme (use < > to change) ";
-        abAppend(ab, "\x1b[7m", 4);
-        abAppend(ab, label, (int32_t)strlen(label));
-        abAppend(ab, settings_scheme_preview, (int32_t)strlen(settings_scheme_preview) - 5);
+    if (idx == -5) {
+        struct editorSettings candidate = *edited;
+        char name[256], msg[80];
+        editorSettingsScheme(&candidate, 0, name, sizeof(name), msg, sizeof(msg));
+        if (selected) abAppend(ab, "\x1b[7m", 4);
+        abAppend(ab, " Color scheme: ", 15);
+        abAppend(ab, name, (int32_t)strlen(name));
+        abAppend(ab, "  < >", 5);
         abAppend(ab, "\x1b[m\x1b[K\r\n", 8);
         return;
     }
     if (idx < 0) {
-        const char *label = idx == -5 ? " Choose Color Scheme >" : idx == -1 ? " Colors >" : idx == -2 ? " Interface" :
+        const char *label = idx == -1 ? " Colors >" : idx == -2 ? " Interface" :
             idx == -3 ? " Syntax highlighting" : " Back";
         if (idx == -2 || idx == -3) abAppend(ab, "\x1b[1m", 4);
         else if (selected) abAppend(ab, "\x1b[7m", 4);
@@ -4586,7 +4881,7 @@ static void editorInfoScreen(void) {
     if (!terminalWrite(ab.b, (size_t)ab.len)) terminalDie("write");
     abFree(&ab);
 
-    editorReadKey(); /* any key closes it */
+    editorReadPromptKey(); /* any key closes it */
 }
 
 /**
@@ -4698,7 +4993,10 @@ static void editorSettingsRender(struct abuf *ab, const struct editorSettings *e
             editorPrimaryModifier(), editorPrimaryModifier());
     }
     int32_t hlen = (int32_t)strlen(help);
+    uint8_t error = msg && E.ui.statusmsg_error && !strcmp(msg, E.ui.statusmsg);
+    if (error) abAppend(ab, "\x1b[31m", 5);
     abAppend(ab, help, hlen);
+    if (error) abAppend(ab, "\x1b[39m", 5);
     abAppend(ab, "\x1b[K\r\n", 5);
     rows_used++;
 
@@ -4716,97 +5014,6 @@ static void editorSettingsRender(struct abuf *ab, const struct editorSettings *e
 
     abAppend(ab, "\x1b[H\x1b[?25h", 9);
     editorSettingsClip(ab);
-}
-
-/** @brief Choose and confirm a preset without committing the Settings draft. */
-static void editorSettingsChooseScheme(struct editorSettings *edited, int32_t scroll, char *msg, size_t msg_size) {
-    const char *home = getenv("HOME");
-    char personal[1024];
-    int32_t n = snprintf(personal, sizeof(personal), "%s/.tinyedit/color-scheme", home ? home : "");
-    const char *directories[] = { personal, TE_DATADIR "/color-scheme" };
-    char **names = NULL;
-    int32_t count = 0;
-    for (int32_t d = 0; d < 2; d++) {
-        if (d == 0 && (!home || !*home || n < 0 || (size_t)n >= sizeof(personal))) continue;
-        const char *directory = directories[d];
-        DIR *dir = opendir(directory);
-        if (!dir) continue;
-        struct dirent *entry;
-        while ((entry = readdir(dir))) {
-            size_t len = strlen(entry->d_name);
-            if (len < 6 || strcmp(entry->d_name + len - 5, ".conf")) continue;
-            uint8_t safe = 1;
-            for (size_t i = 0; i < len; i++)
-                if ((uint8_t)entry->d_name[i] < 32 || entry->d_name[i] == 127) safe = 0;
-            if (!safe || count == INT32_MAX) continue;
-            char filepath[2048];
-            struct stat st;
-            int32_t pathlen = snprintf(filepath, sizeof(filepath), "%s/%s", directory, entry->d_name);
-            if (pathlen < 0 || (size_t)pathlen >= sizeof(filepath) || stat(filepath, &st) || !S_ISREG(st.st_mode)) continue;
-            uint8_t duplicate = 0;
-            for (int32_t i = 0; i < count; i++) {
-                const char *base = strrchr(names[i], '/');
-                if (strcmp(base ? base + 1 : names[i], entry->d_name) == 0) duplicate = 1;
-            }
-            if (duplicate) continue;
-            struct editorSettings candidate = *edited;
-            char error[128];
-            if (!settingsLoadColorScheme(filepath, &candidate, error, sizeof(error)) ||
-                candidate.color_mode != edited->color_mode) continue;
-            names = teRealloc(names, teArrayBytes((size_t)count + 1, sizeof(*names)));
-            int32_t at = count;
-            while (at > 0 && strcmp(strrchr(names[at - 1], '/') + 1, entry->d_name) > 0) {
-                names[at] = names[at - 1]; at--;
-            }
-            names[at] = teStrdup(filepath); count++;
-        }
-        closedir(dir);
-    }
-    if (!count) { free(names); snprintf(msg, msg_size, "No valid schemes for this mode; run make install"); return; }
-    int32_t cursor = 0;
-    for (int32_t i = 0; i < count; i++) {
-        struct editorSettings candidate = *edited;
-        char path[2048], error[128];
-        n = snprintf(path, sizeof(path), "%s", names[i]);
-        if (n >= 0 && (size_t)n < sizeof(path) &&
-            settingsLoadColorScheme(path, &candidate, error, sizeof(error)) &&
-            memcmp(&candidate, edited, sizeof(candidate)) == 0) { cursor = i; break; }
-    }
-    while (1) {
-        struct editorSettings candidate = *edited;
-        char path[2048], error[128];
-        n = snprintf(path, sizeof(path), "%s", names[cursor]);
-        uint8_t valid = n >= 0 && (size_t)n < sizeof(path) &&
-            settingsLoadColorScheme(path, &candidate, error, sizeof(error));
-        if (n < 0 || (size_t)n >= sizeof(path)) snprintf(error, sizeof(error), "Path too long");
-        if (valid && candidate.color_mode != edited->color_mode) {
-            valid = 0;
-            snprintf(error, sizeof(error), "Scheme no longer matches Mode");
-        }
-        settings_scheme_preview = strrchr(names[cursor], '/') + 1;
-        struct abuf ab = ABUF_INIT;
-        editorSettingsRender(&ab, valid ? &candidate : edited, 2, scroll, valid ? "" : error);
-        if (!terminalWrite(ab.b, (size_t)ab.len)) terminalDie("write");
-        abFree(&ab);
-        int32_t c = editorReadKey();
-        if (c == MOUSE_EVENT_KEY && S.mouse_enabled) {
-            if (mouseEventButton == 64) c = ARROW_LEFT;
-            else if (mouseEventButton == 65) c = ARROW_RIGHT;
-            else if (mouseEventButton == 0 && mouseEventPress && mouseEventRow == 5 - scroll) c = '\r';
-            else continue;
-        }
-        if (c == '\x1b') break;
-        if (c == ARROW_LEFT || c == ARROW_RIGHT) {
-            cursor = (cursor + (c == ARROW_LEFT ? count - 1 : 1)) % count;
-        } else if (c == '\r' && valid) {
-            *edited = candidate;
-            snprintf(msg, msg_size, "Scheme applied to draft; Ctrl-S/F2 saves");
-            break;
-        }
-    }
-    settings_scheme_preview = NULL;
-    for (int32_t i = 0; i < count; i++) free(names[i]);
-    free(names);
 }
 
 /**
@@ -4911,11 +5118,13 @@ static uint8_t editorSettingsSave(const struct editorSettings *edited) {
         winsize_changed = 1;
     if (S.tab_stop != previous.tab_stop ||
         S.show_invisibles != previous.show_invisibles ||
-        S.syntax_highlight != previous.syntax_highlight)
+        S.syntax_highlight != previous.syntax_highlight ||
+        S.markdown_live_preview != previous.markdown_live_preview)
         editorUpdateAllRows();
     if (S.mouse_enabled != previous.mouse_enabled) {
         if (S.mouse_enabled) terminalEnableMouseReporting();
         else terminalDisableMouseReporting();
+        mouse_motion_enabled = 0;
     }
 #ifdef __APPLE__
     if (S.mac_command_keys != previous.mac_command_keys) {
@@ -4982,6 +5191,15 @@ static void editorSettingsScreen(void) {
         int32_t c = editorReadKey();
         if (c == MOUSE_EVENT_KEY && S.mouse_enabled) {
             if (mouseEventButton == 64 || mouseEventButton == 65) {
+                int32_t hovered = scroll + mouseEventRow - 3;
+                if (mouseEventRow >= 3 && mouseEventRow < 3 + visible && hovered < count &&
+                    editorSettingsDescriptorAt(&edited, hovered) == -5) {
+                    char name[256];
+                    cursor = hovered;
+                    editorSettingsScheme(&edited, mouseEventButton == 64 ? -1 : 1,
+                        name, sizeof(name), msg, sizeof(msg));
+                    continue;
+                }
                 if (mouseEventButton == 64 && cursor > 0) cursor = editorSettingsMove(&edited, cursor, -1);
                 if (mouseEventButton == 65 && cursor + 1 < count) cursor = editorSettingsMove(&edited, cursor, 1);
                 continue;
@@ -4994,8 +5212,9 @@ static void editorSettingsScreen(void) {
             } else continue;
         }
         int32_t idx = editorSettingsDescriptorAt(&edited, cursor);
-        if (idx == -5 && (c == '\r' || c == ' ' || c == ARROW_RIGHT)) {
-            editorSettingsChooseScheme(&edited, scroll, msg, sizeof(msg));
+        if (idx == -5 && (c == '\r' || c == ' ' || c == ARROW_LEFT || c == ARROW_RIGHT)) {
+            char name[256];
+            editorSettingsScheme(&edited, c == ARROW_LEFT ? -1 : 1, name, sizeof(name), msg, sizeof(msg));
             continue;
         }
         if ((c == '\x1b' && settings_page != SETTINGS_MAIN) ||
@@ -5078,7 +5297,7 @@ static void editorSettingsScreen(void) {
                 if (!terminalWrite(ab2.b, (size_t)ab2.len)) terminalDie("write");
                 abFree(&ab2);
 
-                int32_t confirm = editorReadKey();
+                int32_t confirm = editorReadPromptKey();
                 if (confirm == 'y' || confirm == 'Y') {
                     if (editorSettingsSave(&edited)) return;
                     snprintf(msg, sizeof(msg), "Could not save; draft kept.");
@@ -5522,16 +5741,16 @@ static void editorToggleMenuSetting(enum editorCommand command) {
 }
 
 /**
- * @brief Keep terminal hover reporting aligned with the open menu.
+ * @brief Enable hover reports for an open menu or Markdown live preview.
  *
  * @details Call after menu state changes. Emits a mode change only when the
  * required reporting state differs from the previous one.
  */
 static void editorSyncMenuMouseMotion(void) {
-    uint8_t enabled = S.mouse_enabled && S.show_menu && M.open;
-    if (enabled == menu_mouse_motion_enabled) return;
-    terminalSetMenuMouseMotion(enabled);
-    menu_mouse_motion_enabled = enabled;
+    uint8_t enabled = S.mouse_enabled && ((S.show_menu && M.open) || editorMarkdownPreviewEnabled());
+    if (enabled == mouse_motion_enabled) return;
+    if (S.mouse_enabled) terminalSetMenuMouseMotion(enabled);
+    mouse_motion_enabled = enabled;
 }
 
 /**
@@ -5753,6 +5972,10 @@ static uint8_t editorTreeKey(int32_t c) {
  * a burst, passes through the same menu/text routing and release handling.
  */
 static int32_t editorHandleMouseEvent(void) {
+    document_pointer_valid = 1;
+    document_pointer_col = mouseEventCol;
+    document_pointer_row = mouseEventRow;
+    if ((mouseEventButton & ~28) == 35 && !(S.show_menu && M.open)) return 0;
     if (mouseEventPress && (mouseEventRow <= (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0) ||
         mouseEventRow > E.view.screenrows + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0) ||
         mouseEventCol <= editorSidebarWidth() + editorGutterWidth()))
@@ -5835,8 +6058,8 @@ static int32_t editorHandleMouseEvent(void) {
         E.view.rowoff += delta;
         if (E.view.rowoff < 0) E.view.rowoff = 0;
         if (E.view.rowoff > limit) E.view.rowoff = limit;
-        /* Skip cursor-following for this redraw; a following keyboard event
-         * clears this override before dispatch, even within the same burst. */
+        /* A following keyboard event clears this before dispatch, even
+         * within the same burst; passive pointer motion leaves it intact. */
         E.view.free_scroll = 1;
     } else {
         uint8_t in_text_area = mouseEventRow >= 1 + (S.show_top_bar ? 1 : 0) +
@@ -5846,12 +6069,22 @@ static int32_t editorHandleMouseEvent(void) {
 
         if (mouseEventPress && mouse_button == 0) editorCancelMouseDrag();
         if (in_text_area && mouse_button == 0 && mouseEventPress) {
+            E.view.free_scroll = 0;
             /* A plain click remembers a local drag anchor without
              * arming a collapsed selection; Shift-click instead
              * retains its existing anchor, or starts from the
              * cursor position immediately before the click. */
             int32_t cy, cx;
             editorMouseToCursor(mouseEventCol, mouseEventRow, &cy, &cx);
+            struct textLink preview_link;
+            int32_t link_row;
+            struct markdownSpan preview_span;
+            if (!shift_held && editorPreviewLinkAtMouse(mouseEventCol, mouseEventRow,
+                &link_row, &preview_link, &preview_span)) {
+                document_click_pending = 0;
+                editorFollowSourceLink(link_row, &preview_link);
+                return 0;
+            }
             struct timespec now;
             uint8_t timed = clock_gettime(CLOCK_MONOTONIC, &now) == 0;
             double elapsed = timed ? difftime(now.tv_sec, document_click_time.tv_sec) +
@@ -5885,6 +6118,7 @@ static int32_t editorHandleMouseEvent(void) {
             E.document.cursor.cx = cx;
             E.document.mouse.dragging = 1;
         } else if (in_text_area && mouse_button == 32 && E.document.mouse.dragging) {
+            E.view.free_scroll = 0;
             document_click_pending = 0;
             /* Arm from the press point only when motion creates a selection. */
             if (!E.document.selection.active) {
@@ -5954,8 +6188,9 @@ static uint8_t editorHandleNavigationKey(int32_t c) {
             int32_t hw_wrapcols = editorSoftWrapCols();
             if (hw_wrapcols > 0 && S.home_end_visual_line && E.document.cursor.cy < E.document.buffer.row_count) {
                 int32_t seg_idx, seg_col;
-                editorRxToSegment(&E.document.buffer.rows[E.document.cursor.cy], hw_wrapcols, E.document.cursor.rx, &seg_idx, &seg_col);
                 erow *row = &E.document.buffer.rows[E.document.cursor.cy];
+                int32_t rx = editorRowCxToRx(row, E.document.cursor.cx);
+                editorRxToSegment(row, hw_wrapcols, rx, &seg_idx, &seg_col);
                 int32_t nseg = editorRowSegments(row, hw_wrapcols);
                 if (to_home) {
                     E.document.cursor.cx = editorSegColToCx(row, row->seg_start_rx[seg_idx], 0);
@@ -6475,6 +6710,7 @@ int main(int argc, char **argv) {
         printf("tinyedit %s\n", TE_BUILD_VERSION);
         return 0;
     }
+    terminalEnableTerminationHandling();
     terminalEnableRawMode();
     terminalEnterAlternateScreen();
     terminalEnableBracketedPaste();
@@ -6526,6 +6762,7 @@ int main(int argc, char **argv) {
     editorOfferBackupRecovery();
 
     while (1) {
+        terminalCheckTermination();
         editorRefreshScreen();
         editorMaybeBackup();
         editorProcessKeypress();

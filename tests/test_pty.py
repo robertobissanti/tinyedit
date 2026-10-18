@@ -7,6 +7,7 @@ import pathlib
 import pty
 import re
 import select
+import signal
 import struct
 import sys
 import subprocess
@@ -72,7 +73,12 @@ def finish(process, master, expect_exit=False):
     finally:
         if process.poll() is None:
             process.terminate()
-            process.wait()
+            deadline = time.monotonic() + 3
+            while process.poll() is None and time.monotonic() < deadline:
+                read_available(master, 0.1)
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=2)
         os.close(master)
 
 
@@ -496,9 +502,121 @@ def test_menu_view_toggles_settings(home):
         os.write(master, b"\x1b[21~" + b"\x1b[C" * 3)
         reopened = read_until(master, b"Auto-indent new lines")
         assert b"[ ] Syntax highlighting" in reopened
-        os.write(master, b"\x1b[B" * 5 + b"\r")
+        os.write(master, b"\x1b[B" * 6 + b"\r")
         read_available(master)
         assert "auto_indent = false" in config.read_text(encoding="utf-8")
+    finally:
+        finish(process, master)
+
+
+def test_markdown_live_preview(home, highlighting=True):
+    case_home = pathlib.Path(home) / ("markdown-live-preview" if highlighting else "markdown-preview-no-highlighting")
+    case_home.mkdir()
+    target = case_home / "preview.md"
+    original = b"start\n**bold** and *italic* [label](https://example.org)\n"
+    target.write_bytes(original)
+    config = case_home / ".tinyeditrc"
+    config.write_text(f"show_menu = true\nbackup_interval = 0\nsyntax_highlight = {str(highlighting).lower()}\n", encoding="utf-8")
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1b[21~" + b"\x1b[C" * 3)
+        read_until(master, b"Markdown live preview")
+        os.write(master, b"\x1b[B" * 5 + b"\r")
+        output = read_available(master)
+        output = output.rsplit(b"\x1b[H", 1)[-1]
+        text = re.sub(rb"\x1b\[[0-9;?]*[ -/]*[@-~]", b"", output)
+        assert "markdown_live_preview = true" in config.read_text()
+        assert b"bold and italic label" in text and b"https://example.org" not in text
+        assert b"\x1b[1m" in output and b"\x1b[3m" in output and b"\x1b[4m" in output
+        os.write(master, b"\x1b[B")
+        output = read_available(master)
+        output = output.rsplit(b"\x1b[H", 1)[-1]
+        text = re.sub(rb"\x1b\[[0-9;?]*[ -/]*[@-~]", b"", output)
+        assert b"**bold** and italic label" in text, "cursor expands only its construct"
+        assert target.read_bytes() == original, "preview changed disk source"
+    finally:
+        finish(process, master)
+
+
+def test_markdown_link_mouse(home, highlighting=True):
+    case_home = pathlib.Path(home) / ("markdown-link-mouse" if highlighting else "markdown-mouse-no-highlighting")
+    case_home.mkdir()
+    target = case_home / "links.md"
+    original = b"start\n[label](#target) tail\n## Target\n[plain](plain.txt)\n"
+    target.write_bytes(original)
+    (case_home / "plain.txt").write_text("PLAIN_DESTINATION\n", encoding="utf-8")
+    (case_home / ".tinyeditrc").write_text(
+        "show_menu = false\nshow_line_numbers = false\nmouse_enabled = true\n"
+        "markdown_live_preview = true\ncolor_link_hover = red-dark\nbackup_interval = 0\n"
+        f"syntax_highlight = {str(highlighting).lower()}\n",
+        encoding="utf-8")
+    process, master = spawn_editor([str(target)], case_home)
+
+    def frame(output):
+        return output.rsplit(b"\x1b[H", 1)[-1]
+
+    def text(output):
+        return re.sub(rb"\x1b\[[0-9;?]*[ -/]*[@-~]", b"", frame(output))
+
+    try:
+        initial = read_available(master)
+        assert b"\x1b[?1003h" in initial, "preview must request hover reports"
+        os.write(master, b"\x1b[<35;2;2M")
+        hovered = read_available(master)
+        assert b"\x1b[31m\x1b[4ml" in frame(hovered)
+        assert b"#target" not in text(hovered) and b"1/4: C 1" in text(hovered)
+        os.write(master, b"\x1b[<35;20;2M")
+        assert b"\x1b[31m\x1b[4ml" not in frame(read_available(master)), "hover did not clear"
+        os.write(master, b"\x1b[<0;2;2M\x1b[<0;2;2m")
+        followed = read_available(master)
+        assert b"3/4: C 1" in text(followed), "single click did not follow heading anchor"
+        assert b"#target" not in text(followed), "following exposed source markup"
+        os.write(master, b"\x1b[<0;6;2M\x1b[<0;6;2m")
+        editing = read_available(master)
+        assert b"[label](#target) tail" in text(editing), "right border did not enter source editing"
+        os.write(master, b"\x1b[<0;3;2M\x1b[<0;3;2m")
+        editing = read_available(master)
+        assert b"[label](#target) tail" in text(editing) and b"2/4:" in text(editing)
+        os.write(master, b"X")
+        read_available(master)
+        os.write(master, b"\x1b[<0;2;4M\x1b[<0;2;4m\x1b[<35;3;4M")
+        assert b"Save changes before" in read_available(master), "dirty link navigation needs confirmation"
+        os.write(master, b"n")
+        opened = read_available(master)
+        assert b"PLAIN_DESTINATION" in text(opened), "single click did not open local destination"
+        assert b"\x1b[?1003l\x1b[?1002h" in opened, "non-Markdown view retained hover reporting"
+        assert target.read_bytes() == original, "mouse navigation changed source on disk"
+    finally:
+        finish(process, master)
+
+
+def test_typing_markdown_link(home):
+    case_home = pathlib.Path(home) / "typing-markdown-link"
+    case_home.mkdir()
+    target = case_home / "typing.md"
+    target.write_bytes(b"")
+    (case_home / ".tinyeditrc").write_text(
+        "show_menu = false\nshow_line_numbers = false\nmarkdown_live_preview = true\n"
+        "auto_close_pairs = true\nbackup_interval = 0\n", encoding="utf-8")
+    process, master = spawn_editor([str(target)], case_home)
+
+    def text(output):
+        output = output.rsplit(b"\x1b[H", 1)[-1]
+        return re.sub(rb"\x1b\[[0-9;?]*[ -/]*[@-~]", b"", output)
+
+    try:
+        read_available(master)
+        os.write(master, b"[Roberto](")
+        assert b"[Roberto]()" in text(read_available(master)), "empty automatic pair collapsed"
+        os.write(master, b"mailto:roberto@example.org")
+        assert b"[Roberto](mailto:roberto@example.org)" in text(read_available(master)), "typed destination collapsed"
+        os.write(master, b") ")
+        compact = text(read_available(master))
+        assert b"Roberto" in compact and b"[Roberto]" not in compact and b"mailto:" not in compact, "completed link did not compact after leaving"
+        os.write(master, b"\x13")
+        read_available(master)
+        assert target.read_bytes() == b"[Roberto](mailto:roberto@example.org) \n"
     finally:
         finish(process, master)
 
@@ -1656,38 +1774,65 @@ def test_vimrc_syntax_config(home):
             finish(process, master)
 
 
+def test_markdown_heading_levels(home):
+    case_home = pathlib.Path(home) / "heading-levels"
+    case_home.mkdir()
+    target = case_home / "levels.md"
+    target.write_text("".join("#" * level + " Titolo città\n" for level in range(1, 7)))
+    config = "color_mode = rgb\nsyntax_highlight = true\nrgb_background = #202020\nrgb_markdown_heading_background = #303030\n"
+    config += "".join(f"rgb_markdown_h{level} = #1020{47 + level:02X}\n" for level in range(1, 7))
+    (case_home / ".tinyeditrc").write_text(config)
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        output = read_available(master)
+        assert b"\x1b[48;2;30;32;34m" in output, "heading background must follow foreground tint"
+        for level in range(1, 7):
+            assert f"\x1b[38;2;16;32;{47 + level}m".encode() in output, f"H{level} foreground missing"
+    finally:
+        finish(process, master)
+
+
 def test_color_scheme_selection(home):
     case_home = pathlib.Path(home) / "scheme-selection"
     directory = case_home / ".tinyedit" / "color-scheme"
     directory.mkdir(parents=True)
     (directory / "one-dark.conf").write_bytes((ROOT / "colorschemes" / "one-dark.conf").read_bytes())
-    (directory / "catppuccin-mocha.conf").write_bytes((ROOT / "colorschemes" / "catppuccin-mocha.conf").read_bytes())
+    for flavor in ("latte", "frappe", "macchiato", "mocha"):
+        name = f"catppuccin-{flavor}.conf"
+        (directory / name).write_bytes((ROOT / "colorschemes" / name).read_bytes())
+    (directory / "synthwave-pro.conf").write_bytes((ROOT / "colorschemes/synthwave-pro.conf").read_bytes())
     for name in ("one-dark-ansi.conf", "catppuccin-mocha-ansi.conf"):
         (directory / name).write_bytes((ROOT / "colorschemes" / name).read_bytes())
     config = case_home / ".tinyeditrc"
-    config.write_text("tab_stop = 7\ncolor_mode = rgb\n", encoding="utf-8")
+    config.write_text("tab_stop = 7\ncolor_mode = rgb\nmouse_enabled = true\n", encoding="utf-8")
     original = config.read_bytes()
     process, master = spawn_editor([], case_home)
     try:
         read_available(master)
         navigation, _ = setting_navigation("color_mode")
-        # Mode is directly above the scheme selector.
-        os.write(master, b"\x1bOQ" + navigation + b"\x1b[B\r")
+        # The current name is visible before the row is activated.
+        os.write(master, b"\x1bOQ" + navigation + b"\x1b[B")
         output = read_available(master)
-        assert b"Choose Color Scheme (use < > to change) catppuccin-mocha" in output
-        assert b"Settings > Colors >" not in output, "selector opened another screen"
+        assert b"Color scheme: Custom" in output
+        # Every official flavor appears and updates the same draft directly.
+        for flavor in ("frappe", "latte", "macchiato", "mocha"):
+            os.write(master, b"\x1b[C")
+            output = read_available(master)
+            assert f"Color scheme: catppuccin-{flavor}".encode() in output
+            assert b"Settings > Colors >" not in output
         os.write(master, b"\x1b[C")
-        output = read_available(master)
-        assert b"Choose Color Scheme (use < > to change) one-dark" in output
-        assert b"one-dark-ansi" not in output, "ANSI scheme offered in RGB mode"
+        assert b"Color scheme: one-dark" in read_available(master)
         os.write(master, b"\x1b[D")
-        assert b"Choose Color Scheme (use < > to change) catppuccin-mocha" in read_available(master)
-        os.write(master, b"\x1b")
-        read_available(master)
-        assert config.read_bytes() == original, "cancelled scheme wrote settings"
-        # Reopen, confirm, return to root and discard the entire draft.
-        os.write(master, b"\x1b[C\x1b[C\r")
-        assert b"Scheme applied to draft" in read_available(master)
+        assert b"Color scheme: catppuccin-mocha" in read_available(master)
+        os.write(master, b"\x1b[<65;20;5M")
+        assert b"Color scheme: one-dark" in read_available(master), "wheel over scheme cycles it"
+        os.write(master, b"\x1b[<0;20;5M\x1b[<0;20;5m")
+        assert b"Color scheme: synthwave-pro" in read_available(master), "Synthwave Pro is selectable"
+        os.write(master, b"\x1b[C")
+        assert b"Color scheme: catppuccin-frappe" in read_available(master), "arrow wraps to first RGB preset"
+        # Leaving the row keeps its choice without an Enter confirmation.
+        os.write(master, b"\x1b[A")
+        assert b"Color scheme: catppuccin-frappe" in read_available(master)
         os.write(master, b"\x1b")
         read_available(master)
         os.write(master, b"\x1b")
@@ -1695,25 +1840,28 @@ def test_color_scheme_selection(home):
         os.write(master, b"n")
         read_available(master)
         assert config.read_bytes() == original, "discarded scheme wrote settings"
-        # Apply again, then save through the shared Settings action.
-        os.write(master, b"\x1bOQ" + navigation + b"\x1b[B\r\x1b[C\r")
-        read_available(master)
+        # Select One Dark and save without another confirmation.
+        os.write(master, b"\x1bOQ" + navigation + b"\x1b[B" + b"\x1b[C" * 5)
+        output = read_available(master)
+        assert b"Color scheme: one-dark" in output
         os.write(master, b"\x1bOQ")
         read_available(master)
         saved = config.read_text()
         assert "rgb_background = #282C34" in saved and "tab_stop = 7" in saved
+        assert "rgb_syntax_bracket = #E5C07B" in saved
         assert "color_mode = rgb" in saved
-        # Switching Mode changes which complete presets can be selected.
-        os.write(master, b"\x1bOQ" + navigation + b"\r\x1b[B\r")
+        # Reopening identifies the saved theme without entering another mode.
+        os.write(master, b"\x1bOQ" + navigation)
+        assert b"Color scheme: one-dark" in read_available(master)
+        # Switching Mode offers only compatible themes and preserves RGB.
+        os.write(master, b"\r\x1b[B\x1b[C")
         output = read_available(master)
-        assert b"Choose Color Scheme (use < > to change) catppuccin-mocha-ansi" in output
+        assert b"Color scheme: catppuccin-mocha-ansi" in output
         os.write(master, b"\x1b[C")
-        output = read_available(master)
-        assert b"Choose Color Scheme (use < > to change) one-dark-ansi" in output
+        assert b"Color scheme: one-dark-ansi" in read_available(master)
         os.write(master, b"\x1b[C")
-        output = read_available(master)
-        assert b"Choose Color Scheme (use < > to change) catppuccin-mocha-ansi" in output
-        os.write(master, b"\r\x1bOQ")
+        assert b"Color scheme: catppuccin-mocha-ansi" in read_available(master)
+        os.write(master, b"\x1bOQ")
         read_available(master)
         saved = config.read_text()
         assert "color_mode = ansi" in saved
@@ -1745,7 +1893,7 @@ def test_cursor_blink(home):
         assert "cursor_blink = true" in config.read_text()
         os.write(master, b"\x1b[21~" + b"\x1b[C" * 3)
         assert b"[x] Cursor blinking" in read_available(master)
-        os.write(master, b"\x1b[B" * 6 + b"\r")
+        os.write(master, b"\x1b[B" * 7 + b"\r")
         assert b"\x1b[6 q" in read_available(master)
         assert "cursor_blink = false" in config.read_text(), "View toggle not saved"
     finally:
@@ -1824,7 +1972,8 @@ def test_startup_error_survives_alternate_screen(home):
             leave = tail.find(b"\x1b[?1049l")
             assert leave >= 0 and tail.find(message) > leave, \
                 "error text must come after leaving the alternate screen"
-            assert message + b"\r\n" in tail, "raw-mode output ends with CR LF"
+            assert b"\x1b[31m" + message + b"\x1b[0m\r\n" in tail, \
+                "fatal error is red and raw-mode output ends with CR LF"
     finally:
         unreadable.chmod(0o600)
         blocked.chmod(0o700)
@@ -1849,6 +1998,66 @@ def test_documentation_path_with_special_characters(home):
             finish(process, master)
 
 
+def test_termination_restores_terminal(home):
+    isolated = pathlib.Path(home) / "termination-home"
+    isolated.mkdir()
+    target = isolated / "saved.txt"
+    target.write_bytes(b"original\n")
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        for named in (True, False):
+            master, slave = pty.openpty()
+            original_modes = termios.tcgetattr(slave)
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
+            env = os.environ.copy()
+            env.update({"HOME": str(isolated), "TERM": "xterm-256color"})
+            process = subprocess.Popen(
+                [str(BINARY), *([str(target)] if named else [])],
+                stdin=slave, stdout=slave, stderr=slave, env=env, cwd=ROOT,
+                close_fds=True,
+            )
+            try:
+                assert b"F1 help" in read_until(master, b"F1 help"), "editor starts before signal"
+                assert termios.tcgetattr(slave) != original_modes, "raw mode active"
+                os.write(master, b"X")
+                edited = b"Xoriginal" if named else b"X"
+                assert edited in read_until(master, edited), "unsaved edit visible"
+                process.send_signal(sig)
+                output = read_until(master, b"\x1b[?1049l", timeout=3)
+                process.wait(timeout=3)
+                output += read_available(master, 0.1)
+                assert process.returncode == 128 + sig, "signal exit status preserved"
+                assert termios.tcgetattr(slave) == original_modes, "original terminal modes restored"
+                assert b"\x1b[?2004l" in output and b"\x1b[?1049l" in output, \
+                    "paste and alternate screen disabled"
+                assert target.read_bytes() == b"original\n", "unsaved changes not saved implicitly"
+                assert not (isolated / ".tinyedit" / "backup").exists(), \
+                    "backup disabled for named and unnamed documents"
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+                os.close(master)
+                os.close(slave)
+
+
+def test_external_link_requires_confirmation(home):
+    target = pathlib.Path(home) / "external-link.md"
+    target.write_text("[outside](https://example.org)\n")
+    process, master = spawn_editor([str(target)], home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1b\r")
+        prompt = read_until(master, b"Open external web link")
+        assert b"https://example.org" in prompt and b"(y/n)" in prompt, \
+            "external URL and confirmation are visible before launch"
+        os.write(master, b"n")
+        assert b"not opened" in read_until(master, b"not opened"), \
+            "declining external URL leaves the editor open"
+        assert process.poll() is None and target.read_text() == "[outside](https://example.org)\n"
+    finally:
+        finish(process, master)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="tinyedit-tests-") as tmp:
         home = pathlib.Path(tmp)
@@ -1868,6 +2077,8 @@ def main():
         test_ghostty_ctrl_i_is_drained(home)
         test_kitty_keyboard_mode_is_restored(home)
         test_alternate_screen_lifecycle(home)
+        test_termination_restores_terminal(home)
+        test_external_link_requires_confirmation(home)
         test_kitty_cmd_z_undoes(home)
         test_kitty_cmd_a_selects_all(home)
         test_shift_click_extends_selection(home)
@@ -1876,6 +2087,11 @@ def main():
         test_menu_mouse_navigation(home)
         test_menu_show_invisibles_refreshes_rows(home)
         test_menu_view_toggles_settings(home)
+        test_markdown_live_preview(home)
+        test_markdown_live_preview(home, False)
+        test_markdown_link_mouse(home)
+        test_markdown_link_mouse(home, False)
+        test_typing_markdown_link(home)
         test_matching_bracket_highlight(home)
         test_very_long_wrapped_line(home)
         test_utf8_word_jumps(home)
@@ -1899,6 +2115,7 @@ def main():
         test_no_save_prompt_when_undone(home)
         test_xml_tag_autoclose(home)
         test_color_scheme_selection(home)
+        test_markdown_heading_levels(home)
         test_vimrc_syntax_config(home)
         test_cursor_blink(home)
         test_bash_syntax_config(home)

@@ -5,6 +5,7 @@
 ## Contents
 
 - [Syntax highlighting](#syntax-highlighting)
+- [Fenced code blocks](#fenced-code-blocks)
 - [Extending syntax highlighting](#extending-syntax-highlighting)
 - [Markup templates](#markup-templates)
 - [Ready-made syntax configurations](#ready-made-syntax-configurations)
@@ -37,7 +38,53 @@ embedded HTML tags), HTML/XML (`.html` `.htm`
 `.xml`, with tags, attributes, and `<!-- -->` comments), and CSS (`.css`, with
 properties, values, comments).
 
-Two constructs common in static-site Markdown get their own handling.
+Markdown ATX headings (`#` through `######`, followed by whitespace or end
+of line) use their independent H1–H6 palette colors in source and live preview.
+RGB heading backgrounds follow their foreground hue with a 12% tint over the
+editor background; the background can be disabled. Bold styling remains available; code literals are
+excluded. See [heading colors](../colorschemes/README.md#markdown-heading-levels).
+
+Ordinary parentheses, square brackets and braces use the configured bracket
+color. Markdown link/image delimiters and Pandoc anchor delimiters/IDs use the
+JSON-key color instead. This includes `[text]{#id}`, image
+attributes, heading attributes and fenced Divs such as `::: {#id}`; unrelated
+`[text]` or `{text}` remains ordinary punctuation. Link labels and destinations
+share that navigation color and are underlined when Markdown text styles or
+live preview is enabled. Brackets within strings, comments and
+inline code keep their token's color; selection/search and link-hover feedback
+take precedence.
+
+### Fenced code blocks
+
+**Fenced code blocks** use the declared language's highlighter. For example:
+
+```c
+int answer = 42;
+/* A comment, including continuation on subsequent rows. */
+printf("hello");
+```
+
+Both backtick and tilde fences of at least three characters are supported;
+the closing fence must use the same character and be at least as long, with
+only whitespace after it. Up to three leading spaces and blockquote prefixes
+are recognized. Use an extension such as `c`, `cpp`, `py`, `js`, `json`, `html`
+or `css`, or the aliases `python`, `javascript`, `typescript`, `bash`, `shell`
+and `c++`. Installed syntax definitions participate using their extensions
+or single-word filetype names, with the usual priority over built-in languages.
+A Pandoc first language class also works, for example an opening line
+`` ~~~{.python #example} ``. Additional attributes do not affect highlighting.
+
+The same tokenizer limits apply as for standalone source files. No language
+is guessed: omitted or unknown language tags, including `text`, keep a uniform
+code color. Inline backtick spans keep their ordinary code style. Indented
+code blocks and arbitrary nested Markdown containers do not select a language.
+Code remains literal source: Markdown links/emphasis and preview hiding are
+disabled inside the fence, and no code is executed. Changing the language tag
+or a code row refreshes the remainder of its fenced block, including across
+blank lines and undo/redo.
+
+### Other Markdown constructs
+
 A YAML **front matter** block, the `---` delimited metadata header
 used by Jekyll, Eleventy and Hugo, is highlighted as structured data
 rather than prose: delimiters and the `:` as markers, keys as keywords,

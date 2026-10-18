@@ -35,6 +35,22 @@ char *fileioExpandHomePath(const char *path) {
 
 /* ---- loading ------------------------------------------------------------- */
 
+FILE *fileioOpenRead(const char *filename) {
+    int fd = open(filename, O_RDONLY | O_NONBLOCK);
+    if (fd == -1) return NULL;
+    struct stat st;
+    int result = fstat(fd, &st);
+    if (result != 0 || !S_ISREG(st.st_mode)) {
+        int saved_errno = result != 0 ? errno : S_ISDIR(st.st_mode) ? EISDIR : EINVAL;
+        close(fd);
+        errno = saved_errno;
+        return NULL;
+    }
+    FILE *stream = fdopen(fd, "rb");
+    if (!stream) { int saved_errno = errno; close(fd); errno = saved_errno; }
+    return stream;
+}
+
 /**
  * @brief Append one logical row and update line-ending metadata.
  * @details Removes only LF and its immediately preceding CR, preserving all
@@ -117,8 +133,8 @@ uint8_t fileioLoadDocument(const char *filename, struct editorDocument *candidat
     candidate->file.detected_line_ending = LINE_ENDING_LF;
     candidate->file.final_newline = 1;
     if (filename[0] == '\0') { errno = EINVAL; return 0; }
-    int fd = open(filename, O_RDONLY | O_NONBLOCK);
-    if (fd == -1) {
+    FILE *stream = fileioOpenRead(filename);
+    if (!stream) {
         if (errno != ENOENT) return 0;
         struct stat entry;
         if (lstat(filename, &entry) == 0) { errno = ENOENT; return 0; }
@@ -126,17 +142,6 @@ uint8_t fileioLoadDocument(const char *filename, struct editorDocument *candidat
         candidate->file.filename = teStrdup(filename);
         return 1;
     }
-    struct stat st = {0};
-    int stat_result = fstat(fd, &st);
-    if (stat_result != 0 || !S_ISREG(st.st_mode)) {
-        int saved_errno = errno;
-        if (stat_result == 0) saved_errno = S_ISDIR(st.st_mode) ? EISDIR : EINVAL;
-        close(fd);
-        errno = saved_errno;
-        return 0;
-    }
-    FILE *stream = fdopen(fd, "rb");
-    if (!stream) { int saved_errno = errno; close(fd); errno = saved_errno; return 0; }
     uint8_t ok = 1;
     ok = fileioLoadStream(stream, candidate);
     int saved_errno = errno;
@@ -154,6 +159,25 @@ uint8_t fileioLoadDocument(const char *filename, struct editorDocument *candidat
 }
 
 /* ---- replacement and durability ------------------------------------------ */
+
+char *fileioResolveSavePath(const char *filename) {
+    if (!filename || !filename[0]) { errno = EINVAL; return NULL; }
+    char *resolved = realpath(filename, NULL);
+    struct stat st;
+    if (resolved) {
+        int result = stat(resolved, &st);
+        if (result != 0 || !S_ISREG(st.st_mode)) {
+            int saved_errno = result != 0 ? errno : S_ISDIR(st.st_mode) ? EISDIR : EINVAL;
+            free(resolved);
+            errno = saved_errno;
+            return NULL;
+        }
+        return resolved;
+    }
+    if (errno != ENOENT) return NULL;
+    if (lstat(filename, &st) == 0) { errno = ENOENT; return NULL; }
+    return errno == ENOENT ? teStrdup(filename) : NULL;
+}
 
 /**
  * @brief Synchronize an open descriptor, retrying interrupted calls.
@@ -239,18 +263,9 @@ static uint8_t fileioWriteAll(int fd, const char *bytes, size_t len) {
  * Removes owned temporary storage on failure and preserves the failure errno.
  */
 enum fileSaveResult fileioAtomicSave(const char *filename, const char *bytes, size_t len) {
-    char *resolved = realpath(filename, NULL);
-    if (!resolved && errno != ENOENT) return FILE_SAVE_FAILED;
-    if (!resolved) {
-        struct stat entry;
-        if (lstat(filename, &entry) == 0) {
-            /* ENOENT from realpath can mean a dangling link, not a new file. */
-            errno = ENOENT;
-            return FILE_SAVE_FAILED;
-        }
-        if (errno != ENOENT) return FILE_SAVE_FAILED;
-    }
-    const char *target = resolved ? resolved : filename;
+    char *resolved = fileioResolveSavePath(filename);
+    if (!resolved) return FILE_SAVE_FAILED;
+    const char *target = resolved;
     const char suffix[] = ".tinyedit.XXXXXX";
     size_t target_len = strlen(target);
     if (target_len > SIZE_MAX - sizeof(suffix)) {
@@ -263,6 +278,11 @@ enum fileSaveResult fileioAtomicSave(const char *filename, const char *bytes, si
     memcpy(temporary + target_len, suffix, sizeof(suffix));
     struct stat st;
     uint8_t exists = stat(target, &st) == 0;
+    if ((!exists && errno != ENOENT) || (exists && !S_ISREG(st.st_mode))) {
+        int saved_errno = exists ? (S_ISDIR(st.st_mode) ? EISDIR : EINVAL) : errno;
+        free(temporary); free(resolved); errno = saved_errno;
+        return FILE_SAVE_FAILED;
+    }
     int fd = mkstemp(temporary);
     enum fileSaveResult result = FILE_SAVE_FAILED;
     if (fd != -1) {

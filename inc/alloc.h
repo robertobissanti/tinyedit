@@ -5,6 +5,11 @@
 
 #include <stddef.h>
 
+/** @brief Leave a transient display before reporting a fatal allocation error. */
+void teSetFatalCleanup(void (*cleanup)(void));
+/** @brief Report an unrecoverable size/allocation failure after display cleanup. */
+void teAllocationFailure(const char *detail);
+
 /**
  * @brief Allocate storage or leave the editor cleanly on allocation failure.
  *

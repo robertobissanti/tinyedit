@@ -13,7 +13,7 @@
  * (Markdown: headings/emphasis/links, not keywords; XML/HTML: tags/
  * attributes, not statements) get their own dedicated tokenizer
  * function instead of being forced into this table -- see
- * syntaxHighlightRowMarkdown()/syntaxHighlightRowXml().
+ * markdownHighlightRow() in markdown.c / syntaxHighlightRowXml().
  *
  * Dispatch: syntaxHighlightRow() looks up the language table entry (or
  * dedicated tokenizer) for the supplied filename's extension and calls the right
@@ -51,8 +51,8 @@
  * italic uses HL_EMPHASIS and its own color_syntax_italic slot) -- kept as its own class rather than
  * reused from another language's slot because bold and italic are
  * visually distinct concepts a user would reasonably want different
- * colors for, unlike (say) Markdown headings reusing HL_PREPROCESSOR's
- * "structural marker" meaning. HL_MATH (Markdown LaTeX math,
+ * colors for. HL_HEADING_1 through HL_HEADING_6 similarly distinguish
+ * Markdown heading levels without changing preprocessor highlighting. HL_MATH (Markdown LaTeX math,
  * "$...$"/"$$...$$") is the same case as HL_EMPHASIS_STRONG: initially
  * shared with HL_STRING (same "literal/non-prose" reasoning as code
  * spans), split into its own class on explicit request so math and
@@ -74,7 +74,16 @@ enum syntaxHighlight {
     HL_MATH,
     HL_FUNCTION,
     HL_EMPHASIS,
-    HL_JSON_KEY
+    HL_JSON_KEY,
+    HL_LINK_MARKER,
+    HL_LINK_LABEL,
+    HL_LINK_DESTINATION,
+    HL_HEADING_1,
+    HL_HEADING_2,
+    HL_HEADING_3,
+    HL_HEADING_4,
+    HL_HEADING_5,
+    HL_HEADING_6
 };
 
 struct syntaxLang {
@@ -125,6 +134,21 @@ struct syntaxLang {
      * when the language declares none. */
     const char *const *template_delimiters;
 };
+
+/* Common tokenizer primitives shared with the dedicated Markdown module.
+ * Reserve owns row->hl; failure clears all highlight state without losing text.
+ * Math scans an already allocated highlight buffer and returns an end byte
+ * offset, or -1 when the delimiter pair is incomplete. */
+uint8_t syntaxReserveHighlight(erow *row);
+uint8_t syntaxExtensionEquals(const char *ext, const char *candidate);
+uint8_t syntaxIsAsciiLetter(unsigned char byte);
+uint8_t syntaxIsIdentifierByte(char byte, const char *extra, uint8_t first);
+int32_t syntaxTryHighlightMath(erow *row, const char *s, int32_t len, int32_t i);
+/** Highlight a declared code language using installed/built-in tokenizers.
+ * language is a borrowed bounded source slice. Returns zero for unknown names
+ * (without modifying the row); never dispatches recursively to Markdown. */
+uint8_t syntaxHighlightCodeRow(erow *row, const char *language, int32_t length,
+    uint8_t comment, uint8_t math);
 
 /**
  * @brief Rebuild a row's syntax colors using its filename and incoming states.

@@ -110,6 +110,7 @@ struct editorSettings {
     int32_t rgb_output;
     int32_t rgb_color_gutter;
     int32_t rgb_color_selection;
+    int32_t rgb_color_link_hover;
     int32_t rgb_color_statusbar;
     int32_t rgb_color_statusbar_text;
     int32_t rgb_color_invisibles;
@@ -127,6 +128,9 @@ struct editorSettings {
     int32_t rgb_color_syntax_function;
     int32_t rgb_color_background;
     int32_t rgb_markdown_heading_background;
+    /* Terminal-default entries inherit the preprocessor foreground. */
+    int32_t color_markdown_heading[6];
+    int32_t rgb_color_markdown_heading[6];
 
     int32_t show_line_numbers;
     int32_t tab_stop;
@@ -135,6 +139,7 @@ struct editorSettings {
     int32_t undo_memory_mb; /* Applied at startup or document reset. */
     int32_t color_gutter;
     int32_t color_selection;
+    int32_t color_link_hover;
     int32_t color_statusbar;
     int32_t color_statusbar_text;
     int32_t show_top_bar;
@@ -198,6 +203,7 @@ struct editorSettings {
     /* Swap heading foreground and background using terminal reverse video. */
     int32_t markdown_heading_reverse;
     int32_t markdown_text_styles;
+    int32_t markdown_live_preview;
     /* Color for text with no highlight class (HL_NORMAL, see
      * syntax.h) -- e.g. identifiers, punctuation, whitespace. Default
      * COLOR_TERMINAL_DEFAULT (no escape emitted, terminal's own

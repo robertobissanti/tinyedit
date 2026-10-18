@@ -1,6 +1,7 @@
 #define _DEFAULT_SOURCE
 #include "links.h"
 #include "alloc.h"
+#include "markdown.h"
 #include "utf8.h"
 #include <ctype.h>
 #include <errno.h>
@@ -8,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -33,6 +35,13 @@ uint8_t linksIsWeb(const char *target) {
     size_t prefix = !strncasecmp(target, "https://", 8) ? 8 :
         !strncasecmp(target, "http://", 7) ? 7 : 0;
     if (!prefix || !target[prefix]) return 0;
+    const unsigned char *authority = (const unsigned char *)target + prefix;
+    const unsigned char *end = authority;
+    while (*end && *end != '/' && *end != '?' && *end != '#') {
+        if (*end == '@' || *end == '\\') return 0;
+        end++;
+    }
+    if (end == authority) return 0;
     for (const unsigned char *p = (const unsigned char *)target; *p; p++)
         if (*p <= 32 || *p == 127) return 0;
     return 1;
@@ -209,23 +218,7 @@ char *linksDecode(const char *text) {
  * @return owned NUL-terminated text to free.
  */
 char *linksHeadingSlug(const char *text, int32_t length) {
-    char *slug = teMalloc(teSizeAdd((size_t)length, 1));
-    int32_t at = 0;
-    size_t out = 0;
-    while (at < length && text[at] == ' ') at++;
-    while (at < length && text[at] == '#') at++;
-    while (at < length && text[at] == ' ') at++;
-    while (length > at && (text[length - 1] == ' ' || text[length - 1] == '#')) length--;
-    while (at < length) {
-        size_t step = utf8NextCharLen(text, (size_t)at, (size_t)length);
-        unsigned char c = (unsigned char)text[at];
-        if (c >= 128) { memcpy(slug + out, text + at, step); out += step; }
-        else if (isalnum(c) || c == '_' || c == '-') slug[out++] = (char)tolower(c);
-        else if (c == ' ' || c == '\t') slug[out++] = '-';
-        at += (int32_t)step;
-    }
-    slug[out] = '\0';
-    return slug;
+    return markdownHeadingSlug(text, length);
 }
 
 /**
@@ -246,20 +239,19 @@ static uint8_t linksReportError(int fd, int error) {
 }
 
 /**
- * @brief Ask the desktop to open an HTTP(S) URL without invoking a shell.
- * @details Runs open (macOS) or xdg-open with target as a single argument from
- * a detached grandchild, so the editor never waits for the browser. The pipe
+ * @brief Ask the desktop to open a validated web or mail URI without a shell.
+ * @details Runs open (macOS), xdg-open (web) or xdg-email (mail) with target
+ * as a single argument from
+ * a detached grandchild, so the editor never waits for the desktop application. The pipe
  * to the parent is close-on-exec: a successful exec closes it and the parent
  * sees EOF; fork or exec failure sends the errno instead, retrying
  * interrupted and short writes. If the intermediate child cannot deliver a
  * fork failure it exits with status 126, which the parent reports as failure.
  * The detached grandchild is never waited for, so a report lost there (a pipe
  * write failing after all retries) cannot be observed.
- * @return 1 when the launcher started, otherwise 0 with errno (EINVAL for a
- * target rejected by linksIsWeb()).
+ * @return 1 when the launcher started, otherwise 0 with errno.
  */
-uint8_t linksOpenWeb(const char *target) {
-    if (!linksIsWeb(target)) { errno = EINVAL; return 0; }
+static uint8_t linksOpenDesktop(const char *target, uint8_t mail) {
     int channel[2];
     if (pipe(channel) < 0) return 0;
     if (fcntl(channel[1], F_SETFD, FD_CLOEXEC) < 0) {
@@ -278,9 +270,11 @@ uint8_t linksOpenWeb(const char *target) {
                 if (sink > STDERR_FILENO) close(sink);
             }
 #ifdef __APPLE__
+            (void)mail;
             execlp("open", "open", target, (char *)NULL);
 #else
-            execlp("xdg-open", "xdg-open", target, (char *)NULL);
+            if (mail) execlp("xdg-email", "xdg-email", target, (char *)NULL);
+            else execlp("xdg-open", "xdg-open", target, (char *)NULL);
 #endif
             _exit(linksReportError(channel[1], errno) ? 127 : 126);
         }
@@ -306,4 +300,90 @@ uint8_t linksOpenWeb(const char *target) {
     if (read_failed) { errno = read_errno; return 0; }
     if (received > 0 || !WIFEXITED(status) || WEXITSTATUS(status) == 126) { errno = EIO; return 0; }
     return 1;
+}
+
+uint8_t linksIsMailto(const char *target) {
+    if (strncasecmp(target, "mailto:", 7) || !target[7]) return 0;
+    for (const unsigned char *p = (const unsigned char *)target + 7; *p; p++)
+        if (*p <= 32 || *p == 127) return 0;
+    return 1;
+}
+
+uint8_t linksOpenWeb(const char *target) {
+    if (!linksIsWeb(target)) { errno = EINVAL; return 0; }
+    return linksOpenDesktop(target, 0);
+}
+
+uint8_t linksOpenMailto(const char *target) {
+    if (!linksIsMailto(target)) { errno = EINVAL; return 0; }
+    return linksOpenDesktop(target, 1);
+}
+
+uint8_t linksIsImagePath(const char *path) {
+    static const char *const extensions[] = {
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "heic", "avif", "ico"
+    };
+    const char *slash = path ? strrchr(path, '/') : NULL;
+    const char *dot = path ? strrchr(path, '.') : NULL;
+    if (!dot || (slash && dot < slash)) return 0;
+    for (size_t i = 0; i < sizeof(extensions) / sizeof(extensions[0]); i++)
+        if (strcasecmp(dot + 1, extensions[i]) == 0) return 1;
+    return 0;
+}
+
+static uint8_t linksImageSignature(const char *path, const unsigned char *bytes, size_t len) {
+    const char *ext = strrchr(path, '.') + 1;
+    if (!strcasecmp(ext, "png"))
+        return len >= 8 && !memcmp(bytes, "\x89PNG\r\n\x1a\n", 8);
+    if (!strcasecmp(ext, "jpg") || !strcasecmp(ext, "jpeg"))
+        return len >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff;
+    if (!strcasecmp(ext, "gif"))
+        return len >= 6 && (!memcmp(bytes, "GIF87a", 6) || !memcmp(bytes, "GIF89a", 6));
+    if (!strcasecmp(ext, "webp"))
+        return len >= 12 && !memcmp(bytes, "RIFF", 4) && !memcmp(bytes + 8, "WEBP", 4);
+    if (!strcasecmp(ext, "bmp")) return len >= 2 && !memcmp(bytes, "BM", 2);
+    if (!strcasecmp(ext, "tif") || !strcasecmp(ext, "tiff"))
+        return len >= 4 && (!memcmp(bytes, "II*\0", 4) || !memcmp(bytes, "MM\0*", 4));
+    if (!strcasecmp(ext, "ico")) return len >= 4 && !memcmp(bytes, "\0\0\1\0", 4);
+    if (!strcasecmp(ext, "heic") || !strcasecmp(ext, "avif")) {
+        if (len < 12 || memcmp(bytes + 4, "ftyp", 4)) return 0;
+        if (!strcasecmp(ext, "avif"))
+            return !memcmp(bytes + 8, "avif", 4) || !memcmp(bytes + 8, "avis", 4);
+        return !memcmp(bytes + 8, "heic", 4) || !memcmp(bytes + 8, "heix", 4) ||
+            !memcmp(bytes + 8, "hevc", 4) || !memcmp(bytes + 8, "hevx", 4);
+    }
+    return 0;
+}
+
+uint8_t linksVerifyImageFile(const char *path) {
+    if (!path || path[0] != '/' || !linksIsImagePath(path)) { errno = EINVAL; return 0; }
+    int fd = open(path, O_RDONLY | O_NONBLOCK);
+    if (fd < 0) return 0;
+    struct stat st;
+    int checked = fstat(fd, &st);
+    if (checked != 0 || !S_ISREG(st.st_mode) ||
+        (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))) {
+        int error = checked != 0 ? errno : EINVAL;
+        close(fd);
+        errno = error ? error : EINVAL;
+        return 0;
+    }
+    unsigned char bytes[16];
+    ssize_t count;
+    do count = read(fd, bytes, sizeof(bytes)); while (count < 0 && errno == EINTR);
+    int error = errno;
+    close(fd);
+    if (count < 0) { errno = error; return 0; }
+    if (!linksImageSignature(path, bytes, (size_t)count)) { errno = EINVAL; return 0; }
+    return 1;
+}
+
+uint8_t linksOpenFile(const char *path) {
+    /* The desktop opener dispatches by file type, so an arbitrary target such
+     * as a .command or .desktop file could run code from one click. */
+    if (!path || path[0] != '/' || !linksIsImagePath(path)) { errno = EINVAL; return 0; }
+    for (const uint8_t *p = (const uint8_t *)path; *p; p++)
+        if (*p < 32 || *p == 127) { errno = EINVAL; return 0; }
+    if (!linksVerifyImageFile(path)) return 0;
+    return linksOpenDesktop(path, 0);
 }

@@ -107,6 +107,7 @@ const struct settingDescriptor settingDescriptors[] = {
     { "color_mode", "Mode", SETTING_ENUM, offsetof(struct editorSettings, color_mode), 0, 0, colorModeNames, 2 },
     { "rgb_output", "RGB output", SETTING_ENUM, offsetof(struct editorSettings, rgb_output), 0, 0, rgbOutputNames, 2 },
     { "rgb_gutter", "Gutter color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_gutter), 0, 0, NULL, 0 },
+    { "rgb_link_hover", "Link hover color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_link_hover), 0, 0, NULL, 0 },
     { "rgb_selection", "Selection color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_selection), 0, 0, NULL, 0 },
     { "rgb_statusbar", "Status bar color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_statusbar), 0, 0, NULL, 0 },
     { "rgb_statusbar_text", "Status bar text color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_statusbar_text), 0, 0, NULL, 0 },
@@ -123,6 +124,12 @@ const struct settingDescriptor settingDescriptors[] = {
     { "rgb_syntax_emphasis_strong", "Markdown: bold text color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_emphasis_strong), 0, 0, NULL, 0 },
     { "rgb_syntax_italic", "Markdown: italic text color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_italic), 0, 0, NULL, 0 },
     { "rgb_syntax_math", "Markdown: LaTeX math color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_math), 0, 0, NULL, 0 },
+    { "rgb_markdown_h1", "Markdown: H1 color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_markdown_heading) + 0 * sizeof(int32_t), 0, 0, NULL, 0 },
+    { "rgb_markdown_h2", "Markdown: H2 color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_markdown_heading) + 1 * sizeof(int32_t), 0, 0, NULL, 0 },
+    { "rgb_markdown_h3", "Markdown: H3 color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_markdown_heading) + 2 * sizeof(int32_t), 0, 0, NULL, 0 },
+    { "rgb_markdown_h4", "Markdown: H4 color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_markdown_heading) + 3 * sizeof(int32_t), 0, 0, NULL, 0 },
+    { "rgb_markdown_h5", "Markdown: H5 color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_markdown_heading) + 4 * sizeof(int32_t), 0, 0, NULL, 0 },
+    { "rgb_markdown_h6", "Markdown: H6 color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_markdown_heading) + 5 * sizeof(int32_t), 0, 0, NULL, 0 },
     { "rgb_markdown_heading_background", "Markdown: heading background color", SETTING_RGB,
       offsetof(struct editorSettings, rgb_markdown_heading_background), 0, 0, NULL, 0 },
     { "rgb_background", "Editor background color (off=terminal default)", SETTING_RGB, offsetof(struct editorSettings, rgb_color_background), 0, 0, NULL, 0 },
@@ -151,6 +158,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, undo_max_depth), 10, 2000, NULL, 0 },
     { "color_gutter", "Gutter color", SETTING_ENUM,
       offsetof(struct editorSettings, color_gutter), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_link_hover", "Link hover color", SETTING_ENUM,
+      offsetof(struct editorSettings, color_link_hover), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_selection", "Selection color", SETTING_ENUM,
       offsetof(struct editorSettings, color_selection), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_statusbar", "Status bar color", SETTING_ENUM,
@@ -207,6 +216,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, color_syntax_function), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_background", "Editor background color (off=terminal default)", SETTING_ENUM,
       offsetof(struct editorSettings, color_background), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "markdown_live_preview", "Markdown live preview", SETTING_BOOL,
+      offsetof(struct editorSettings, markdown_live_preview), 0, 0, NULL, 0 },
     { "markdown_text_styles", "Markdown bold and italic", SETTING_BOOL,
       offsetof(struct editorSettings, markdown_text_styles), 0, 0, NULL, 0 },
     { "markdown_heading_reverse", "Markdown: reverse heading colors", SETTING_BOOL,
@@ -217,6 +228,12 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, color_syntax_italic), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_syntax_math", "Markdown: LaTeX math color", SETTING_ENUM,
       offsetof(struct editorSettings, color_syntax_math), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_markdown_h1", "Markdown: H1 color", SETTING_ENUM, offsetof(struct editorSettings, color_markdown_heading) + 0 * sizeof(int32_t), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_markdown_h2", "Markdown: H2 color", SETTING_ENUM, offsetof(struct editorSettings, color_markdown_heading) + 1 * sizeof(int32_t), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_markdown_h3", "Markdown: H3 color", SETTING_ENUM, offsetof(struct editorSettings, color_markdown_heading) + 2 * sizeof(int32_t), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_markdown_h4", "Markdown: H4 color", SETTING_ENUM, offsetof(struct editorSettings, color_markdown_heading) + 3 * sizeof(int32_t), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_markdown_h5", "Markdown: H5 color", SETTING_ENUM, offsetof(struct editorSettings, color_markdown_heading) + 4 * sizeof(int32_t), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_markdown_h6", "Markdown: H6 color", SETTING_ENUM, offsetof(struct editorSettings, color_markdown_heading) + 5 * sizeof(int32_t), 0, 0, colorNames, SETTING_COLOR_COUNT },
 };
 const int32_t settingDescriptorCount = (int32_t)(sizeof(settingDescriptors) / sizeof(settingDescriptors[0]));
 
@@ -295,6 +312,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->undo_memory_mb = 64;
     out->color_gutter = COLOR_GRAY_LIGHT;
     out->color_selection = COLOR_WHITE_DARK;
+    out->color_link_hover = COLOR_CYAN_LIGHT;
     out->color_statusbar = COLOR_WHITE_DARK;
     out->color_statusbar_text = COLOR_WHITE_LIGHT;
     out->show_top_bar = 0;
@@ -311,8 +329,13 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_invisibles = COLOR_GRAY_LIGHT;
     out->syntax_highlight = 1;
     out->markdown_heading_reverse = 0;
+    for (int32_t i = 0; i < 6; i++) {
+        out->color_markdown_heading[i] = COLOR_TERMINAL_DEFAULT;
+        out->rgb_color_markdown_heading[i] = RGB_TERMINAL_DEFAULT;
+    }
     out->rgb_markdown_heading_background = RGB_TERMINAL_DEFAULT;
     out->markdown_text_styles = 0;
+    out->markdown_live_preview = 0;
     out->color_syntax_normal = COLOR_TERMINAL_DEFAULT;
     out->color_syntax_keyword = COLOR_BLUE_LIGHT;
     out->color_syntax_string = COLOR_GREEN_LIGHT;
@@ -327,6 +350,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_syntax_function = COLOR_YELLOW_LIGHT;
     out->color_background = COLOR_TERMINAL_DEFAULT;
     out->rgb_color_gutter = out->color_gutter == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_gutter];
+    out->rgb_color_link_hover = rgbPalette[out->color_link_hover];
     out->rgb_color_selection = out->color_selection == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_selection];
     out->rgb_color_statusbar = out->color_statusbar == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_statusbar];
     out->rgb_color_statusbar_text = out->color_statusbar_text == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_statusbar_text];
@@ -445,7 +469,7 @@ static void addFiletypeOverride(const char *ext, const char *name) {
         }
     }
     if (filetypeOverrideCount == INT32_MAX) {
-        errno = ENOMEM; perror("tinyedit: filetype count"); exit(EXIT_FAILURE);
+        teAllocationFailure("filetype count exceeds limit");
     }
     filetypeOverrides = teRealloc(filetypeOverrides,
         teArrayBytes((size_t)filetypeOverrideCount + 1, sizeof(*filetypeOverrides)));
@@ -495,7 +519,7 @@ void settingsLoad(struct editorSettings *out) {
     char path[1024];
     if (!configPath(path, sizeof(path))) return;
 
-    FILE *fp = fopen(path, "r");
+    FILE *fp = fileioOpenRead(path);
     if (!fp) {
         /* No config file yet: defaults stand in memory for this run,
          * and are also written to disk right away so ~/.tinyeditrc
@@ -505,7 +529,7 @@ void settingsLoad(struct editorSettings *out) {
          * read-only $HOME) is not fatal -- the in-memory defaults
          * from settingsDefaults() above still work for this session,
          * same as before this existed. */
-        settingsSave(out);
+        if (errno == ENOENT) settingsSave(out);
         return;
     }
 
@@ -586,7 +610,7 @@ void settingsLoad(struct editorSettings *out) {
 /** @brief Load a complete color preset atomically, preserving non-color settings. */
 uint8_t settingsLoadColorScheme(const char *path, struct editorSettings *draft,
     char *error, size_t error_size) {
-    FILE *fp = fopen(path, "r");
+    FILE *fp = fileioOpenRead(path);
     if (!fp) { snprintf(error, error_size, "Cannot open color scheme"); return 0; }
     struct editorSettings candidate = *draft;
     uint8_t *seen = teMalloc((size_t)settingDescriptorCount);
@@ -639,7 +663,16 @@ uint8_t settingsLoadColorScheme(const char *path, struct editorSettings *draft,
         uint8_t required = candidate.color_mode == COLOR_MODE_RGB ? d->type == SETTING_RGB :
             (d->type == SETTING_ENUM && d->enum_names == colorNames) ||
             strcmp(d->key, "markdown_heading_reverse") == 0;
-        if (required && !seen[i] && strcmp(d->key, "rgb_syntax_italic") == 0) {
+        if (required && !seen[i] && (strncmp(d->key, "rgb_markdown_h", 14) == 0 ||
+            strncmp(d->key, "color_markdown_h", 16) == 0) &&
+            strcmp(d->key, "rgb_markdown_heading_background") != 0) {
+            *settingSlot(&candidate, d) = d->type == SETTING_RGB ? RGB_TERMINAL_DEFAULT : COLOR_TERMINAL_DEFAULT;
+            continue;
+        }
+        if (required && !seen[i] && (!strcmp(d->key, "rgb_link_hover") || !strcmp(d->key, "color_link_hover"))) {
+            /* Older presets predate pointer feedback; retain the current hover color. */
+            continue;
+        } else if (required && !seen[i] && strcmp(d->key, "rgb_syntax_italic") == 0) {
             candidate.rgb_color_syntax_italic = candidate.rgb_color_syntax_keyword;
         } else if (required && !seen[i] && strcmp(d->key, "color_syntax_italic") == 0) {
             candidate.color_syntax_italic = candidate.color_syntax_keyword;
@@ -664,17 +697,11 @@ uint8_t settingsSave(const struct editorSettings *s) {
     char path[1024];
     if (!configPath(path, sizeof(path))) return 0;
 
-    /* A dotfile manager may keep ~/.tinyeditrc as a symlink: replace the real
-     * file it points to, not the link. realpath() allocates internally, so its
-     * failure is recoverable here; ENOENT just means the file is not there yet. */
-    char *resolved = realpath(path, NULL);
-    if (resolved) {
-        int32_t resolved_len = snprintf(path, sizeof(path), "%s", resolved);
-        free(resolved);
-        if (resolved_len < 0 || (size_t)resolved_len >= sizeof(path)) { errno = ENAMETOOLONG; return 0; }
-    } else if (errno != ENOENT) {
-        return 0;
-    }
+    char *resolved = fileioResolveSavePath(path);
+    if (!resolved) return 0;
+    int32_t resolved_len = snprintf(path, sizeof(path), "%s", resolved);
+    free(resolved);
+    if (resolved_len < 0 || (size_t)resolved_len >= sizeof(path)) { errno = ENAMETOOLONG; return 0; }
 
     char tmppath[1040];
     int32_t pathlen = snprintf(tmppath, sizeof(tmppath), "%s.tmp.XXXXXX", path);

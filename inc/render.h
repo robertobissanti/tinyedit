@@ -3,6 +3,23 @@
 
 #include "tinyedit.h"
 
+/** Set the current presentation context; source coordinates remain unchanged.
+ * active_row is borrowed until the next call. cursor is a source-byte offset.
+ * Reconfigure after buffer mutations and before layout/drawing. */
+void renderSetMarkdownPreview(uint8_t enabled, const erow *active_row,
+    int32_t cursor, int32_t tab_stop);
+/** Preserve source editing after a successful text edit inside a link.
+ * Uses the most recently configured preview context; does not modify source. */
+void renderKeepMarkdownLinkEditing(void);
+/** Render-byte queries use the current presentation context. */
+uint8_t renderByteHidden(const erow *row, int32_t byte);
+uint8_t renderByteUnderlined(const erow *row, int32_t byte);
+/** Map source-byte offsets to visible columns and back, retaining raw tab stops. */
+int32_t renderRowCxToRx(const erow *row, int32_t cx, int32_t tab_stop);
+int32_t renderRowRxToCx(const erow *row, int32_t rx, int32_t tab_stop);
+/** Find the render-byte boundary at/before a visible column (clip wide glyphs). */
+int32_t renderByteAtColumn(const erow *row, int32_t column);
+
 /**
  * @brief Measure the columns reserved for line numbers.
  *

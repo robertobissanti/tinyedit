@@ -13,10 +13,13 @@
 - [Fast terminal paste](#fast-terminal-paste)
 - [Mouse support](#mouse-support)
 - [Links and installed documentation](#links-and-installed-documentation)
+- [Markdown images](#markdown-images)
+- [Markdown heading, attribute and block targets](#markdown-heading-attribute-and-block-targets)
 - [Menus](#menus)
 - [Indentation and tabs](#indentation-and-tabs)
 - [Automatic pair and tag closing](#automatic-pair-and-tag-closing)
 - [Soft wrapping and navigation](#soft-wrapping-and-navigation)
+- [Markdown display and live preview](#markdown-display-and-live-preview)
 - [Top and status bars](#top-and-status-bars)
 - [UTF-8 text](#utf-8-text)
 - [Find and replace](#find-and-replace)
@@ -213,6 +216,11 @@ The change takes effect
 immediately: toggling it in `F2` and pressing `Ctrl-S` applies it
 right away, no restart needed.
 
+Scrolling with the wheel leaves the cursor in place. The viewport stays at
+the scrolled position while you move the pointer or hover over links, even if
+the cursor is off-screen. Keyboard input, a text click or a drag resumes
+following the cursor.
+
 ## Links and installed documentation
 
 `make install` includes the guides. Choose **Help → Documentation** to open
@@ -236,18 +244,125 @@ open links, including when experimental macOS Command keys are enabled.
 
 Local links resolve relative to the current file (or the working directory
 for an unnamed document). They accept percent-encoded paths, angle-bracket
-paths containing spaces, and `#heading` fragments for ATX Markdown headings.
+paths containing spaces, and Markdown fragments described below.
 Directory links open their `README.md`. Switching files uses the usual
 save/discard/cancel confirmation: cancellation, failed saving, missing targets
-and unreadable files keep the current document. Same-document `#heading` links
+and unreadable files keep the current document. Same-document fragment links
 move the cursor without replacing the document.
 
 Web links open the system browser using `open` on macOS or `xdg-open` on Linux,
-with a literal argument vector. tinyedit reports a missing launcher but cannot
-confirm whether the browser subsequently loads the page. Other URI schemes
-are unsupported. Reference-style Markdown links, HTML links, duplicate-heading
-suffixes and Setext heading anchors are not yet supported. Images are installed
-as resources; tinyedit does not display image files inline or open binary files.
+with a literal argument vector after explicit confirmation. tinyedit reports a
+missing launcher but cannot confirm whether the browser subsequently loads the
+page. Web URLs with an empty host or ambiguous `user@host` authority are refused.
+Inline `mailto:` links
+open the configured mail composer using `open` on macOS or `xdg-email` on Linux;
+tinyedit asks first and does not send mail. The address and optional URI parameters (for example,
+percent-encoded subject/body) are passed unchanged as one argument. This needs
+a desktop mail handler; starting the launcher does not confirm account setup
+or successful composition. Other URI schemes are unsupported. Reference-style Markdown links, HTML links, duplicate-heading
+suffixes and Setext heading anchors are not yet supported.
+
+### Markdown images
+
+Markdown images such as `![Diagramma](../imgs/diagramma.png){#fig:diagramma}` open their local source
+file in the operating system's default application (`open` on macOS,
+`xdg-open` on Linux). Relative paths use the Markdown document's directory;
+spaces, UTF-8, percent encoding and escaped parentheses work as for other local
+links. A source fragment is ignored when opening the image file. Only regular files with a matching image extension and header (PNG, JPEG, GIF, WebP, BMP,
+TIFF, HEIC, AVIF, ICO) and without execute permission are offered for opening.
+SVG is excluded because it can contain active content. The editor asks for
+confirmation before launching an external application; the image signature is
+only a preliminary check, not a complete safety or validity guarantee. Missing files,
+directories and launcher failures produce red errors. Opening an image keeps
+the current document and its unsaved changes, without a document save prompt.
+Use Alt+Enter or double-click on the image label or destination; in live preview,
+hover the visible destination to highlight it and single-click to open it.
+Remote HTTP(S) image destinations open in the browser. tinyedit does not render
+images inline; successful launch does not confirm the external application
+displayed the image. Ordinary text-file links still open inside tinyedit.
+Opening the image destination is separate from following a link to its Pandoc
+ID: `#fig:diagramma` jumps to the image source within the Markdown document.
+For language-aware code blocks, see the [fenced-code guide](syntax-highlighting.md#fenced-code-blocks).
+
+### Markdown heading, attribute and block targets
+
+Existing links such as `[Settings](#settings-and-appearance)` still reach
+`## Settings and Appearance`. A trailing Pandoc attribute group does not become
+part of the heading slug. Explicit Pandoc IDs are checked first, exactly and
+case-sensitively; only when no explicit ID matches does tinyedit try the existing
+ATX heading slug. Fragments retain percent decoding.
+
+These explicit targets can be reached with `[Dati](#dati)` or the corresponding
+ID in another file, such as `[Diagramma](altro.md#fig:architettura)`:
+
+```markdown
+## Titolo {#dati}
+
+[Dati sperimentali]{#esperimento}
+
+![Diagramma](architettura.png){#fig:architettura}
+
+::: {.diagramma #architettura title="Diagramma"}
+Contenuto del blocco.
+:::
+```
+
+ID attributes may appear alongside classes and quoted or unquoted properties.
+Spans and inline images require attributes immediately after the construct;
+header attributes must finish the heading line. The destination is the heading
+text, span text, image source or beginning of the fenced Div.
+
+Obsidian paragraph block IDs use a space before a trailing marker:
+
+```markdown
+Questo paragrafo contiene i dati. ^dati
+
+[Vedi i dati](#^dati)
+```
+
+For a structured block, put the marker on its own line, separated by a blank
+line on both sides (the end of the document also terminates the marker). For example:
+
+```markdown
+| Nome | Valore |
+|------|--------|
+| A    | 10     |
+
+^tabella-dati
+
+[Vedi la tabella](#^tabella-dati)
+```
+
+The jump reaches the associated block's beginning, not the marker line.
+The block association covers contiguous paragraphs, pipe tables, blockquotes
+(including callouts), and ordinary lists with blank-separated items. It is a
+conservative source scan, not a complete parser for arbitrary nested blocks;
+complex nested or multi-paragraph list layouts may need a heading or Pandoc
+span/Div ID instead.
+Obsidian IDs contain only ASCII letters, digits and hyphens. `#^id` searches
+only Obsidian block IDs; it never falls back to a heading or Pandoc ID.
+Cross-file block links work too: `[Tabella](altro.md#^tabella-dati)`.
+Duplicate explicit targets in the requested namespace and missing destinations
+produce an explicit error rather than selecting a target arbitrarily.
+
+Bare local references such as `@dati`, `@fig:architettura` and
+`[@fig:architettura]` use the same opening gestures as links: Alt+Enter or a
+mouse double-click, and a single click in compact Markdown live preview.
+They are navigable only when that Pandoc ID exists in the current document;
+email addresses and bibliography citations without a local target stay text.
+References accept letters, digits, underscores, hyphens, namespace colons and
+UTF-8 text; sentence punctuation is separate from the reference. A Pandoc ID
+containing a period can be reached with an explicit `(#id.with.period)` link;
+periods are not part of bare `@id` references.
+
+This is navigation in the Markdown source, available independently of live
+preview. Code fences and inline code do not define targets or references.
+tinyedit does not execute Pandoc, generate figure numbers, load filters or
+render images. HTML IDs, Kramdown attributes, wikilinks, reference-style images
+and a complete Pandoc or Obsidian parser are outside this subset. See the
+[Pandoc attribute syntax](https://pandoc.org/MANUAL.html#extension-header_attributes),
+[Pandoc spans and Divs](https://pandoc.org/MANUAL.html#divs-and-spans) and
+[Obsidian block convention](https://obsidian.md/help/links#Link%20to%20a%20block%20in%20a%20note).
 
 ## Menus
 
@@ -354,15 +469,50 @@ is `0`, which keeps the current edge-following behavior; values from `1` to
 Near the start or end of a file the viewport remains clamped to available
 text, so the requested margin may be smaller.
 
-## Top and status bars
+## Markdown display and live preview
 
-The filename and modified indicator are centered in the optional top bar.
+Link-label highlighting follows at most 16 nested levels. Deeper labels stay
+literal, so crafted nesting cannot exhaust the call stack; file bytes are unchanged.
 
 Enable **Markdown bold and italic** in F2 (or set
 `markdown_text_styles = true` in `~/.tinyeditrc`) to render Markdown emphasis
 with bold/italic terminal attributes and headings in bold. Markup remains
 visible and editable; syntax highlighting must be enabled. The option is off
 by default and combines with heading reverse video.
+
+Enable **View → Markdown live preview**, or the same option in F2
+(`markdown_live_preview = true` in `~/.tinyeditrc`), for a compact Markdown
+view. Paired single-line `**bold**` / `__bold__` and `*italic*` / `_italic_`
+keep their terminal styles while hiding their delimiters. Inline `[label](https://example.org)`
+links display an underlined label. For bold and italic, placing the cursor
+inside the construct or at either boundary reveals its complete source for
+editing; moving away compacts it again. For links, enter source editing by
+placing the cursor at the left or right boundary. Moving directly into a link
+label keeps it compact until a boundary is reached. Once expanded from a
+boundary, the link stays editable while the cursor remains inside it,
+including its destination. While typing or pasting a link, source editing stays
+active so that automatically inserted parentheses do not hide the destination
+being entered. Empty destinations remain literal text.
+
+With mouse support enabled, hovering over a compact link changes its color.
+A single click on its label follows the link without moving the cursor into
+its source or expanding it. Clicking immediately after the label enters source
+editing from its right boundary; arrow keys can reach either boundary.
+Shift-click and selection retain their editing behavior. Outside live preview,
+links retain their existing double-click and Alt+Enter actions.
+
+This also works with wrapping, Unicode text,
+and mouse positioning; the document and saved bytes are unchanged.
+
+Live preview is off by default and works even with syntax highlighting disabled.
+With highlighting off, delimiters still collapse, editing boundaries and link
+actions remain available, and syntax colors stay off. It enables
+bold and italic attributes independently of **Markdown bold and italic**.
+Selection and active search results temporarily reveal the full source.
+This is a partial view using the existing tokenizer: headings, images, code,
+front matter, math, incomplete or multiline emphasis, and reference-style
+links retain their source markup. Nested Markdown formatting is not parsed.
+Terminal support determines the appearance of bold, italic and underline.
 
 In ANSI mode, for Markdown ATX headings (`#` through `######`), enable **Reverse Markdown
 heading colors** in F2, or set `markdown_heading_reverse = true` in
@@ -384,6 +534,9 @@ reverse video and inline bold/italic styles, including selected newline cells.
 The empty area to the right of an ATX heading retains its heading background.
 
 
+## Top and status bars
+
+The filename and modified indicator are centered in the optional top bar.
 The optional top bar (`show_top_bar`) shows only the filename (without its directory path) and
 unsaved-changes state as a persistent title. Its text and background use the
 reverse of the configured status bar colors, whether the menu is visible or hidden.
@@ -458,3 +611,12 @@ previous session didn't close cleanly (crash, kill, terminal closed).
 In that case the editor shows a full-screen warning (not just a
 status-bar message, to avoid silently missing the chance to recover)
 and asks whether to restore the changes before proceeding.
+
+Save refuses pipes, devices and other special-file destinations, including
+through symbolic links. Recovery rejects special files and NUL-containing data
+without replacing the current document.
+
+When tinyedit receives SIGTERM or SIGHUP, it restores the terminal and exits
+with status 128 plus the signal number. It does not save unsaved edits on signal;
+a backup exists only when the configured interval has produced one for a named
+document. SIGKILL cannot be handled.

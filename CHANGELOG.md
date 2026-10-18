@@ -6,6 +6,103 @@
 
 ### Important fixes
 
+### Other minor fixing
+
+## 0.3.9 — 2026-10-18
+
+### New features
+
+- Give Markdown H1–H6 independent foreground colors in every RGB/ANSI preset,
+  editable in Colors, using Synthwave Pro’s original level sequence and
+  theme-specific Catppuccin/One Dark colors. Tint each RGB heading background
+  from its level’s foreground hue, with an option to disable it. Preserve single-color fallback
+  for older configurations and presets.
+
+- Add the Synthwave Pro dark RGB preset, adapted from Roberto Bissanti’s
+  Obsidian theme, with purple navigation markers, cyan headings and yellow
+  ordinary brackets. Document sources and adaptation limits for all themes.
+
+- Add all four official Catppuccin RGB palettes: light Latte and dark Frappé,
+  Macchiato and Mocha. Use the same color-role mapping and official palette
+  values, including Surface 0 for Markdown heading backgrounds.
+
+- Highlight declared Markdown fenced-code languages with tinyedit's existing
+  tokenizers, including installed syntax definitions. Preserve multiline
+  comments across code rows and recolor the block when its language changes;
+  unknown or omitted languages keep the uniform code style.
+
+- Open local Markdown image destinations in the operating system's default
+  application, with relative/encoded paths and the usual link gestures.
+  In live preview, hover and single-click the visible image path to open it
+  without replacing the current document.
+
+- Navigate Markdown links to explicit Pandoc IDs on headings, spans, inline
+  images and fenced Divs, and to Obsidian paragraph/standalone block IDs.
+  Reuse local-file fragments and existing link gestures; resolve local `@id`
+  references only when a matching Pandoc target exists. Report duplicate or
+  missing IDs explicitly and ignore targets/references inside code.
+
+- Open `mailto:` links in the configured desktop mail composer (`open` on macOS,
+  `xdg-email` on Linux), preserving the URI and its parameters without sending mail.
+
+- In Markdown live preview, change a compact link's color under the mouse and
+  follow it with one click without expanding its source. Enter link editing
+  from either boundary; keep it editable until the cursor leaves. Configure
+  the hover color independently in ANSI and RGB from Colors.
+
+- Add optional Markdown live preview in View and F2: hide paired bold/italic
+  delimiters and show inline links as underlined labels. Reveal the complete
+  construct at the cursor for editing while preserving original saved text,
+  Unicode positioning and wrapping; selection and search show full source.
+
+### Important fixes
+
+- Ask before opening web links, mail links or images in a desktop application.
+  Reject ambiguous or empty web hosts. Match local image filename extensions
+  to their file signatures and reject
+  SVG files, which may contain active content; a renamed script or malformed
+  image header now produces a red error without launching an external app.
+- Show fatal allocation errors after leaving the alternate screen, so the
+  terminal is restored and the reason for exit remains visible. This also
+  covers oversized rows, histories, search buffers and configuration lists.
+- Restore terminal input, paste, mouse and screen modes after SIGTERM or SIGHUP,
+  returning the conventional signal exit status without an implicit save.
+- Reject malformed or overflowing terminal cursor-position reports before they
+  can affect screen dimensions.
+- Reject special files during save instead of replacing FIFOs or other special
+  targets, including through symlinks. Reject special recovery/configuration
+  files without blocking, and reject NUL-containing recovery data.
+- Preserve a dangling `~/.tinyeditrc` symlink instead of silently replacing it
+  when configuration loading or saving fails.
+- Reject binary Ghostty configuration without reading outside a line buffer or
+  truncating its contents. Preserve symlinks and long lines when updating the
+  experimental Command-key bindings, and synchronize the replacement to disk.
+
+- Bound Markdown link highlighting depth so heavily nested links cannot exhaust
+  the stack and crash the editor. Deeper labels retain their literal text.
+
+- Open only non-executable image files (PNG, JPEG, GIF, WebP, BMP, TIFF,
+  HEIC, AVIF, ICO) from Markdown image links: a crafted `![x](payload.command)`
+  or `.desktop` target could otherwise run code through the desktop opener with
+  one click. Other targets now produce a red error.
+- Apply per-level heading colors and backgrounds to headings indented by one to
+  three spaces.
+- Keep `@id.` references and `_`/`*` emphasis after non-ASCII letters (e.g.
+  `città_nuova`) from being misread: code spans no longer cut references and an
+  underscore inside a word no longer opens emphasis.
+
+- Keep Markdown live preview working when syntax highlighting is disabled:
+  preserve compact formatting, cursor expansion and link mouse actions without
+  enabling syntax colors. Refresh preview metadata when toggled from View/F2.
+
+- Keep the viewport at the mouse-wheel scroll position when the pointer moves
+  or the screen redraws, even with the cursor off-screen. Resume following
+  the cursor on keyboard input, text clicks, dragging or anchor navigation.
+
+- Keep Markdown links in source editing while typing their destination with
+  live preview and automatic pair closing enabled. Empty destinations stay
+  literal; completing a link no longer hides its address before typing finishes.
+
 - Keep backward UTF-8 navigation consistent with forward grapheme boundaries
   for combining marks, joiner sequences and regional indicators, preventing
   partial deletion of those editing units.
@@ -18,6 +115,31 @@
   retain `make install-binary` for executable-only installations.
 
 ### Other minor fixing
+
+- Give Markdown links a consistent navigation color across label, destination
+  and delimiters in every theme; underline link text in styled source as well
+  as live preview, keeping ordinary brackets visually separate.
+
+- Distinguish Markdown link/image delimiters and recognized Pandoc anchor
+  delimiters/IDs from ordinary parentheses: navigation markers use the JSON-key
+  color (official Blue in Catppuccin, clearer against normal text), while ordinary
+  brackets keep their own color. Preserve literal strings,
+  comments, selection and hover colors.
+
+- Keep the current color-scheme name visible in Colors and cycle presets
+  directly with Left/Right, without a separate Enter confirmation. Mouse clicks
+  and wheel input also select a preset; Settings save/discard still controls persistence.
+- Give brackets a distinct yellow in both shipped RGB presets so they stand
+  apart from normal text. Existing personal presets and saved palettes remain
+  unchanged until updated and selected again.
+
+- Expand the README and documentation index with Markdown navigation, image
+  opening, fenced-code highlighting, live-preview editing and stable mouse
+  scrolling, with direct links to examples and implementation limits.
+
+- Move Markdown parsing, highlighting, preview projection and anchor resolution
+  into a dedicated module, preparing a clearer boundary for a future vanilla
+  build without changing the default build or adding dependencies.
 
 - Add an Ask DeepWiki badge to the README for repository documentation access,
   using Shields.io to avoid DeepWiki image requests blocked by anti-bot checks.

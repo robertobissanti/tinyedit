@@ -53,19 +53,20 @@ def main():
                 if personal:
                     directory = home / ".tinyedit/color-scheme"
                     directory.mkdir(parents=True)
+                    preset = (ROOT / "colorschemes/catppuccin-mocha.conf").read_text()
                     (directory / "catppuccin-mocha.conf").write_text(
-                        "color_mode = rgb\nrgb_background = #010203\n")
+                        preset.replace("rgb_background = #1E1E2E", "rgb_background = #010203"))
                 process, master = terminal.spawn_editor([], home)
                 try:
                     terminal.read_available(master)
                     navigation, _ = terminal.setting_navigation("color_mode")
-                    os.write(master, b"\x1bOQ" + navigation + b"\x1b[B\r")
+                    os.write(master, b"\x1bOQ" + navigation + b"\x1b[B" + b"\x1b[C" * 4)
                     output = terminal.read_available(master)
-                    assert b"Choose Color Scheme (use < > to change) catppuccin-mocha" in output
+                    assert b"Color scheme: catppuccin-mocha" in output
                     if personal:
                         assert b"010203" in output, repr(output)
                     os.write(master, b"\x1b[C")
-                    assert b"Choose Color Scheme (use < > to change) one-dark" in terminal.read_available(master)
+                    assert b"Color scheme: one-dark" in terminal.read_available(master)
                 finally:
                     terminal.finish(process, master)
             (prefix / "share/tinyedit/docs/README.md").write_text("shared guide marker\n")

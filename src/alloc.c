@@ -7,6 +7,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+
+static void (*fatal_cleanup)(void);
+
+void teSetFatalCleanup(void (*cleanup)(void)) {
+    fatal_cleanup = cleanup;
+}
 
 /**
  * @brief Report allocation failure and terminate through normal exit cleanup.
@@ -14,12 +21,20 @@
  * @details Uses exit() so registered handlers can restore terminal modes and
  * visual state.
  */
-static void teOutOfMemory(void) {
-    errno = ENOMEM;
-    perror("tinyedit: memory allocation failed");
+void teAllocationFailure(const char *detail) {
+    if (fatal_cleanup) fatal_cleanup();
+    uint8_t colored = isatty(STDERR_FILENO) != 0;
+    if (colored) fputs("\x1b[31m", stderr);
+    fprintf(stderr, "tinyedit: %s: %s", detail, strerror(ENOMEM));
+    if (colored) fputs("\x1b[0m", stderr);
+    fputs("\r\n", stderr);
     /* exit(), rather than _exit(), deliberately runs the terminal cleanup
      * handlers registered with atexit() by terminal.c. */
     exit(EXIT_FAILURE);
+}
+
+static void teOutOfMemory(void) {
+    teAllocationFailure("memory allocation failed");
 }
 
 /**

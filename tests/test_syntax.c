@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 
 static int failures = 0;
 
@@ -20,6 +21,7 @@ static void freeRow(erow *row) {
     free(row->chars);
     free(row->render);
     free(row->hl);
+    free(row->markdown_spans);
 }
 
 static void expectClass(const erow *row, int32_t at, enum syntaxHighlight expected,
@@ -41,6 +43,26 @@ static void highlight(erow *row, const char *filename, uint8_t prev_comment,
 
 int main(void) {
     erow row;
+
+    struct rlimit original_stack, small_stack;
+    if (getrlimit(RLIMIT_STACK, &original_stack) != 0) return 1;
+    small_stack = original_stack;
+    if (small_stack.rlim_cur > 512 * 1024) small_stack.rlim_cur = 512 * 1024;
+    if (setrlimit(RLIMIT_STACK, &small_stack) != 0) return 1;
+    const size_t nesting = 10000;
+    char *deep = teMalloc(nesting * 5 + 2);
+    memset(deep, '[', nesting);
+    deep[nesting] = 'x';
+    for (size_t i = 0; i < nesting; i++) memcpy(deep + nesting + 1 + i * 4, "](x)", 4);
+    deep[nesting * 5 + 1] = '\0';
+    initRow(&row, deep);
+    highlight(&row, "deep.md", 0, 0);
+    expectClass(&row, 0, HL_LINK_MARKER, "deep link outer marker");
+    expectClass(&row, (int32_t)nesting, HL_LINK_LABEL, "deep link literal label");
+    if (strcmp(row.chars, deep) || row.markdown_count != 1) failures++;
+    freeRow(&row);
+    free(deep);
+    if (setrlimit(RLIMIT_STACK, &original_stack) != 0) return 1;
 
     initRow(&row, "   #include <stdint.h>");
     highlight(&row, "demo.c", 0, 0);
@@ -123,7 +145,7 @@ int main(void) {
 
     initRow(&row, "# Heading **bold** $x+1$");
     highlight(&row, "demo.md", 0, 0);
-    expectClass(&row, 0, HL_PREPROCESSOR, "Markdown heading");
+    expectClass(&row, 0, HL_HEADING_1, "Markdown heading");
     freeRow(&row);
 
     /* show_invisibles replaces source spaces in render with a one-byte
@@ -132,8 +154,30 @@ int main(void) {
     initRow(&row, "## Chapter");
     strcpy(row.render, "##.Chapter");
     highlight(&row, "demo.md", 0, 0);
-    expectClass(&row, 0, HL_PREPROCESSOR, "Markdown heading with visible spaces");
-    expectClass(&row, 3, HL_PREPROCESSOR, "Markdown heading text with visible spaces");
+    expectClass(&row, 0, HL_HEADING_2, "Markdown heading with visible spaces");
+    expectClass(&row, 3, HL_HEADING_2, "Markdown heading text with visible spaces");
+    freeRow(&row);
+
+    for (int32_t level = 1; level <= 6; level++) {
+        char heading[64];
+        memset(heading, '#', (size_t)level);
+        snprintf(heading + level, sizeof(heading) - (size_t)level, " Titolo città");
+        initRow(&row, heading);
+        highlight(&row, "levels.md", 0, 0);
+        expectClass(&row, level + 1, (enum syntaxHighlight)(HL_HEADING_1 + level - 1), "heading level class");
+        freeRow(&row);
+    }
+    initRow(&row, "`### Titolo città`");
+    highlight(&row, "levels.md", 0, 0);
+    expectClass(&row, 1, HL_STRING, "inline code does not acquire heading color");
+    freeRow(&row);
+    initRow(&row, "### Titolo città");
+    highlight(&row, "levels.md", 1, 0);
+    expectClass(&row, 0, HL_STRING, "fenced code does not acquire heading color");
+    freeRow(&row);
+    initRow(&row, "####### Not a heading");
+    highlight(&row, "levels.md", 0, 0);
+    expectClass(&row, 0, HL_NORMAL, "seventh hash is not a heading");
     freeRow(&row);
 
     initRow(&row, "def saluta(): # comment");
@@ -220,9 +264,9 @@ int main(void) {
      * classes so a row of badges stays readable. */
     initRow(&row, "Vedi [la doc](https://example.com) qui.");
     highlight(&row, "d.md", 0, 0);
-    expectClass(&row, 5, HL_PREPROCESSOR, "link opening bracket");
-    expectClass(&row, 6, HL_KEYWORD, "link label");
-    expectClass(&row, 14, HL_STRING, "link destination");
+    expectClass(&row, 5, HL_LINK_MARKER, "link opening bracket");
+    expectClass(&row, 6, HL_LINK_LABEL, "link label");
+    expectClass(&row, 14, HL_LINK_DESTINATION, "link destination");
     expectClass(&row, 0, HL_NORMAL, "prose around link");
     freeRow(&row);
 
@@ -230,11 +274,11 @@ int main(void) {
      * scan must not stop at the inner ']'. */
     initRow(&row, "[![License](https://img.shields.io/x)](LICENSE)");
     highlight(&row, "d.md", 0, 0);
-    expectClass(&row, 0, HL_PREPROCESSOR, "nested link opening bracket");
-    expectClass(&row, 1, HL_PREPROCESSOR, "nested image marker");
-    expectClass(&row, 3, HL_KEYWORD, "nested image label");
-    expectClass(&row, 12, HL_STRING, "nested image destination");
-    expectClass(&row, 39, HL_STRING, "outer link destination");
+    expectClass(&row, 0, HL_LINK_MARKER, "nested link opening bracket");
+    expectClass(&row, 1, HL_LINK_MARKER, "nested image marker");
+    expectClass(&row, 3, HL_LINK_LABEL, "nested image label");
+    expectClass(&row, 12, HL_LINK_DESTINATION, "nested image destination");
+    expectClass(&row, 39, HL_LINK_DESTINATION, "outer link destination");
     freeRow(&row);
 
     /* An unmatched "[link]" is prose, not a link. */

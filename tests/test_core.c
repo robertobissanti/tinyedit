@@ -933,6 +933,284 @@ static void testColorSettings(void) {
     settingsDefaults(&S);
 }
 
+static void markdownNavigationRows(const char *const *rows, size_t count) {
+    editorResetDocument();
+    E.document.file.filename = teStrdup("navigation.md");
+    for (size_t i = 0; i < count; i++)
+        editorInsertRow(E.document.buffer.row_count, rows[i], strlen(rows[i]));
+    E.document.file.dirty = 0;
+    editorSetStatusMessage("");
+}
+
+static void testMarkdownNavigation(void) {
+    settingsDefaults(&S);
+    T.focused = T.visible = 0;
+    E.view.screenrows = 20; E.view.screencols = 80;
+    const char *const targets[] = {
+        "## Dati", "## Titolo {#dati}", "[Dati sperimentali]{.misura #span title=\"Dati\"}",
+        "![Diagramma](architettura.png){#fig:architettura .diagramma}",
+        "::: {.diagramma #architettura title=\"Diagramma\"}", "Testo", ":::",
+        "## Héading UTF-8 {.classe #esatto}", "Testo. ^paragrafo", "",
+        "| Nome | Valore |", "| --- | --- |", "| A | 10 |", "", "^tabella", "",
+        "- Primo", "- Secondo", "", "^lista", "", "::: {#minimo}", "contenuto", ":::",
+        "", "Primo paragrafo", "continua qui", "", "^multilinea"
+    };
+    markdownNavigationRows(targets, sizeof(targets) / sizeof(*targets));
+    E.document.selection.active = E.document.selection.pinned = 1;
+    E.view.rowoff = E.view.coloff = E.view.free_scroll = 1;
+    editorLinkAnchor("dati");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 1 &&
+        !E.document.selection.active && !E.document.selection.pinned && !E.view.free_scroll,
+        "explicit Pandoc ID wins over heading slug and clears navigation state");
+    editorLinkAnchor("span");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 2, "Pandoc span with class and property");
+    editorLinkAnchor("fig:architettura");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 3, "Pandoc image ID with colon");
+    editorLinkAnchor("architettura");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 4, "Pandoc fenced Div attributes");
+    editorLinkAnchor("héading-utf-8");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 7, "UTF-8 header slug omits trailing attributes");
+    editorLinkAnchor("^paragrafo");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 8, "Obsidian paragraph marker");
+    editorLinkAnchor("^tabella");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 10, "standalone Obsidian marker targets table start");
+    editorLinkAnchor("^lista");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 16, "standalone Obsidian marker targets list start");
+    editorLinkAnchor("minimo");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 21, "minimal Pandoc fenced Div ID");
+    editorLinkAnchor("^multilinea");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 25, "standalone marker targets multiline paragraph start");
+    editorLinkAnchor("Esatto");
+    check(E.ui.statusmsg_error, "explicit IDs are case sensitive");
+    editorLinkAnchor("^dati");
+    check(E.ui.statusmsg_error, "Obsidian lookup never falls back to Pandoc ID");
+    editorLinkAnchor("missing");
+    check(E.ui.statusmsg_error && strstr(E.ui.statusmsg, "missing"), "missing anchor is explicit red error");
+
+    const char *const duplicates[] = {"[uno]{#duplicato}", "## Due {#duplicato}",
+        "Testo ^blocco", "Altro ^blocco"};
+    markdownNavigationRows(duplicates, sizeof(duplicates) / sizeof(*duplicates));
+    editorLinkAnchor("duplicato");
+    check(E.ui.statusmsg_error && E.document.cursor.cy == 0 &&
+        (strstr(E.ui.statusmsg, "Duplicate") || strstr(E.ui.statusmsg, "duplicate")), "duplicate Pandoc ID refuses arbitrary navigation");
+    editorLinkAnchor("^blocco");
+    check(E.ui.statusmsg_error && E.document.cursor.cy == 0 &&
+        (strstr(E.ui.statusmsg, "Duplicate") || strstr(E.ui.statusmsg, "duplicate")), "duplicate Obsidian ID refuses arbitrary navigation");
+
+    const char *const code[] = {"```markdown", "## Falso {#hidden}", "Testo ^fake",
+        "@real", "```", "`[Falso]{#inline}`", "`Testo ^inline-block`", "[Vero]{#real}"};
+    markdownNavigationRows(code, sizeof(code) / sizeof(*code));
+    S.syntax_highlight = 0;
+    editorLinkAnchor("hidden"); check(E.ui.statusmsg_error, "fenced Pandoc ID excluded with highlighting disabled");
+    editorLinkAnchor("^fake"); check(E.ui.statusmsg_error, "fenced block marker excluded");
+    editorLinkAnchor("inline"); check(E.ui.statusmsg_error, "inline code Pandoc ID excluded");
+    editorLinkAnchor("^inline-block"); check(E.ui.statusmsg_error, "inline code block marker excluded");
+    struct textLink link;
+    E.document.cursor.cy = 3; E.document.cursor.cx = 2;
+    check(!editorCursorLink(&link), "reference inside fence excluded without highlighting");
+    S.syntax_highlight = 1;
+
+    const char *const quoted_code[] = {"> ```markdown", "> [Falso]{#quoted}",
+        "> @real", "> ```", "[Vero]{#real}"};
+    markdownNavigationRows(quoted_code, sizeof(quoted_code) / sizeof(*quoted_code));
+    editorLinkAnchor("quoted"); check(E.ui.statusmsg_error, "quoted code fence excludes anchors");
+    E.document.cursor.cy = 2; E.document.cursor.cx = 4;
+    check(!editorCursorLink(&link), "quoted code fence excludes references");
+    editorLinkAnchor("real");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 4, "quoted fence closes before actual target");
+
+    const char *const lexical[] = {
+        "\\[literal]{#escaped}", "\\::: {#escaped-div}", "\\@real", "[Vero]{#real}",
+        "Paragrafo", "^unseparated", "", "- Primo", "", "- Secondo", "", "^loose"
+    };
+    markdownNavigationRows(lexical, sizeof(lexical) / sizeof(*lexical));
+    editorLinkAnchor("escaped"); check(E.ui.statusmsg_error, "escaped span opener is not an anchor");
+    editorLinkAnchor("escaped-div"); check(E.ui.statusmsg_error, "escaped Div opener is not an anchor");
+    E.document.cursor.cy = 2; E.document.cursor.cx = 3;
+    check(!editorCursorLink(&link), "escaped local reference is not navigable");
+    editorLinkAnchor("^unseparated");
+    check(E.ui.statusmsg_error, "standalone marker requires separating blank line");
+    editorLinkAnchor("^loose");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 7, "standalone block marker targets whole loose list");
+
+    const char *const continued_list[] = {"- Primo", "  continuazione", "", "^continued"};
+    markdownNavigationRows(continued_list, sizeof(continued_list) / sizeof(*continued_list));
+    editorLinkAnchor("^continued");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 0, "standalone marker includes list continuation text");
+
+    const char *const references[] = {"é @fig:architettura, poi [@dati].", "[Figura]{#fig:architettura}",
+        "## Dati {#dati}", "a@dati @bibliografia `@dati`", "[vai](#d%61ti)"};
+    markdownNavigationRows(references, sizeof(references) / sizeof(*references));
+    E.document.cursor.cx = 5;
+    check(editorCursorLink(&link), "UTF-8 reference before comma is navigable");
+    editorOpenCursorLink();
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 1, "reference punctuation excluded from destination");
+    E.document.cursor.cy = 0; E.document.cursor.cx = 29;
+    check(editorCursorLink(&link), "bracketed local reference recognized");
+    editorOpenCursorLink();
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 2, "bracketed local reference resolves");
+    E.document.cursor.cy = 3; E.document.cursor.cx = 3;
+    check(!editorCursorLink(&link), "email is not local reference even with matching ID");
+    E.document.cursor.cx = 10;
+    check(!editorCursorLink(&link), "bibliographic citation without local target is not link");
+    E.document.cursor.cx = 25;
+    check(!editorCursorLink(&link), "inline code reference excluded");
+    E.document.cursor.cy = 4; E.document.cursor.cx = 2;
+    editorOpenCursorLink();
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 2, "explicit fragment retains percent decoding");
+
+    const char *const extra[] = {
+        "~~~markdown", "[hidden]{#tilde}", "@dati", "~~~", "`inizio", "[hidden]{#multicode}",
+        "@dati", "fine`", "[ok]{title=\"#fake\" #dati}", "## Literal \\{#escaped-heading}",
+        "@dati: @dati.extra", "[first]{#adjacent}[second]{#adjacent}"
+    };
+    markdownNavigationRows(extra, sizeof(extra) / sizeof(*extra));
+    editorLinkAnchor("tilde"); check(E.ui.statusmsg_error, "tilde code fence excludes targets");
+    editorLinkAnchor("multicode"); check(E.ui.statusmsg_error, "multiline code span excludes target");
+    editorLinkAnchor("fake"); check(E.ui.statusmsg_error, "quoted attribute text is not an ID");
+    editorLinkAnchor("escaped-heading"); check(E.ui.statusmsg_error, "escaped header attribute opener is literal");
+    editorLinkAnchor("dati");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 8, "ID after quoted hash attribute resolves");
+    E.document.cursor.cy = 2; E.document.cursor.cx = 2;
+    check(!editorCursorLink(&link), "tilde fence reference excluded");
+    E.document.cursor.cy = 6;
+    check(!editorCursorLink(&link), "multiline inline code reference excluded");
+    E.document.cursor.cy = 10; E.document.cursor.cx = 2;
+    check(editorCursorLink(&link), "terminal colon punctuation allows local reference");
+    E.document.cursor.cx = 5;
+    check(!editorCursorLink(&link), "trimmed colon is outside local reference");
+    editorLinkAnchor("adjacent");
+    check(E.ui.statusmsg_error && (strstr(E.ui.statusmsg, "Duplicate") || strstr(E.ui.statusmsg, "duplicate")),
+        "adjacent explicit IDs on one row still count as duplicates");
+
+    const char *const mouse_refs[] = {"start", "@dati, [@fig:immagine]", "[Dati]{#dati}", "![Fig](a.png){#fig:immagine}"};
+    markdownNavigationRows(mouse_refs, sizeof(mouse_refs) / sizeof(*mouse_refs));
+    S.markdown_live_preview = S.mouse_enabled = 1;
+    S.show_line_numbers = S.show_menu = S.show_top_bar = 0;
+    E.view.rowoff = E.view.coloff = 0;
+    E.search.search_match_y = E.search.search_match_end_y = -1;
+    mouseEventButton = 35; mouseEventPress = 1; mouseEventCol = 2; mouseEventRow = 2;
+    editorHandleMouseEvent();
+    editorUpdateLinkHover();
+    check(hovered_link_row == 1 && E.document.cursor.cy == 0, "hover recognizes local reference without moving cursor");
+    mouseEventButton = 0;
+    editorHandleMouseEvent();
+    check(E.document.cursor.cy == 2 && !E.document.mouse.dragging && !E.document.selection.active,
+        "single preview click follows local reference");
+    E.document.cursor.cy = 0; E.document.cursor.cx = 0;
+    mouseEventButton = 35; mouseEventCol = 11;
+    editorHandleMouseEvent();
+    editorUpdateLinkHover();
+    check(hovered_link_row == 1, "hover recognizes bracketed colon reference");
+    mouseEventButton = 0; editorHandleMouseEvent();
+    check(E.document.cursor.cy == 3, "single preview click follows bracketed colon reference");
+    settingsDefaults(&S);
+
+    char root[] = "/tmp/tinyedit-anchors-XXXXXX";
+    check(mkdtemp(root) != NULL, "cross-file anchor fixtures");
+    char source[256], destination[256];
+    snprintf(source, sizeof(source), "%s/source.md", root);
+    snprintf(destination, sizeof(destination), "%s/altro.md", root);
+    FILE *file = fopen(source, "wb");
+    check(file && fputs("[Vai](altro.md#dati)\n", file) >= 0 && fclose(file) == 0, "write explicit link source");
+    file = fopen(destination, "wb");
+    check(file && fputs("## Titolo {#dati}\n\nBlocco ^blocco\n![Fig](a.png){#fig:immagine}\n", file) >= 0 && fclose(file) == 0,
+        "write cross-file anchor targets");
+    check(editorOpen(source), "open explicit link source");
+    E.document.cursor.cx = 2;
+    editorOpenCursorLink();
+    check(!E.ui.statusmsg_error && !strcmp(E.document.file.filename, destination) && E.document.cursor.cy == 0,
+        "local file fragment resolves explicit Pandoc ID");
+    check(editorOpen(source), "restore source for block link");
+    editorFollowLink("altro.md#^blocco");
+    check(!E.ui.statusmsg_error && !strcmp(E.document.file.filename, destination) && E.document.cursor.cy == 2,
+        "local file fragment resolves Obsidian block");
+    check(editorOpen(source), "restore source for colon fragment");
+    editorFollowLink("altro.md#fig:immagine");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 3, "colon in cross-file explicit fragment remains supported");
+    check(editorOpen(source), "restore source for cancelled explicit link");
+    E.document.cursor.cx = 2;
+    E.document.cursor.cx = E.document.buffer.rows[0].size;
+    editorPushUndo(EDIT_INSERT); editorInsertChar('X');
+    E.document.cursor.cx = 2;
+    E.document.selection.active = E.document.selection.pinned = 1;
+    E.document.selection.anchor_x = 1;
+    int input[2], saved_input = dup(STDIN_FILENO);
+    check(saved_input >= 0 && pipe(input) == 0, "cancel explicit link input");
+    check(write(input[1], "x", 1) == 1 && dup2(input[0], STDIN_FILENO) >= 0, "cancel explicit link answer");
+    close(input[0]);
+    editorFollowLink("altro.md#fig:immagine");
+    check(!strcmp(E.document.file.filename, source) && E.document.file.dirty && E.document.cursor.cx == 2 &&
+        E.document.selection.active && E.document.selection.pinned && E.document.selection.anchor_x == 1,
+        "cancel explicit cross-file fragment preserves dirty document and selection");
+    check(dup2(saved_input, STDIN_FILENO) >= 0, "restore explicit link input");
+    close(saved_input); close(input[1]);
+    editorResetDocument();
+    unlink(source); unlink(destination); rmdir(root);
+    markdownNavigationRows(extra, sizeof(extra) / sizeof(*extra));
+    E.document.cursor.cy = 10; E.document.cursor.cx = 9;
+    check(!editorCursorLink(&link), "dot inside reference does not activate matching ID prefix");
+    editorResetDocument();
+    settingsDefaults(&S);
+}
+
+static void testMarkdownCodeBlocks(void) {
+    settingsDefaults(&S);
+    const char *const c_block[] = {"```c", "int answer = 42;", "/* commento", "",
+        "ancora commento */", "printf(\"città\");", "```", "## Heading"};
+    markdownNavigationRows(c_block, sizeof(c_block) / sizeof(*c_block));
+    erow *rows = E.document.buffer.rows;
+    check(rows[1].hl && rows[1].hl[0] == HL_KEYWORD && rows[1].hl[13] == HL_NUMBER,
+        "fenced C uses language keywords and numbers");
+    check(rows[2].hl[0] == HL_COMMENT && rows[3].markdown_code.comment && rows[4].hl[0] == HL_COMMENT,
+        "embedded multiline comment survives blank code rows");
+    check(rows[5].hl[0] == HL_FUNCTION && rows[5].hl[7] == HL_STRING && !rows[5].markdown_count,
+        "embedded strings and calls use C highlighting without Markdown spans");
+    check(!rows[6].markdown_code.marker && rows[7].hl_heading, "closing code fence restores Markdown");
+    E.document.cursor.cy = 0; E.document.cursor.cx = 4;
+    editorDelChar();
+    check(E.document.buffer.rows[1].hl[0] == HL_STRING, "removing language tag recolors whole code block");
+    editorUndo();
+    check(E.document.buffer.rows[1].hl[0] == HL_KEYWORD, "undo restores fenced language highlighting");
+    const char *const languages[] = {"~~~python", "def f():", "    return 42", "~~~",
+        "```json", "{\"key\": 12}", "```", "```html", "<div title=\"hello\">", "```",
+        "```css", "a { color: red; }", "```", "```{.javascript #example}", "const x = 3;", "```"};
+    markdownNavigationRows(languages, sizeof(languages) / sizeof(*languages));
+    rows = E.document.buffer.rows;
+    check(rows[1].hl[0] == HL_KEYWORD && rows[2].hl[4] == HL_KEYWORD, "tilde fence supports Python alias");
+    check(rows[5].hl[1] == HL_JSON_KEY && rows[5].hl[8] == HL_NUMBER, "JSON fenced keys and numbers");
+    check(rows[8].hl[1] == HL_KEYWORD && rows[8].hl[11] == HL_STRING, "HTML code uses markup tokenizer");
+    check(rows[11].hl[4] == HL_KEYWORD, "CSS code uses dedicated tokenizer");
+    check(rows[14].hl[0] == HL_KEYWORD, "Pandoc language class selects JavaScript alias");
+    const char *const boundaries[] = {"````c", "```", "int x = 1;", "~~~", "int y = 2;", "````",
+        "```unknown-language", "int z = 3;", "```", "```", "int plain = 4;", "```", "**bold**"};
+    markdownNavigationRows(boundaries, sizeof(boundaries) / sizeof(*boundaries));
+    rows = E.document.buffer.rows;
+    check(rows[2].hl[0] == HL_KEYWORD && rows[4].hl[0] == HL_KEYWORD,
+        "shorter or different fence does not close embedded code");
+    check(rows[7].hl[0] == HL_STRING && rows[10].hl[0] == HL_STRING && rows[12].markdown_count,
+        "unknown or absent code language stays literal and does not leak into prose");
+    S.syntax_highlight = 0; editorUpdateAllRows();
+    check(!rows[2].hl && !rows[2].markdown_code.marker, "disabling highlighting clears embedded state");
+    editorResetDocument(); settingsDefaults(&S);
+}
+
+static int saved_external_input;
+
+static void beginExternalAnswer(char answer) {
+    int input[2];
+    check(pipe(input) == 0, "external confirmation pipe");
+    saved_external_input = dup(STDIN_FILENO);
+    check(saved_external_input >= 0 && write(input[1], &answer, 1) == 1 &&
+        dup2(input[0], STDIN_FILENO) >= 0, "external confirmation input");
+    close(input[0]); close(input[1]);
+}
+
+static void endExternalAnswer(void) {
+    check(dup2(saved_external_input, STDIN_FILENO) >= 0, "restore external input");
+    close(saved_external_input);
+}
+
 static void testLinks(void) {
     struct textLink link;
     const char *inline_link = "é [guide](<folder/a b.md#title> \"title\") end";
@@ -1069,6 +1347,10 @@ static void testLinks(void) {
     char *old_env = path_env ? teStrdup(path_env) : NULL;
     check(setenv("PATH", root, 1) == 0 && setenv("TINYEDIT_LINK_LOG", log, 1) == 0, "isolated browser environment");
     const char *url = "https://example.org/$(echo-surprise);x?y=1&z=2";
+    check(!linksIsWeb("https:///missing-host") &&
+        !linksIsWeb("https://trusted.example@evil.example/") &&
+        !linksIsWeb("https://example.org\\@evil.example/"),
+        "web links reject empty and ambiguous authorities");
     check(linksOpenWeb(url), "launch web link as one argument");
     struct timespec pause = {0, 10000000};
     for (int32_t attempt = 0; attempt < 100; attempt++) {
@@ -1080,7 +1362,179 @@ static void testLinks(void) {
     char logged[256] = {0};
     check(file && fread(logged, 1, sizeof(logged) - 1, file) == strlen(url) &&
         !strcmp(logged, url), "browser gets literal URL without shell expansion");
-    fclose(file); unlink(opener);
+    fclose(file);
+#ifndef __APPLE__
+    char mailer[256];
+    snprintf(mailer, sizeof(mailer), "%s/xdg-email", root);
+    check(symlink("xdg-open", mailer) == 0, "isolated mail launcher");
+#endif
+    const char *mail = "mailto:roberto@example.org?subject=Hello%20world&body=Line1%0ALine2";
+    check(linksIsMailto(mail) && linksIsMailto("MAILTO:roberto@example.org") &&
+        !linksIsMailto("mailto:") && !linksIsMailto("mailto:a b@example.org") &&
+        !linksIsMailto("mailto:a@example.org\n") && !linksIsMailto("javascript:alert(1)"),
+        "mailto transport checks preserve URI parameters and reject unsafe raw bytes");
+    check(linksIsImagePath("/a/b.PNG") && linksIsImagePath("x.jpeg") && !linksIsImagePath("/a/run.command") &&
+        !linksIsImagePath("/a.png/tool") && !linksIsImagePath("/a/noext") &&
+        !linksIsImagePath("/a/active.svg") && !linksOpenFile("/tmp/x.desktop"),
+        "image opener accepts only image extensions");
+    beginExternalAnswer('y');
+    editorFollowLink(mail);
+    endExternalAnswer();
+    check(!E.ui.statusmsg_error && strstr(E.ui.statusmsg, "mail application"), "mailto uses desktop mail dispatch");
+    for (int32_t attempt = 0; attempt < 100; attempt++) {
+        struct stat log_stat;
+        if (stat(log, &log_stat) == 0 && log_stat.st_size == (off_t)strlen(mail)) break;
+        nanosleep(&pause, NULL);
+    }
+    file = fopen(log, "rb");
+    memset(logged, 0, sizeof(logged));
+    check(file && fread(logged, 1, sizeof(logged) - 1, file) == strlen(mail) &&
+        !strcmp(logged, mail), "mail launcher receives the literal URI without sending mail");
+    fclose(file);
+    unlink(log);
+    beginExternalAnswer('n');
+    editorFollowLink(url);
+    endExternalAnswer();
+    check(strstr(E.ui.statusmsg, "not opened") && access(log, F_OK) != 0,
+        "external web link requires consent");
+    beginExternalAnswer('y');
+    editorFollowLink(url);
+    endExternalAnswer();
+    check(!E.ui.statusmsg_error && strstr(E.ui.statusmsg, "browser"),
+        "confirmed external web link opens");
+    for (int32_t attempt = 0; attempt < 100; attempt++) {
+        struct stat log_stat;
+        if (stat(log, &log_stat) == 0 && log_stat.st_size == (off_t)strlen(url)) break;
+        nanosleep(&pause, NULL);
+    }
+    unlink(log);
+    char image_path[256];
+    snprintf(image_path, sizeof(image_path), "%s/-é image $(echo-surprise).png", root);
+    file = fopen(image_path, "wb");
+    static const unsigned char png_header[] = "\x89PNG\r\n\x1a\n";
+    check(file && fwrite(png_header, 1, sizeof(png_header) - 1, file) == sizeof(png_header) - 1 &&
+        fclose(file) == 0, "image fixture with literal shell punctuation");
+    char masquerade[256];
+    snprintf(masquerade, sizeof(masquerade), "%s/masquerade.png", root);
+    file = fopen(masquerade, "wb");
+    check(file && fputs("#!/bin/sh\nexit 1\n", file) >= 0 && fclose(file) == 0 &&
+        !linksVerifyImageFile(masquerade) && errno == EINVAL,
+        "executable content with image suffix is refused");
+    unlink(masquerade);
+    static const struct {
+        const char *extension;
+        const char *header;
+        size_t length;
+    } signatures[] = {
+        {"jpg", "\xff\xd8\xff", 3}, {"gif", "GIF89a", 6},
+        {"webp", "RIFF\0\0\0\0WEBP", 12}, {"bmp", "BM", 2},
+        {"tiff", "II*\0", 4}, {"ico", "\0\0\1\0", 4},
+        {"avif", "\0\0\0\0ftypavif", 12},
+        {"heic", "\0\0\0\0ftypheic", 12}
+    };
+    for (size_t i = 0; i < sizeof(signatures) / sizeof(signatures[0]); i++) {
+        char checked_path[256];
+        snprintf(checked_path, sizeof(checked_path), "%s/signature.%s", root, signatures[i].extension);
+        file = fopen(checked_path, "wb");
+        check(file && fwrite(signatures[i].header, 1, signatures[i].length, file) == signatures[i].length &&
+            fclose(file) == 0 && linksVerifyImageFile(checked_path),
+            "supported image signatures match their extensions");
+        unlink(checked_path);
+    }
+    check(chmod(image_path, 0700) == 0 && !linksVerifyImageFile(image_path) &&
+        chmod(image_path, 0600) == 0, "executable image file is refused");
+    char *image_absolute = realpath(image_path, NULL);
+    check(image_absolute != NULL, "canonical image path");
+    editorResetDocument();
+    settingsDefaults(&S);
+    S.show_menu = S.show_top_bar = S.show_line_numbers = 0;
+    S.mouse_enabled = S.markdown_live_preview = 1;
+    M.open = 0; T.visible = T.focused = 0;
+    E.view.screenrows = 20; E.view.screencols = 100;
+    E.document.file.filename = teStrdup(old_path);
+    const char *image_source = "![Diagramma](<-é image $(echo-surprise).png>){#fig:architettura .diagramma}";
+    editorInsertRow(0, image_source, strlen(image_source));
+    editorInsertRow(1, "cursor", 6);
+    E.document.cursor.cx = 20;
+    E.document.selection.active = 1; E.document.selection.anchor_x = 0;
+    E.document.file.dirty = 1;
+    beginExternalAnswer('n');
+    editorOpenCursorLink();
+    endExternalAnswer();
+    check(strstr(E.ui.statusmsg, "not opened") && access(log, F_OK) != 0,
+        "image confirmation declines without launching");
+    beginExternalAnswer('y');
+    editorOpenCursorLink();
+    endExternalAnswer();
+    check(!E.ui.statusmsg_error && E.document.file.dirty && E.document.selection.active &&
+        E.document.cursor.cx == 20 && !strcmp(E.document.file.filename, old_path),
+        "confirmed image dispatch preserves document, dirty state, cursor and selection");
+    for (int32_t attempt = 0; attempt < 100; attempt++) {
+        struct stat log_stat;
+        if (stat(log, &log_stat) == 0 && log_stat.st_size == (off_t)strlen(image_absolute)) break;
+        nanosleep(&pause, NULL);
+    }
+    file = fopen(log, "rb"); memset(logged, 0, sizeof(logged));
+    check(file && fread(logged, 1, sizeof(logged) - 1, file) == strlen(image_absolute) &&
+        !strcmp(logged, image_absolute), "image launcher receives one absolute Unicode path without shell evaluation");
+    fclose(file);
+    E.document.selection.active = 0;
+    E.document.cursor.cy = 1; E.document.cursor.cx = 0;
+    editorSyncMarkdownPreview();
+    struct textLink image_link;
+    check(linksFind(image_source, (int32_t)strlen(image_source), 20, &image_link) &&
+        markdownLinkIsImage(&E.document.buffer.rows[0], &image_link), "recognize Markdown image destination");
+    mouseEventRow = 1; mouseEventCol = image_link.target_start + 1;
+    mouseEventPress = 1; mouseEventButton = 35;
+    editorHandleMouseEvent(); editorUpdateLinkHover();
+    check(hovered_link_row == 0 && E.document.cursor.cy == 1, "hover over visible image path without moving cursor");
+    mouseEventButton = 0;
+    beginExternalAnswer('y');
+    editorHandleMouseEvent();
+    endExternalAnswer();
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 1 && E.document.file.dirty &&
+        !strcmp(E.document.file.filename, old_path), "live-preview single click opens image without replacing document");
+    editorCancelMouseDrag();
+    const char *encoded_image = "![Encoded](-%C3%A9%20image%20%24%28echo-surprise%29.png)";
+    editorResetDocument();
+    E.document.file.filename = teStrdup(old_path);
+    editorInsertRow(0, encoded_image, strlen(encoded_image));
+    E.document.cursor.cx = 15;
+    unlink(log);
+    beginExternalAnswer('y');
+    editorOpenCursorLink();
+    endExternalAnswer();
+    check(!E.ui.statusmsg_error, "percent-encoded image path resolves before desktop dispatch");
+    for (int32_t attempt = 0; attempt < 100; attempt++) {
+        struct stat log_stat;
+        if (stat(log, &log_stat) == 0 && log_stat.st_size == (off_t)strlen(image_absolute)) break;
+        nanosleep(&pause, NULL);
+    }
+    file = fopen(log, "rb"); memset(logged, 0, sizeof(logged));
+    check(file && fread(logged, 1, sizeof(logged) - 1, file) == strlen(image_absolute) &&
+        !strcmp(logged, image_absolute), "encoded image reaches the same desktop target");
+    fclose(file); free(image_absolute);
+    const char *bad_images[] = {"![missing](missing.png)", "![directory](.)",
+        "![scheme](mailto:x@example.org)", "![control](bad%00.png)"};
+    for (size_t i = 0; i < sizeof(bad_images) / sizeof(*bad_images); i++) {
+        editorResetDocument();
+        E.document.file.filename = teStrdup(old_path);
+        editorInsertRow(0, bad_images[i], strlen(bad_images[i]));
+        E.document.cursor.cx = 3;
+        editorOpenCursorLink();
+        check(E.ui.statusmsg_error && !strcmp(E.document.file.filename, old_path),
+            "invalid image target reports red error without replacing document");
+    }
+    check(!linksOpenFile("-relative.png") && errno == EINVAL &&
+        !linksOpenFile("/tmp/bad\n.png") && errno == EINVAL, "desktop file dispatch rejects options and controls");
+#ifndef __APPLE__
+    unlink(mailer);
+#endif
+    unlink(opener);
+    check(!linksOpenFile(image_path) && errno == ENOENT, "missing image launcher reported");
+    unlink(image_path);
+    check(!linksOpenMailto(mail) && errno == ENOENT, "missing mail launcher reported");
+    check(!linksOpenMailto("mailto:") && errno == EINVAL, "invalid mail URI refused before launch");
     check(!linksOpenWeb(url) && errno == ENOENT, "missing browser launcher reported");
     if (old_env) { setenv("PATH", old_env, 1); free(old_env); } else unsetenv("PATH");
     unsetenv("TINYEDIT_LINK_LOG"); unlink(log);
@@ -1103,6 +1557,52 @@ static void testLinks(void) {
     check(editorMenuCommandKey(CMD_DOCUMENTATION) == DOCUMENTATION_KEY, "Documentation menu dispatch");
     editorResetDocument(); unlink(old_path); unlink(new_path); rmdir(root);
     check(dup2(saved_output, STDOUT_FILENO) >= 0, "restore link output"); close(saved_output);
+}
+
+static void testMouseScrollView(void) {
+    for (uint8_t mode = 0; mode < 4; mode++) {
+        settingsDefaults(&S);
+        S.markdown_live_preview = mode & 1;
+        S.soft_wrap = mode > 1 ? 40 : 0;
+        S.mouse_enabled = 1;
+        S.show_menu = S.show_top_bar = S.show_line_numbers = 0;
+        T.visible = T.focused = 0;
+        editorResetDocument();
+        E.view.screenrows = 20; E.view.screencols = 80;
+        E.document.file.filename = teStrdup("scroll.md");
+        for (int32_t y = 0; y < 160; y++) editorInsertRow(y, "riga", 4);
+        E.document.cursor.cy = 137;
+        E.view.rowoff = 20;
+        editorSyncMarkdownPreview();
+        mouseEventButton = 64; mouseEventPress = 1;
+        mouseEventRow = mouseEventCol = 1;
+        editorHandleMouseEvent();
+        editorScroll();
+        check(E.view.rowoff == 17 && E.document.cursor.cy == 137,
+            "wheel detaches viewport without moving cursor");
+        for (int32_t redraw = 0; redraw < 3; redraw++) {
+            mouseEventButton = 35; mouseEventCol++;
+            editorHandleMouseEvent();
+            editorUpdateLinkHover();
+            editorScroll();
+            check(E.view.rowoff == 17 && E.document.cursor.cy == 137,
+                "passive pointer motion and redraw preserve wheel position");
+        }
+        mouseEventButton = 0; mouseEventCol = 2;
+        editorHandleMouseEvent();
+        editorScroll();
+        check(!E.view.free_scroll && E.document.cursor.cy == 17,
+            "text click restores following at clicked source position");
+        editorCancelMouseDrag();
+        E.document.cursor.cy = 137; E.view.rowoff = 17; E.view.free_scroll = 1;
+        editorDispatchKey(ARROW_UP);
+        editorScroll();
+        check(!E.view.free_scroll && E.document.cursor.cy == 136 && E.view.rowoff > 17,
+            "keyboard navigation restores cursor following");
+    }
+    editorResetDocument();
+    settingsDefaults(&S);
+    editorSyncMarkdownPreview();
 }
 
 static void testMouseDispatch(void) {
@@ -1474,6 +1974,35 @@ static void testHeadingReverse(void) {
     check(strstr(ab.b, "\x1b[38;2;68;85;102m") != NULL, "RGB heading foreground preserved");
     check(strstr(ab.b, "\x1b[7m") == NULL, "RGB headings ignore legacy inversion");
     abFree(&ab);
+    for (int32_t level = 0; level < 6; level++) {
+        S.rgb_color_markdown_heading[level] = 0x102030 + level;
+        S.color_markdown_heading[level] = COLOR_RED_LIGHT + level;
+        S.color_mode = COLOR_MODE_RGB;
+        char expected[64];
+        snprintf(expected, sizeof(expected), "\x1b[38;2;16;32;%dm", 48 + level);
+        check(strcmp(syntaxColorFor((enum syntaxHighlight)(HL_HEADING_1 + level), &S), expected) == 0,
+            "each heading level resolves independent RGB color");
+        S.color_mode = COLOR_MODE_ANSI;
+        check(strcmp(syntaxColorFor((enum syntaxHighlight)(HL_HEADING_1 + level), &S),
+            ansiColorCode(S.color_markdown_heading[level])) == 0, "each heading level resolves ANSI color");
+    }
+    S.color_mode = COLOR_MODE_RGB;
+    S.rgb_color_background = 0x202020;
+    S.rgb_color_markdown_heading[0] = 0xE02020;
+    ab = (struct abuf)ABUF_INIT;
+    editorBeginHeadingRow(&ab, 0);
+    abAppend(&ab, "", 1);
+    check(drawing_heading_background == 0x372020, "heading background uses twelve percent of foreground hue");
+    check(strstr(ab.b, "\x1b[48;2;55;32;32m") != NULL, "tinted heading background emitted");
+    editorEndHeadingRow(&ab);
+    check(!drawing_heading, "tinted heading background does not leak into plain text");
+    abFree(&ab);
+    S.rgb_color_markdown_heading[0] = 0x2020E0;
+    ab = (struct abuf)ABUF_INIT;
+    editorBeginHeadingRow(&ab, 0);
+    check(drawing_heading_background == 0x202037, "changing foreground updates heading background hue");
+    editorEndHeadingRow(&ab);
+    abFree(&ab);
     S.rgb_markdown_heading_background = RGB_TERMINAL_DEFAULT;
     ab = (struct abuf)ABUF_INIT;
     editorBeginHeadingRow(&ab, 0);
@@ -1551,6 +2080,47 @@ static void testBracketColors(void) {
     check(strstr(ab.b, "\x1b[31m(") != NULL, "bracket color independent of syntax toggle");
     abFree(&ab);
     editorResetDocument();
+    S.syntax_highlight = 1;
+    E.document.file.filename = teStrdup("brackets.md");
+    S.markdown_text_styles = 1;
+    S.color_syntax_json_key = COLOR_BLUE_DARK;
+    S.color_syntax_preprocessor = COLOR_GREEN_DARK;
+    const char *markdown = "[anchor](#id) ![image](img.png){#fig:id} [span]{#id} () [] {}";
+    editorInsertRow(0, markdown, strlen(markdown));
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRowSegment(&ab, 0, 0, E.document.buffer.rows[0].rsize,
+        0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    int32_t plain = (int32_t)(strstr(markdown, " () [] {}") - markdown) + 1;
+    erow *row = &E.document.buffer.rows[0];
+    for (int32_t at = 0; at < row->size; at += (int32_t)utf8NextCharLen(row->chars, (size_t)at, (size_t)row->size)) {
+        if (strchr("()[]{}", row->chars[at]))
+            check(row->hl[at] == (at < plain ? HL_LINK_MARKER : HL_NORMAL),
+                "link/image/anchor delimiters are distinct from ordinary brackets");
+    }
+    check(strstr(ab.b, "\x1b[34m[") && strstr(ab.b, "\x1b[34m{") && strstr(ab.b, "\x1b[31m("),
+        "ANSI link and Pandoc markers differ from ordinary bracket color");
+    check(strstr(ab.b, "\x1b[4ma") != NULL, "source link label is underlined");
+    abFree(&ab);
+    S.color_mode = COLOR_MODE_RGB;
+    S.rgb_color_syntax_bracket = 0x123456;
+    S.rgb_color_syntax_json_key = 0x654321;
+    S.rgb_color_syntax_preprocessor = 0xABCDEF;
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRowSegment(&ab, 0, 0, E.document.buffer.rows[0].rsize,
+        0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    check(strstr(ab.b, "\x1b[38;2;101;67;33m[") && strstr(ab.b, "\x1b[38;2;18;52;86m("),
+        "RGB link/anchor markers and ordinary brackets use distinct roles");
+    abFree(&ab);
+    editorResetDocument();
+    E.document.file.filename = teStrdup("literal.md");
+    const char *literal = "`[literal]{#fake}` \\[escaped]{#escaped} [plain] {ordinary} ![missing]{#bad}";
+    editorInsertRow(0, literal, strlen(literal));
+    row = &E.document.buffer.rows[0];
+    for (int32_t at = 0; at < row->rsize; at++)
+        check(row->hl[at] != HL_LINK_MARKER, "literal, escaped and incomplete anchors do not receive link markers");
+    editorResetDocument();
     settingsDefaults(&S);
 }
 
@@ -1602,6 +2172,251 @@ static void testMarkdownStyles(void) {
     abFree(&ab);
     editorResetDocument();
     settingsDefaults(&S);
+}
+
+static void testMarkdownPreview(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    check(!S.markdown_live_preview, "live preview defaults off");
+    check(commandToggleSetting(CMD_TOGGLE_MARKDOWN_PREVIEW, &S) &&
+        commandIsChecked(CMD_TOGGLE_MARKDOWN_PREVIEW, &S), "View toggles live preview");
+    E.search.search_match_y = E.search.search_match_end_y = -1;
+    E.document.file.filename = teStrdup("preview.MD");
+    const char *source = "**caffè界** e *é* [sito](https://example.org/a(b))";
+    editorInsertRow(0, source, strlen(source));
+    editorInsertRow(1, "plain", 5);
+    E.document.cursor.cy = 1;
+    E.document.cursor.cx = 0;
+    erow *row = &E.document.buffer.rows[0];
+    editorSyncMarkdownPreview();
+    check(row->markdown_count == 3, "paired emphasis and link presentation spans");
+    check(editorRowCxToRx(row, row->size) == 16,
+        "preview measures Unicode columns without markup or URL");
+    check(editorRowRxToCx(row, 1) == 3 && editorRowRxToCx(row, 6) == 8,
+        "preview maps columns back to source bytes including wide glyph");
+    struct abuf ab = ABUF_INIT;
+    editorDrawRowSegment(&ab, 0, 0, row->rsize, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    check(strchr(ab.b, '*') == NULL && strstr(ab.b, "https") == NULL && strstr(ab.b, "\x1b[1m") &&
+        strstr(ab.b, "\x1b[3m") && strstr(ab.b, "\x1b[4m"),
+        "preview hides markup and emits bold italic underline independently of styles setting");
+    abFree(&ab);
+    for (int32_t i = 0; i < row->markdown_count; i++) {
+        struct markdownSpan span = row->markdown_spans[i];
+        E.document.cursor.cy = 0;
+        for (int32_t x = span.start; x <= span.end; ) {
+            E.document.cursor.cx = x;
+            editorSyncMarkdownPreview();
+            check(!renderByteHidden(row, span.start) && !renderByteHidden(row, span.end - 1),
+                "cursor on either boundary or inside expands complete construct");
+            if (x == span.end) break;
+            x += (int32_t)utf8NextCharLen(row->chars, (size_t)x, (size_t)row->size);
+        }
+    }
+    E.document.cursor.cy = 1;
+    E.document.cursor.cx = 0;
+    editorSyncMarkdownPreview();
+    check(renderByteHidden(row, 0), "leaving construct collapses again");
+    S.show_line_numbers = S.show_top_bar = S.show_menu = 0;
+    E.view.screencols = 80; E.view.screenrows = 10; E.view.rowoff = E.view.coloff = 0;
+    int32_t y, x;
+    editorMouseToCursor(2, 1, &y, &x);
+    check(y == 0 && x == 3, "mouse click maps compact Unicode text to source");
+    E.document.selection.active = 1;
+    check(editorRowCxToRx(row, row->size) == bufferRowCxToRx(row, row->size, S.tab_stop),
+        "selection reveals original text");
+    E.document.selection.active = 0;
+    E.search.search_match_y = 0;
+    editorSyncMarkdownPreview();
+    check(!renderByteHidden(row, 0), "search reveals delimiters and destination");
+    E.search.search_match_y = -1;
+    editorInsertRow(2, "**ab**", 6);
+    row = &E.document.buffer.rows[2];
+    check(editorRowSegments(row, 2) == 1, "hidden closer at wrap boundary adds no phantom row");
+    E.document.cursor.cy = 2; E.document.cursor.cx = 2;
+    check(editorRowSegments(row, 2) == 3, "expansion invalidates wrap cache");
+    E.document.cursor.cy = 1; E.document.cursor.cx = 0;
+    check(editorRowSegments(row, 2) == 1, "collapse invalidates wrap cache");
+    editorInsertRow(3, "**界**", strlen("**界**"));
+    row = &E.document.buffer.rows[3];
+    check(editorRowSegments(row, 1) == 1, "hidden opener before wide glyph adds no phantom segment");
+    editorInsertRow(4, "`**code**` \\*escaped*", strlen("`**code**` \\*escaped*"));
+    row = &E.document.buffer.rows[4];
+    check(row->markdown_count == 0, "code and escaped emphasis stay literal");
+    check(!strcmp(E.document.buffer.rows[0].chars, source), "presentation preserves source bytes");
+    editorInsertRow(5, "**a**\t界", strlen("**a**\t界"));
+    row = &E.document.buffer.rows[5];
+    check(editorRowCxToRx(row, row->size) == 6 && editorRowRxToCx(row, 4) == 6,
+        "tab expansion retains original tab stops and source-byte mapping");
+    editorInsertRow(6, "**ab** **cd** **ef** tail", 25);
+    E.document.cursor.cy = 6; E.document.cursor.cx = 25;
+    S.soft_wrap = 8; S.home_end_visual_line = 1;
+    E.document.cursor.rx = editorRowCxToRx(&E.document.buffer.rows[6], 25);
+    editorHandleNavigationKey(SHIFT_HOME);
+    check(E.document.cursor.cx == 21 && E.document.selection.active,
+        "Shift-Home uses expanded coordinates when selection reveals markup");
+    E.document.selection.active = 0;
+    E.document.cursor.cy = 0; E.document.cursor.cx = 3;
+    editorInsertChar('z');
+    editorUndo();
+    check(!strcmp(E.document.buffer.rows[0].chars, source) &&
+        E.document.buffer.rows[0].markdown_count == 3, "undo rebuilds presentation from original source");
+    editorRedo();
+    check(E.document.buffer.rows[0].markdown_count == 3 &&
+        E.document.buffer.rows[0].chars[3] == 'z', "redo rebuilds presentation spans");
+    S.syntax_highlight = 0;
+    editorRehighlightFrom(0, 1);
+    check(E.document.buffer.rows[0].markdown_count == 3, "syntax toggle preserves live preview spans");
+    E.document.cursor.cy = 1; E.document.cursor.cx = 0;
+    E.document.cursor.rx = 0;
+    row = &E.document.buffer.rows[0];
+    check(editorRowCxToRx(row, row->size) < bufferRowCxToRx(row, row->size, S.tab_stop),
+        "preview still compacts text without syntax colors");
+    S.color_syntax_keyword = S.color_syntax_json_key = COLOR_MAGENTA_LIGHT;
+    S.color_syntax_emphasis_strong = COLOR_RED_LIGHT;
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRowSegment(&ab, 0, 0, row->rsize, 0, 0, 0, 0, 0, 0, -1, -1, -1, -1);
+    abAppend(&ab, "", 1);
+    check(!strchr(ab.b, '*') && !strstr(ab.b, "https") && strstr(ab.b, "\x1b[1m") &&
+        strstr(ab.b, "\x1b[3m") && strstr(ab.b, "\x1b[4m"), "preview styles survive disabled highlighting");
+    check(!strstr(ab.b, "\x1b[95m") && !strstr(ab.b, "\x1b[91m"), "preview parsing does not enable syntax colors");
+    abFree(&ab);
+    E.document.cursor.cy = 0; E.document.cursor.cx = 0;
+    editorSyncMarkdownPreview();
+    check(!renderByteHidden(row, 0), "cursor still expands preview without syntax colors");
+    editorInsertChar('x');
+    editorUndo();
+    row = &E.document.buffer.rows[0];
+    check(row->markdown_count == 3, "editing and undo retain uncolored preview metadata");
+    S.markdown_live_preview = 0;
+    editorRehighlightFrom(0, 1);
+    check(!row->markdown_count && !row->hl, "both features off release parsing metadata");
+    editorResetDocument();
+    settingsDefaults(&S);
+    editorSyncMarkdownPreview();
+}
+
+static void testTypingMarkdownLink(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    S.markdown_live_preview = 1;
+    T.visible = T.focused = 0;
+    E.document.file.filename = teStrdup("typing.md");
+    const char *label = "[Roberto](";
+    for (size_t i = 0; label[i]; i++) {
+        editorDispatchKey((uint8_t)label[i]);
+        editorSyncMarkdownPreview();
+    }
+    erow *row = &E.document.buffer.rows[0];
+    check(!strcmp(row->chars, "[Roberto]()") && E.document.cursor.cx == 10 &&
+        row->markdown_count == 0 && !renderByteHidden(row, 0),
+        "auto-closed empty destination remains literal and editable");
+    const char *destination = "mailto:roberto@example.org";
+    for (size_t i = 0; destination[i]; i++) {
+        editorDispatchKey((uint8_t)destination[i]);
+        editorSyncMarkdownPreview();
+        row = &E.document.buffer.rows[0];
+        check(!renderByteHidden(row, 0) && !renderByteHidden(row, row->rsize - 1),
+            "destination stays in source editing after every typed byte");
+    }
+    editorDispatchKey(')');
+    check(!strcmp(row->chars, "[Roberto](mailto:roberto@example.org)") &&
+        E.document.cursor.cx == row->size, "typing closes destination without losing characters");
+    editorDispatchKey(' ');
+    editorSyncMarkdownPreview();
+    check(renderByteHidden(row, 0), "leaving the completed typed link compacts it");
+    editorUndo();
+    editorRedo();
+    check(!strcmp(E.document.buffer.rows[0].chars, "[Roberto](mailto:roberto@example.org) "),
+        "undo and redo retain the typed link bytes");
+    editorResetDocument();
+    settingsDefaults(&S);
+    editorSyncMarkdownPreview();
+}
+
+static void testMarkdownLinkMouse(void) {
+    editorResetDocument();
+    settingsDefaults(&S);
+    S.markdown_live_preview = S.mouse_enabled = 1;
+    S.show_line_numbers = S.show_menu = S.show_top_bar = 0;
+    S.color_link_hover = COLOR_RED_DARK;
+    T.visible = T.focused = 0;
+    E.view.screenrows = 12; E.view.screencols = 80;
+    E.view.rowoff = E.view.coloff = 0;
+    E.document.file.filename = teStrdup("hover.md");
+    editorInsertRow(0, "ok", 2);
+    const char *source = "[é界](#target) tail";
+    editorInsertRow(1, source, strlen(source));
+    editorInsertRow(2, "## Target", 9);
+    struct textLink link;
+    struct markdownSpan span;
+    int32_t cy;
+    check(editorPreviewLinkAtMouse(1, 2, &cy, &link, &span) && cy == 1,
+        "hover recognizes first visible label cell behind hidden opener");
+    check(editorPreviewLinkAtMouse(3, 2, &cy, &link, &span), "hover recognizes second cell of wide label glyph");
+    check(!editorPreviewLinkAtMouse(INT32_MAX, INT32_MAX, &cy, &link, &span),
+        "out-of-screen mouse coordinates do not overflow hit testing");
+    check(!editorPreviewLinkAtMouse(4, 2, &cy, &link, &span) &&
+        !editorPreviewLinkAtMouse(1, 8, &cy, &link, &span), "hover ignores whitespace and EOF padding");
+    mouseEventButton = 35; mouseEventPress = 1; mouseEventCol = 2; mouseEventRow = 2;
+    editorHandleMouseEvent();
+    struct abuf ab = ABUF_INIT;
+    editorDrawRows(&ab); abAppend(&ab, "", 1);
+    check(hovered_link_row == 1 && E.document.cursor.cy == 0 &&
+        strstr(ab.b, "\x1b[31m\x1b[4mé") && !strstr(ab.b, "#target"),
+        "hover colors underlined label without moving cursor or exposing markup");
+    abFree(&ab);
+    S.color_mode = COLOR_MODE_RGB; S.rgb_color_link_hover = 0x123456;
+    ab = (struct abuf)ABUF_INIT;
+    editorDrawRows(&ab); abAppend(&ab, "", 1);
+    check(strstr(ab.b, "\x1b[38;2;18;52;86m\x1b[4mé") != NULL, "hover honors RGB palette");
+    abFree(&ab);
+    S.color_mode = COLOR_MODE_ANSI;
+    mouseEventRow = 8;
+    editorHandleMouseEvent();
+    editorUpdateLinkHover();
+    check(hovered_link_row == -1, "moving pointer away clears hover");
+    E.document.cursor.cy = 1; E.document.cursor.cx = 3;
+    editorSyncMarkdownPreview();
+    erow *row = &E.document.buffer.rows[1];
+    check(renderByteHidden(row, 0), "entering link label vertically leaves it compact");
+    E.document.cursor.cx = 0;
+    editorSyncMarkdownPreview();
+    check(!renderByteHidden(row, 0), "left border opens link for editing");
+    E.document.cursor.cx = 3;
+    editorSyncMarkdownPreview();
+    check(!renderByteHidden(row, 0) && !editorPreviewLinkAtMouse(3, 2, &cy, &link, &span),
+        "link remains editable inside after entering from border and clicks edit its source");
+    E.document.cursor.cy = 0; E.document.cursor.cx = 0;
+    editorSyncMarkdownPreview();
+    E.document.cursor.cy = 1; E.document.cursor.cx = row->markdown_spans[0].end;
+    editorSyncMarkdownPreview();
+    check(!renderByteHidden(row, 0), "right border opens link for editing");
+    E.document.cursor.cy = 0; E.document.cursor.cx = 0;
+    editorSyncMarkdownPreview();
+    check(editorRowRxToCx(row, 3) == row->markdown_spans[0].end,
+        "right label insertion boundary maps after hidden destination");
+    S.soft_wrap = 2;
+    check(editorPreviewLinkAtMouse(2, 3, &cy, &link, &span) && cy == 1,
+        "wrapped wide link label remains clickable");
+    mouseEventButton = 0; mouseEventPress = 1; mouseEventCol = 2; mouseEventRow = 3;
+    editorHandleMouseEvent();
+    check(E.document.cursor.cy == 2 && E.document.cursor.cx == 0 &&
+        !E.document.mouse.dragging && !E.document.selection.active &&
+        !strcmp(E.document.buffer.rows[1].chars, source), "single click follows anchor and preserves source");
+    editorSyncMarkdownPreview();
+    check(renderByteHidden(&E.document.buffer.rows[1], 0), "following link leaves its markup compact");
+    S.soft_wrap = 0;
+    S.markdown_live_preview = 0;
+    check(!editorPreviewLinkAtMouse(3, 2, &cy, &link, &span), "ordinary editing has no preview activation");
+    E.document.cursor.cy = 0;
+    mouseEventButton = 0; mouseEventPress = 1; mouseEventCol = 3; mouseEventRow = 2;
+    editorHandleMouseEvent();
+    check(E.document.cursor.cy == 1 && E.document.cursor.cx == 3,
+        "single click without preview retains normal cursor placement");
+    editorResetDocument();
+    settingsDefaults(&S);
+    editorSyncMarkdownPreview();
 }
 
 static void testRedrawCaches(void) {
@@ -1966,12 +2781,18 @@ int main(void) {
     testNewDocument();
     testColorSettings();
     testMouseDispatch();
+    testMouseScrollView();
     testLinks();
+    testMarkdownNavigation();
+    testMarkdownCodeBlocks();
     testSharedAutoClose();
     testEditBatches();
     testSearchSession();
     testBracketColors();
     testMarkdownStyles();
+    testMarkdownPreview();
+    testMarkdownLinkMouse();
+    testTypingMarkdownLink();
     testHeadingReverse();
     testRedrawCaches();
     puts("core tests: ok");

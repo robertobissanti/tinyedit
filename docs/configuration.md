@@ -33,19 +33,31 @@ switch in **View**. It is off by default, works with block and bar shapes, and
 is saved as `cursor_blink = true` when enabled. The screenshot above predates
 this additional row.
 
+**Markdown live preview** is available in F2 and **View**, and is saved as
+`markdown_live_preview = true`. It defaults to `false` and works independently
+of syntax highlighting. With highlighting off, preview still hides delimiters
+and applies bold, italic and underlining without syntax colors. See the [live preview behavior](usage.md#markdown-display-and-live-preview)
+for supported constructs and cursor expansion. With mouse support enabled,
+compact links change color under the pointer and open with a single click.
+**Colors → Interface → Link hover color** controls the hovered label using
+independent `color_link_hover` (ANSI) and `rgb_link_hover` (RGB) values.
+
 ## Colors page and RGB
 
 **F2 → Colors** keeps every color setting on one page, grouped into
 **Interface** and **Syntax highlighting**. **Mode** selects ANSI or RGB;
-**Choose Color Scheme >** sits immediately below it. RGB also exposes
+**Color scheme** sits immediately below it and always shows the matching
+preset name, or **Custom** when the palette does not match an installed preset. RGB also exposes
 **RGB output** for truecolor or ANSI fallback.
 
 Interface contains the editor background, gutter, selection, invisible
 characters and status-bar text/background. Syntax highlighting contains the
 same token roles in the same order in both modes, including function names,
 Markdown bold/italic text and LaTeX math. ANSI offers **reverse heading colors**;
-RGB offers a separate **heading background color**, with heading text using
-`rgb_syntax_preprocessor`. Colors remain editable when highlighting is off.
+RGB offers a **heading background color** control. Updated presets tint each
+heading background with 12% of its H1–H6 foreground over the editor background;
+`off` disables the background. Old palettes use the configured fixed background
+and inherit their foreground from `rgb_syntax_preprocessor`. Colors remain editable when highlighting is off.
 
 ![ANSI color settings and previews](../imgs/settings-panel-color-ansi.png)
 
@@ -66,13 +78,35 @@ Complete presets are included in [`colorschemes/`](../colorschemes/README.md):
 | Scheme | RGB file | ANSI file |
 |---|---|---|
 | One Dark, adapted from Vim One with `background=dark` | `one-dark.conf` | `one-dark-ansi.conf` |
-| Catppuccin Mocha | `catppuccin-mocha.conf` | `catppuccin-mocha-ansi.conf` |
+| Catppuccin Latte (light) | `catppuccin-latte.conf` | — |
+| Catppuccin Frappé (dark) | `catppuccin-frappe.conf` | — |
+| Catppuccin Macchiato (dark) | `catppuccin-macchiato.conf` | — |
+| Synthwave Pro (dark) | `synthwave-pro.conf` | — |
+| Catppuccin Mocha (dark) | `catppuccin-mocha.conf` | `catppuccin-mocha-ansi.conf` |
 
 RGB presets use explicit colors; ANSI presets are approximations whose actual
 shades depend on the terminal palette. One Dark includes the customized
 Markdown colors (blue headings, orange-red bold and orange math), with a
-coordinated blue-gray heading background (`#354151`); it does not reproduce an
-Airline theme or every Vim highlight group.
+blue-gray legacy heading background (`#354151`); it does not reproduce an
+Airline theme or every Vim highlight group. Parentheses and brackets use a
+distinct yellow in the RGB presets: `#E5C07B` in One Dark and `#F9E2AF` in
+Catppuccin Mocha, separate from normal text. Ordinary parentheses/brackets use
+**Syntax: bracket color**. Markdown link/image delimiters and recognized Pandoc
+anchor delimiters/IDs instead use **Syntax: JSON key color**, so navigation
+syntax is distinct from punctuation used for other purposes. In Mocha, this is
+Blue `#89B4FA` for link/anchor markers and Yellow `#F9E2AF` for ordinary
+brackets. Link labels and destinations share the navigation color and are underlined
+when Markdown text styles or live preview is enabled.
+Brackets inside strings, comments or literal code spans retain those token colors;
+selection, search and hovered link content keep their normal precedence.
+
+Select **Mode: rgb** to see every Catppuccin flavor. All four presets use colors
+from the official [Catppuccin palette](https://catppuccin.com/palette/), version
+1.8.0, with a consistent assignment to tinyedit's color roles. Heading backgrounds
+use each flavor's official Surface 0; Mocha now uses `#313244` in place of the
+previous custom shade. The variants are RGB presets; the existing Mocha ANSI
+approximation remains available, but a terminal's fixed ANSI palette cannot
+faithfully represent all four sets of official RGB values.
 
 ```sh
 make install-colorschemes   # copies missing files; install-colorschemes-force overwrites
@@ -83,23 +117,28 @@ make install-colorschemes   # copies missing files; install-colorschemes-force o
 installs the binary, shared presets, syntax definitions and guides under
 `$(PREFIX)/share/tinyedit`. Personal presets take precedence over shared presets
 with the same filename; compatible presets from both locations appear together.
-Use `make install-binary` to install just the executable.
+Use `make install-binary` to install just the executable. Existing personal
+presets are not overwritten automatically: `make install-colorschemes-force`
+replaces them with the shipped versions, including the updated bracket colors.
+Re-select the preset and save Settings to update an already saved palette.
 
-Choose **Mode**, then activate **Choose Color Scheme >** with Enter or Right.
-The same row becomes **Choose Color Scheme (use < > to change) name**.
-Left/Right previews compatible schemes, Enter applies one to the draft, and
-Esc cancels the choice. Invalid presets and presets for the other mode are
-excluded. Changing Mode preserves both palettes and changes the available
-schemes; it does not automatically apply a theme.
+Choose **Mode**, then select the **Color scheme** row. Left/Right changes the
+scheme immediately in the shared Settings draft; there is no separate selector
+or Enter confirmation. The displayed name remains visible when you move to
+another row. Enter/Space or clicking the row also advances to the next preset;
+the mouse wheel over the row cycles backward/forward when mouse support is on.
+Only valid presets for the selected mode are offered. Changing Mode preserves
+both palettes and changes the available schemes without applying a theme.
+Esc returns from Colors to the main Settings page, retaining the current draft.
 
-Save Settings to write the confirmed colors to `~/.tinyeditrc`. Discarding
+Save Settings to write the selected colors to `~/.tinyeditrc`. Discarding
 Settings preserves the previous colors. The terminal truecolor/fallback
 preference and non-color settings are preserved when applying a scheme.
 
 ![One Dark colorscheme editing Markdown](../imgs/color-scheme-one-dark.png)
 
-*One Dark interface and syntax example. This screenshot predates the Vim
-Markdown correction: headings now use blue text on blue-gray (`#354151`).*
+*One Dark interface and syntax example. This screenshot predates the independent
+H1–H6 foregrounds; updated RGB headings now have backgrounds tinted to match each level.*
 
 ![Catppuccin Mocha colorscheme editing C](../imgs/color-scheme-catppuccin-mocha.png)
 
@@ -225,3 +264,22 @@ there are more above, and `v` on the last one if there are more below.
 Markdown italic text has its own **Italic text color** row in Colors:
 `color_syntax_italic` (ANSI) / `rgb_syntax_italic` (RGB). One Dark RGB uses
 `#D19A67`. Older configurations without these keys retain the keyword color.
+
+Markdown H1–H6 have independent foregrounds in every shipped preset, editable
+as **H1 color** through **H6 color** in Colors. Their keys are
+`rgb_markdown_h1`…`rgb_markdown_h6` and `color_markdown_h1`…`color_markdown_h6`.
+RGB `off` / ANSI `terminal-default` inherits the preprocessor color, preserving old
+configurations. Updated RGB presets tint each background from its level’s
+foreground (12% foreground, 88% editor background). With a terminal-default
+editor background, the configured heading background supplies the blend base.
+The heading-background control remains the fallback for old palettes and its
+`off` value disables the tint. ANSI reverse-video headings use each level’s
+foreground hue, subject to the terminal palette.
+
+Theme provenance, Synthwave Pro color mapping and terminal limitations are documented
+in the [palette guide](../colorschemes/README.md#theme-sources-and-terminal-adaptations).
+
+Configuration and color-scheme readers reject pipes and devices without waiting
+for input. A missing symlink target is an error when saving settings; the link
+is preserved. Experimental Ghostty binding updates also preserve symlinks and
+long lines, and reject binary configuration without changing it.

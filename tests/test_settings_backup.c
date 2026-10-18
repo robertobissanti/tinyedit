@@ -64,12 +64,19 @@ int main(void) {
         settings.color_syntax_bracket != COLOR_MAGENTA_LIGHT) fail("new color parsing");
     if (settings.color_syntax_italic != COLOR_GREEN_DARK || settings.rgb_color_syntax_italic != 0x112233)
         fail("legacy italic colors do not follow customized keywords");
+    if (settings.markdown_live_preview) fail("live preview defaults off for old configurations");
+    settings.markdown_live_preview = 1;
+    settings.color_link_hover = COLOR_MAGENTA_DARK;
+    settings.rgb_color_link_hover = 0x123456;
     settings.color_syntax_italic = COLOR_RED_DARK;
     settings.rgb_color_syntax_italic = 0xd19a67;
     if (!settingsSave(&settings)) fail("settingsSave");
     settingsLoad(&settings);
     if (settings.color_syntax_italic != COLOR_RED_DARK || settings.rgb_color_syntax_italic != 0xd19a67)
         fail("independent italic palette persistence");
+    if (!settings.markdown_live_preview) fail("live preview persistence");
+    if (settings.color_link_hover != COLOR_MAGENTA_DARK || settings.rgb_color_link_hover != 0x123456)
+        fail("independent link hover palette persistence");
     if (settings.undo_memory_mb != 32) fail("undo memory budget persistence");
     if (settings.color_syntax_json_key != COLOR_RED_DARK ||
         settings.color_syntax_bracket != COLOR_MAGENTA_LIGHT) fail("new color persistence");
@@ -131,14 +138,54 @@ int main(void) {
     if (!legacy || !fp) fail("open legacy scheme");
     char legacy_line[256];
     while (fgets(legacy_line, sizeof(legacy_line), legacy))
-        if (strncmp(legacy_line, "rgb_syntax_italic", 16) != 0) fputs(legacy_line, fp);
+        if (strncmp(legacy_line, "rgb_syntax_italic", 16) != 0 &&
+            strncmp(legacy_line, "rgb_link_hover", 14) != 0 &&
+            !(strncmp(legacy_line, "rgb_markdown_h", 14) == 0 &&
+              legacy_line[14] >= '1' && legacy_line[14] <= '6')) fputs(legacy_line, fp);
     fclose(legacy); fclose(fp);
     if (!settingsLoadColorScheme(config, &scheme, scheme_error, sizeof(scheme_error)) ||
+        scheme.rgb_color_markdown_heading[0] != RGB_TERMINAL_DEFAULT ||
+        scheme.rgb_color_link_hover != 0x56b6c2 ||
         scheme.rgb_color_syntax_italic != scheme.rgb_color_syntax_keyword ||
         scheme.color_syntax_italic != before_scheme.color_syntax_italic)
         fail("legacy scheme italic inheritance preserves inactive palette");
-    if (!settingsLoadColorScheme("colorschemes/catppuccin-mocha.conf", &scheme, scheme_error, sizeof(scheme_error)) ||
-        scheme.rgb_color_background != 0x1e1e2e) fail("Mocha scheme rejected");
+    const char *flavors[] = {"latte", "frappe", "macchiato", "mocha"};
+    const int32_t backgrounds[] = {0xeff1f5, 0x303446, 0x24273a, 0x1e1e2e};
+    const int32_t bracket_colors[] = {0xdf8e1d, 0xe5c890, 0xeed49f, 0xf9e2af};
+    for (size_t i = 0; i < sizeof(flavors) / sizeof(*flavors); i++) {
+        char preset[128];
+        snprintf(preset, sizeof(preset), "colorschemes/catppuccin-%s.conf", flavors[i]);
+        struct editorSettings unchanged = scheme;
+        if (!settingsLoadColorScheme(preset, &scheme, scheme_error, sizeof(scheme_error)) ||
+            scheme.color_mode != COLOR_MODE_RGB || scheme.rgb_color_background != backgrounds[i] ||
+            scheme.rgb_color_syntax_bracket != bracket_colors[i]) fail("official Catppuccin flavor rejected");
+        if (scheme.color_background != unchanged.color_background || scheme.tab_stop != unchanged.tab_stop ||
+            scheme.rgb_output != unchanged.rgb_output) fail("Catppuccin changed unrelated settings or ANSI palette");
+    }
+    if (!settingsLoadColorScheme("colorschemes/synthwave-pro.conf", &scheme, scheme_error, sizeof(scheme_error)) ||
+        scheme.rgb_color_background != 0x1a1530 ||
+        scheme.rgb_color_syntax_json_key != 0xb56cff ||
+        scheme.rgb_color_syntax_bracket != 0xffd23f ||
+        scheme.rgb_color_syntax_preprocessor != 0x36e2ec)
+        fail("Synthwave Pro palette rejected or navigation colors incorrect");
+    const char *heading_presets[] = {"one-dark", "catppuccin-latte", "catppuccin-frappe",
+        "catppuccin-macchiato", "catppuccin-mocha", "synthwave-pro",
+        "one-dark-ansi", "catppuccin-mocha-ansi"};
+    for (size_t i = 0; i < sizeof(heading_presets) / sizeof(*heading_presets); i++) {
+        char preset[128];
+        snprintf(preset, sizeof(preset), "colorschemes/%s.conf", heading_presets[i]);
+        struct editorSettings heading_scheme = scheme;
+        if (!settingsLoadColorScheme(preset, &heading_scheme, scheme_error, sizeof(scheme_error)))
+            fail("heading preset rejected");
+        const int32_t *colors = heading_scheme.color_mode == COLOR_MODE_RGB ?
+            heading_scheme.rgb_color_markdown_heading : heading_scheme.color_markdown_heading;
+        for (int32_t level = 0; level < 6; level++) {
+            if (colors[level] == (heading_scheme.color_mode == COLOR_MODE_RGB ?
+                RGB_TERMINAL_DEFAULT : COLOR_TERMINAL_DEFAULT)) fail("preset omits heading level color");
+            for (int32_t other = 0; other < level; other++)
+                if (colors[level] == colors[other]) fail("heading levels must use distinct palette colors");
+        }
+    }
     before_scheme = scheme;
     const char *invalid_schemes[] = {
         "color_mode = rgb\nrgb_background = #112233\n",
@@ -241,6 +288,19 @@ int main(void) {
     if (settings.tab_stop != 7) fail("symlink target holds the saved value");
     unlink(config);
     unlink(real_config);
+
+    if (symlink(real_config, config) != 0) fail("dangling config symlink");
+    settingsLoad(&settings);
+    if (lstat(config, &link_info) != 0 || !S_ISLNK(link_info.st_mode)) fail("load preserves dangling config link");
+    if (settingsSave(&settings) || errno != ENOENT) fail("save rejects dangling config link");
+    if (access(real_config, F_OK) == 0) fail("dangling config target remains missing");
+    unlink(config);
+    if (mkfifo(config, 0600) != 0) fail("FIFO config fixture");
+    settingsLoad(&settings);
+    if (settingsSave(&settings) || errno != EINVAL) fail("save rejects FIFO config");
+    if (settingsLoadColorScheme(config, &settings, scheme_error, sizeof(scheme_error))) fail("scheme rejects FIFO");
+    if (lstat(config, &link_info) != 0 || !S_ISFIFO(link_info.st_mode)) fail("config FIFO preserved");
+    unlink(config);
 
     unlink(filename);
     puts("settings/backup tests: ok");

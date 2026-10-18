@@ -2,9 +2,68 @@
 
 #include "alloc.h"
 #include "buffer.h"
+#include "markdown.h"
 #include "utf8.h"
 
 #include <stdlib.h>
+
+/* ---- presentation adapters ---- */
+
+void renderSetMarkdownPreview(uint8_t enabled, const erow *row,
+    int32_t cursor, int32_t tab_stop) {
+    markdownSetPreview(enabled, row, cursor, tab_stop);
+}
+
+void renderKeepMarkdownLinkEditing(void) { markdownKeepLinkEditing(); }
+uint8_t renderByteHidden(const erow *row, int32_t byte) { return markdownByteHidden(row, byte); }
+uint8_t renderByteUnderlined(const erow *row, int32_t byte) { return markdownByteUnderlined(row, byte); }
+
+int32_t renderByteAtColumn(const erow *row, int32_t column) {
+    int32_t byte = 0, rx = 0;
+    while (byte < row->rsize && rx < column) {
+        size_t len = utf8NextCharLen(row->render, (size_t)byte, (size_t)row->rsize);
+        int32_t width = renderByteHidden(row, byte) ? 0 :
+            utf8SingleCharWidth(row->render + byte, len);
+        if (rx + width > column) break;
+        rx += width; byte += (int32_t)len;
+    }
+    return byte;
+}
+
+int32_t renderRowCxToRx(const erow *row, int32_t cx, int32_t tab_stop) {
+    if (!markdownPreviewEnabled() || !row->markdown_count) return bufferRowCxToRx(row, cx, tab_stop);
+    int32_t end = markdownSourceRenderByte(row, cx, tab_stop), byte = 0, rx = 0;
+    while (byte < end) {
+        size_t len = utf8NextCharLen(row->render, (size_t)byte, (size_t)row->rsize);
+        if (!renderByteHidden(row, byte)) rx += utf8SingleCharWidth(row->render + byte, len);
+        byte += (int32_t)len;
+    }
+    return rx;
+}
+
+int32_t renderRowRxToCx(const erow *row, int32_t target_rx, int32_t tab_stop) {
+    if (!markdownPreviewEnabled() || !row->markdown_count) return bufferRowRxToCx(row, target_rx, tab_stop);
+    int32_t at = 0, byte = 0, raw_rx = 0, rx = 0;
+    while (at < row->size) {
+        if (rx >= target_rx) {
+            const struct markdownSpan *span = markdownSpanAt(row, byte);
+            /* The label's right insertion boundary belongs after the hidden
+             * destination, so clicking beside it can enter source editing. */
+            if (!span || !span->link || byte < span->content_end || !renderByteHidden(row, byte)) break;
+        }
+        size_t len = utf8NextCharLen(row->chars, (size_t)at, (size_t)row->size);
+        uint8_t tab = row->chars[at] == '\t';
+        int32_t width = tab ? tab_stop - raw_rx % tab_stop :
+            utf8SingleCharWidth(row->chars + at, len);
+        int32_t visible = renderByteHidden(row, byte) ? 0 : width;
+        if (rx + visible > target_rx) break;
+        rx += visible; raw_rx += width;
+        byte += tab ? width : (int32_t)len; at += (int32_t)len;
+    }
+    return at;
+}
+
+/* ---- layout ---- */
 
 /**
  * @brief Measure the columns reserved for line numbers.
@@ -57,7 +116,11 @@ int32_t renderSoftWrapCols(const struct editorView *view, const struct editorBuf
  * @return at least one segment and caches separate render-byte and display-column starts owned by row.
  */
 int32_t renderRowSegments(erow *row, int32_t wrapcols) {
-    if (row->seg_start && row->seg_start_rx && row->seg_wrapcols == wrapcols)
+    int32_t cursor = markdownPreviewCursor(row);
+    int32_t edit_start = markdownPreviewEditStart(row);
+    if (row->seg_start && row->seg_start_rx && row->seg_wrapcols == wrapcols &&
+        row->seg_preview_enabled == markdownPreviewEnabled() && row->seg_preview_cursor == cursor &&
+        row->seg_preview_edit_start == edit_start)
         return row->seg_count;
     free(row->seg_start);
     free(row->seg_start_rx);
@@ -65,6 +128,9 @@ int32_t renderRowSegments(erow *row, int32_t wrapcols) {
     row->seg_start_rx = NULL;
     row->seg_count = 0;
     row->seg_wrapcols = wrapcols;
+    row->seg_preview_enabled = markdownPreviewEnabled();
+    row->seg_preview_cursor = cursor;
+    row->seg_preview_edit_start = edit_start;
 
     int32_t capacity = 16;
     row->seg_start = teMalloc(teArrayBytes((size_t)capacity, sizeof(*row->seg_start)));
@@ -89,14 +155,15 @@ int32_t renderRowSegments(erow *row, int32_t wrapcols) {
         row->seg_start[count] = line_start;
         row->seg_start_rx[count++] = line_start_rx;
         int32_t col = 0, pos = line_start, last_space_pos = -1, last_space_col = -1;
-        while (pos < row->rsize && col < wrapcols) {
+        while (pos < row->rsize && (col < wrapcols || renderByteHidden(row, pos))) {
             size_t len = utf8NextCharLen(row->render, (size_t)pos, (size_t)row->rsize);
             if (len == 0) len = 1;
-            int32_t width = utf8SingleCharWidth(row->render + pos, len);
+            int32_t width = renderByteHidden(row, pos) ? 0 :
+                utf8SingleCharWidth(row->render + pos, len);
             /* A glyph wider than the viewport still owns one segment;
              * leaving it unconsumed would make the outer loop never advance. */
-            if (col + width > wrapcols && pos > line_start) break;
-            if (row->render[pos] == ' ') {
+            if (width > 0 && col + width > wrapcols && col > 0) break;
+            if (width && row->render[pos] == ' ') {
                 last_space_pos = pos;
                 last_space_col = col;
             }
@@ -142,7 +209,7 @@ int32_t renderSegmentVisibleEndRx(const erow *row, int32_t segment_count,
     int32_t segment, int32_t tab_stop) {
     int32_t end_byte = segment + 1 < segment_count ? segment_starts[segment + 1] : row->rsize;
     int32_t end_rx = segment + 1 < segment_count ? segment_starts_rx[segment + 1] :
-        bufferRowCxToRx(row, row->size, tab_stop);
+        renderRowCxToRx(row, row->size, tab_stop);
     while (end_byte > segment_starts[segment] && row->render[end_byte - 1] == ' ') {
         end_byte--;
         end_rx--;
