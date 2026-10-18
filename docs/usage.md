@@ -606,3 +606,7 @@ previous session didn't close cleanly (crash, kill, terminal closed).
 In that case the editor shows a full-screen warning (not just a
 status-bar message, to avoid silently missing the chance to recover)
 and asks whether to restore the changes before proceeding.
+
+Save refuses pipes, devices and other special-file destinations, including
+through symbolic links. Recovery rejects special files and NUL-containing data
+without replacing the current document.

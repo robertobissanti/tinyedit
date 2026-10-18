@@ -19,7 +19,7 @@ SOURCES := $(SRC_DIR)/tinyedit.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c \
 HEADERS := $(wildcard $(INC_DIR)/*.h) $(BIN_DIR)/build_info.h
 TEST_BINS := $(TEST_DIR)/test_syntax $(TEST_DIR)/test_settings_backup \
 	$(TEST_DIR)/test_editor_state $(TEST_DIR)/test_buffer $(TEST_DIR)/test_history \
-	$(TEST_DIR)/test_render $(TEST_DIR)/test_utf8 $(TEST_DIR)/test_core $(TEST_DIR)/test_fileio $(TEST_DIR)/test_search $(TEST_DIR)/test_backup_paths $(TEST_DIR)/test_memory_contracts $(TEST_DIR)/test_menu
+	$(TEST_DIR)/test_render $(TEST_DIR)/test_utf8 $(TEST_DIR)/test_core $(TEST_DIR)/test_fileio $(TEST_DIR)/test_search $(TEST_DIR)/test_backup_paths $(TEST_DIR)/test_memory_contracts $(TEST_DIR)/test_menu $(TEST_DIR)/test_terminal
 
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
@@ -149,6 +149,9 @@ $(TEST_DIR)/test_memory_contracts: $(TEST_DIR)/test_memory_contracts.c $(SRC_DIR
 $(TEST_DIR)/test_menu: $(TEST_DIR)/test_menu.c $(SRC_DIR)/menu.c $(SRC_DIR)/command.c $(SRC_DIR)/settings.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_menu.c $(SRC_DIR)/command.c $(SRC_DIR)/settings.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
 
+$(TEST_DIR)/test_terminal: $(TEST_DIR)/test_terminal.c $(SRC_DIR)/terminal.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_terminal.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
+
 test: $(TARGET) $(TEST_BINS)
 	./$(TEST_DIR)/test_syntax
 	./$(TEST_DIR)/test_settings_backup
@@ -163,6 +166,7 @@ test: $(TARGET) $(TEST_BINS)
 	./$(TEST_DIR)/test_backup_paths
 	./$(TEST_DIR)/test_memory_contracts
 	./$(TEST_DIR)/test_menu
+	./$(TEST_DIR)/test_terminal
 	python3 $(TEST_DIR)/test_pty.py
 	python3 $(TEST_DIR)/test_build.py
 	python3 $(TEST_DIR)/test_docs.py

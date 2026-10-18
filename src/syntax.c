@@ -2,6 +2,7 @@
 
 #include "syntax.h"
 #include "alloc.h"
+#include "fileio.h"
 #include "markdown.h"
 #include "resources.h"
 #include "utf8.h"
@@ -368,7 +369,7 @@ static char **syntaxSplitList(const char *value, int32_t *out_count) {
  * not.
  */
 static const struct syntaxLang *syntaxParseLangFile(const char *path) {
-    FILE *fp = fopen(path, "r");
+    FILE *fp = fileioOpenRead(path);
     if (!fp) return NULL;
 
     char **extensions = NULL;

@@ -49,6 +49,15 @@
 
 ### Important fixes
 
+- Reject special files during save instead of replacing FIFOs or other special
+  targets, including through symlinks. Reject special recovery/configuration
+  files without blocking, and reject NUL-containing recovery data.
+- Preserve a dangling `~/.tinyeditrc` symlink instead of silently replacing it
+  when configuration loading or saving fails.
+- Reject binary Ghostty configuration without reading outside a line buffer or
+  truncating its contents. Preserve symlinks and long lines when updating the
+  experimental Command-key bindings, and synchronize the replacement to disk.
+
 - Bound Markdown link highlighting depth so heavily nested links cannot exhaust
   the stack and crash the editor. Deeper labels retain their literal text.
 

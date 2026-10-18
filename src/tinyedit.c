@@ -19,7 +19,7 @@
  *   clipboard.c    system clipboard integration and local fallback
  *   command.c      shared command metadata and setting-toggle links
  *   editor_state.c selection ranges and shared ASCII auto-close policy
- *   fileio.c       home-path expansion, staged loading and atomic replacement
+ *   fileio.c       validated regular-file I/O, staged loading and atomic replacement
  *   history.c      bounded row deltas, undo/redo and allocation-failure rollback
  *   linenoise.c    historical line-editor implementation; not built
  *   links.c        inline/bare links and safe browser/mail/file dispatch

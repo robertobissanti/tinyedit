@@ -154,3 +154,9 @@ combining marks, ZWJ, regional indicators, modifiers, selectors, malformed bytes
 and controls, checking every forward boundary against backward navigation.
 These test the editor's supported grouping rules, not full Unicode grapheme
 conformance.
+
+File I/O regressions reject FIFO saves and recovery, device recovery, binary
+backup content and dangling configuration links. Configuration readers also
+reject FIFO input. `test_terminal.c` isolates Ghostty configuration updates
+with a disabled subprocess launcher: binary data stays untouched, symlinks
+survive and long lines cannot be mistaken for editor-owned bindings.

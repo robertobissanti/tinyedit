@@ -6,6 +6,7 @@
 
 #include "terminal.h"
 #include "alloc.h"
+#include "fileio.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -267,7 +268,12 @@ uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
     }
     if (!path[0]) return 0;
 
-    FILE *in = fopen(path, "r");
+    char *resolved = fileioResolveSavePath(path);
+    if (!resolved) return 0;
+    int32_t path_length = snprintf(path, sizeof(path), "%s", resolved);
+    free(resolved);
+    if (path_length < 0 || (size_t)path_length >= sizeof(path)) { errno = ENAMETOOLONG; return 0; }
+    FILE *in = fileioOpenRead(path);
     if (!in) return 0;
     char tmppath[PATH_MAX];
     if (snprintf(tmppath, sizeof(tmppath), "%s.tinyedit-XXXXXX", path) >= (int)sizeof(tmppath)) {
@@ -289,8 +295,11 @@ uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
 
     uint8_t ok = 1;
     uint8_t output_ends_newline = 1;
-    char line[4096];
-    while (fgets(line, sizeof(line), in)) {
+    char *line = NULL;
+    size_t capacity = 0;
+    ssize_t length;
+    while ((length = getline(&line, &capacity, in)) >= 0) {
+        if (memchr(line, '\0', (size_t)length)) { errno = EILSEQ; ok = 0; break; }
         uint8_t managed = strcmp(line, managed_start) == 0 ||
                           strcmp(line, managed_end) == 0 ||
                           strcmp(line, legacy_header) == 0;
@@ -299,10 +308,11 @@ uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
         }
         if (!managed) {
             if (fputs(line, out) == EOF) ok = 0;
-            output_ends_newline = line[strlen(line) - 1] == '\n';
+            output_ends_newline = length > 0 && line[length - 1] == '\n';
         }
     }
-    if (ferror(in)) ok = 0;
+    free(line);
+    if (ferror(in) || !feof(in)) ok = 0;
     if (enabled && ok) {
         if (!output_ends_newline && fputc('\n', out) == EOF) ok = 0;
         if (fputs(managed_start, out) == EOF) ok = 0;
@@ -315,8 +325,9 @@ uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled) {
     struct stat st;
     if (stat(path, &st) == 0 && fchmod(fd, st.st_mode) != 0) ok = 0;
     if (fclose(in) != 0) ok = 0;
+    if (fflush(out) != 0 || fsync(fd) != 0) ok = 0;
     if (fclose(out) != 0) ok = 0;
-    if (ok && rename(tmppath, path) == 0)
+    if (ok && fileioReplace(tmppath, path) == FILE_SAVE_DURABLE)
         return terminalReloadGhosttyConfiguration();
     unlink(tmppath);
     return 0;

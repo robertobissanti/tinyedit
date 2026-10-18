@@ -49,6 +49,17 @@ int main(void) {
     check(recovered && recovered_length == 8 && memcmp(recovered, "ORIGINAL", 8) == 0,
         "path header cannot leak into recovered document");
     free(recovered); backupRemove(target);
+    char backup[1024];
+    check(backupPathFor(target, backup, sizeof(backup)), "backup fixture path");
+    check(mkfifo(backup, 0600) == 0, "FIFO backup fixture");
+    check(!backupRead(target, NULL) && errno == EINVAL, "FIFO recovery refuses without blocking");
+    unlink(backup);
+    check(symlink("/dev/zero", backup) == 0, "device backup fixture");
+    check(!backupRead(target, NULL) && errno == EINVAL, "device recovery refuses unbounded input");
+    unlink(backup);
+    check(backupWrite(target, "a\0b", 3), "binary backup fixture");
+    check(!backupRead(target, NULL) && errno == EILSEQ, "binary recovery refuses NUL bytes");
+    backupRemove(target);
     snprintf(target, sizeof(target), "%s/.tinyedit/backup", directory); rmdir(target);
     snprintf(target, sizeof(target), "%s/.tinyedit", directory); rmdir(target);
     check(rmdir(directory) == 0, "remove path fixture");

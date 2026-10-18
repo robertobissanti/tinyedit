@@ -20,6 +20,7 @@ __pycache__/
 /local/
 
 !tests/test_menu.c
+!tests/test_terminal.c
 
 !tests/test_docs.py
 !tests/test_install.py

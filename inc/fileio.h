@@ -18,6 +18,15 @@ enum fileSaveResult {
  * or the result length would overflow. No shell evaluation is performed. */
 char *fileioExpandHomePath(const char *path);
 
+/** @brief Open a regular file for reading without blocking on pipes/devices.
+ * Returns an owned stream to fclose, or NULL with errno. Checks the opened
+ * descriptor, including when the pathname is a symlink. */
+FILE *fileioOpenRead(const char *filename);
+/** @brief Resolve a save destination, rejecting dangling links and special files.
+ * Returns an owned path to free, or NULL with errno. Existing symlinks resolve
+ * to their regular target; a missing ordinary path is copied unchanged. */
+char *fileioResolveSavePath(const char *filename);
+
 /** @brief Read all rows into an empty candidate; no active editor state is changed.
  * On failure, returns 0 with errno and releases candidate-owned storage.
  * Only regular files are accepted; pipes/devices are rejected without blocking.

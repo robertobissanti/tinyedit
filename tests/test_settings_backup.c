@@ -289,6 +289,19 @@ int main(void) {
     unlink(config);
     unlink(real_config);
 
+    if (symlink(real_config, config) != 0) fail("dangling config symlink");
+    settingsLoad(&settings);
+    if (lstat(config, &link_info) != 0 || !S_ISLNK(link_info.st_mode)) fail("load preserves dangling config link");
+    if (settingsSave(&settings) || errno != ENOENT) fail("save rejects dangling config link");
+    if (access(real_config, F_OK) == 0) fail("dangling config target remains missing");
+    unlink(config);
+    if (mkfifo(config, 0600) != 0) fail("FIFO config fixture");
+    settingsLoad(&settings);
+    if (settingsSave(&settings) || errno != EINVAL) fail("save rejects FIFO config");
+    if (settingsLoadColorScheme(config, &settings, scheme_error, sizeof(scheme_error))) fail("scheme rejects FIFO");
+    if (lstat(config, &link_info) != 0 || !S_ISFIFO(link_info.st_mode)) fail("config FIFO preserved");
+    unlink(config);
+
     unlink(filename);
     puts("settings/backup tests: ok");
     return 0;

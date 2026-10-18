@@ -278,3 +278,8 @@ foreground hue, subject to the terminal palette.
 
 Theme provenance, Synthwave Pro color mapping and terminal limitations are documented
 in the [palette guide](../colorschemes/README.md#theme-sources-and-terminal-adaptations).
+
+Configuration and color-scheme readers reject pipes and devices without waiting
+for input. A missing symlink target is an error when saving settings; the link
+is preserved. Experimental Ghostty binding updates also preserve symlinks and
+long lines, and reject binary configuration without changing it.

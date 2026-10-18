@@ -519,7 +519,7 @@ void settingsLoad(struct editorSettings *out) {
     char path[1024];
     if (!configPath(path, sizeof(path))) return;
 
-    FILE *fp = fopen(path, "r");
+    FILE *fp = fileioOpenRead(path);
     if (!fp) {
         /* No config file yet: defaults stand in memory for this run,
          * and are also written to disk right away so ~/.tinyeditrc
@@ -529,7 +529,7 @@ void settingsLoad(struct editorSettings *out) {
          * read-only $HOME) is not fatal -- the in-memory defaults
          * from settingsDefaults() above still work for this session,
          * same as before this existed. */
-        settingsSave(out);
+        if (errno == ENOENT) settingsSave(out);
         return;
     }
 
@@ -610,7 +610,7 @@ void settingsLoad(struct editorSettings *out) {
 /** @brief Load a complete color preset atomically, preserving non-color settings. */
 uint8_t settingsLoadColorScheme(const char *path, struct editorSettings *draft,
     char *error, size_t error_size) {
-    FILE *fp = fopen(path, "r");
+    FILE *fp = fileioOpenRead(path);
     if (!fp) { snprintf(error, error_size, "Cannot open color scheme"); return 0; }
     struct editorSettings candidate = *draft;
     uint8_t *seen = teMalloc((size_t)settingDescriptorCount);
@@ -697,17 +697,11 @@ uint8_t settingsSave(const struct editorSettings *s) {
     char path[1024];
     if (!configPath(path, sizeof(path))) return 0;
 
-    /* A dotfile manager may keep ~/.tinyeditrc as a symlink: replace the real
-     * file it points to, not the link. realpath() allocates internally, so its
-     * failure is recoverable here; ENOENT just means the file is not there yet. */
-    char *resolved = realpath(path, NULL);
-    if (resolved) {
-        int32_t resolved_len = snprintf(path, sizeof(path), "%s", resolved);
-        free(resolved);
-        if (resolved_len < 0 || (size_t)resolved_len >= sizeof(path)) { errno = ENAMETOOLONG; return 0; }
-    } else if (errno != ENOENT) {
-        return 0;
-    }
+    char *resolved = fileioResolveSavePath(path);
+    if (!resolved) return 0;
+    int32_t resolved_len = snprintf(path, sizeof(path), "%s", resolved);
+    free(resolved);
+    if (resolved_len < 0 || (size_t)resolved_len >= sizeof(path)) { errno = ENAMETOOLONG; return 0; }
 
     char tmppath[1040];
     int32_t pathlen = snprintf(tmppath, sizeof(tmppath), "%s.tmp.XXXXXX", path);

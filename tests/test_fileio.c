@@ -294,6 +294,18 @@ int main(void) {
     struct editorDocument fifo_candidate;
     check(!fileioLoadDocument(fifo_path, &fifo_candidate) && errno == EINVAL,
         "opening FIFO returns immediately without reader");
+    check(fileioAtomicSave(fifo_path, "data", 4) == FILE_SAVE_FAILED && errno == EINVAL,
+        "saving cannot replace a FIFO");
+    struct stat st;
+    check(lstat(fifo_path, &st) == 0 && S_ISFIFO(st.st_mode), "FIFO survives refused save");
+    char fifo_link[256]; snprintf(fifo_link, sizeof(fifo_link), "%s/link", fifo_dir);
+    check(symlink("pipe", fifo_link) == 0, "symlink to FIFO");
+    check(fileioAtomicSave(fifo_link, "data", 4) == FILE_SAVE_FAILED && errno == EINVAL,
+        "saving through symlink cannot replace a FIFO");
+    check(lstat(fifo_link, &st) == 0 && S_ISLNK(st.st_mode), "FIFO symlink survives refused save");
+    check(fileioAtomicSave(fifo_dir, "data", 4) == FILE_SAVE_FAILED && errno == EISDIR,
+        "saving cannot replace a directory");
+    unlink(fifo_link);
     unlink(fifo_path); rmdir(fifo_dir);
     char directory[] = "/tmp/tinyedit-fileio-XXXXXX";
     check(mkdtemp(directory) != NULL, "create test directory");

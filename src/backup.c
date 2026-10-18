@@ -153,13 +153,14 @@ char *backupRead(const char *filename, size_t *outlen) {
     char path[1024];
     if (!backupPathFor(filename, path, sizeof(path))) return NULL;
 
-    int fd = open(path, O_RDONLY);
-    if (fd == -1) return NULL;
+    FILE *stream = fileioOpenRead(path);
+    if (!stream) return NULL;
+    int fd = fileno(stream);
 
     /* Match the entire known path instead of treating its first newline as
      * a delimiter: POSIX filenames may themselves contain newlines. */
     char *expected = absolutePathOf(filename);
-    if (!expected) { close(fd); return NULL; }
+    if (!expected) { fclose(stream); return NULL; }
     size_t header_length = strlen(expected);
     uint8_t byte;
     ssize_t nread;
@@ -172,7 +173,7 @@ char *backupRead(const char *filename, size_t *outlen) {
         }
     }
     free(expected);
-    if (!header_ok) { close(fd); return NULL; }
+    if (!header_ok) { fclose(stream); errno = EILSEQ; return NULL; }
 
     size_t cap = 4096, len = 0;
     char *buf = teMalloc(cap);
@@ -180,6 +181,9 @@ char *backupRead(const char *filename, size_t *outlen) {
     while (1) {
         do { nread = read(fd, buf + len, cap - len); } while (nread < 0 && errno == EINTR);
         if (nread <= 0) break;
+        if (memchr(buf + len, '\0', (size_t)nread)) {
+            free(buf); fclose(stream); errno = EILSEQ; return NULL;
+        }
         len += (size_t)nread;
         if (len == cap) {
             cap = teGrowCapacity(cap, teSizeAdd(len, 1), SIZE_MAX);
@@ -188,11 +192,13 @@ char *backupRead(const char *filename, size_t *outlen) {
         }
     }
     if (nread == -1) {
+        int saved_errno = errno;
         free(buf);
-        close(fd);
+        fclose(stream);
+        errno = saved_errno;
         return NULL;
     }
-    if (close(fd) != 0) { free(buf); return NULL; }
+    if (fclose(stream) != 0) { free(buf); return NULL; }
 
     buf[len] = '\0'; /* cap always left room for at least 1 byte */
     if (outlen) *outlen = len;
