@@ -25,6 +25,7 @@
 static struct termios orig_termios;
 static uint8_t alternate_screen_active = 0;
 volatile sig_atomic_t winsize_changed = 0;
+static volatile sig_atomic_t termination_requested = 0;
 int32_t mouseEventButton;
 int32_t mouseEventCol, mouseEventRow;
 uint8_t mouseEventPress;
@@ -89,7 +90,11 @@ void terminalDie(const char *s) {
      * the exit handlers switch back, which would hide the reason for the exit.
      * Raw mode still disables output post-processing, hence the explicit CR. */
     terminalRestoreVisualState();
-    fprintf(stderr, "%s: %s\r\n", s, strerror(saved_errno));
+    uint8_t colored = isatty(STDERR_FILENO) != 0;
+    if (colored) fputs("\x1b[31m", stderr);
+    fprintf(stderr, "%s: %s", s, strerror(saved_errno));
+    if (colored) fputs("\x1b[0m", stderr);
+    fputs("\r\n", stderr);
     exit(1);
 }
 
@@ -126,6 +131,7 @@ void terminalRestoreVisualState(void) {
 void terminalEnterAlternateScreen(void) {
     if (alternate_screen_active) return;
     atexit(terminalRestoreVisualState);
+    teSetFatalCleanup(terminalRestoreVisualState);
     alternate_screen_active = 1;
     if (!terminalWrite("\x1b[?1049h", 8)) terminalDie("write");
 }
@@ -457,6 +463,23 @@ static void handleWinch(int sig) {
     winsize_changed = 1;
 }
 
+static void handleTermination(int sig) {
+    termination_requested = sig;
+}
+
+void terminalEnableTerminationHandling(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handleTermination;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGTERM, &sa, NULL) != 0 || sigaction(SIGHUP, &sa, NULL) != 0)
+        terminalDie("sigaction");
+}
+
+void terminalCheckTermination(void) {
+    if (termination_requested) exit(128 + termination_requested);
+}
+
 /**
  * @brief Install the resize signal handler without restarting blocked reads.
  *
@@ -549,6 +572,7 @@ int32_t terminalReadKey(
     void
 #endif
 ) {
+    terminalCheckTermination();
     if (pending_key >= 0) {
         int32_t key = pending_key;
         pending_key = -1;
@@ -557,10 +581,12 @@ int32_t terminalReadKey(
     ssize_t nread;
     uint8_t c;
     while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
+        terminalCheckTermination();
         if (nread == -1 && errno == EINTR && winsize_changed)
             return CTRL_KEY('l'); /* no-op key: lets the main loop redraw */
         if (nread == -1 && errno != EAGAIN && errno != EINTR) terminalDie("read");
     }
+    terminalCheckTermination();
 
     if (c == '\x1b') {
         uint8_t seq[3];
@@ -914,8 +940,12 @@ char *terminalReadPastedText(size_t *outlen) {
     int32_t matched = 0;
 
     while (1) {
+        terminalCheckTermination();
         uint8_t c;
-        if (read(STDIN_FILENO, &c, 1) != 1) break; /* stream ended unexpectedly; return what we have */
+        if (read(STDIN_FILENO, &c, 1) != 1) {
+            terminalCheckTermination();
+            break; /* stream ended unexpectedly; return what we have */
+        }
 
         if (c == (uint8_t)paste_end_marker[matched]) {
             matched++;
@@ -957,6 +987,27 @@ char *terminalReadPastedText(size_t *outlen) {
     return buf;
 }
 
+/* A terminal report can be supplied by a remote PTY; reject overflow and
+ * malformed coordinates before they reach layout arithmetic. */
+static uint8_t terminalParseCursorPosition(const char *report, int32_t *rows, int32_t *cols) {
+    if (report[0] != '\x1b' || report[1] != '[') return 0;
+    const char *at = report + 2;
+    int32_t values[2] = {0};
+    for (int32_t field = 0; field < 2; field++) {
+        if (*at < '0' || *at > '9') return 0;
+        while (*at >= '0' && *at <= '9') {
+            int32_t digit = *at++ - '0';
+            if (values[field] > (UINT16_MAX - digit) / 10) return 0;
+            values[field] = values[field] * 10 + digit;
+        }
+        if (values[field] == 0 || *at != (field == 0 ? ';' : 'R')) return 0;
+        at++;
+    }
+    if (*at) return 0;
+    *rows = values[0]; *cols = values[1];
+    return 1;
+}
+
 /**
  * @brief Query the terminal's one-based cursor row and column.
  *
@@ -967,16 +1018,18 @@ char *terminalReadPastedText(size_t *outlen) {
 static int32_t getCursorPosition(int32_t *rows, int32_t *cols) {
     char buf[32];
     uint32_t i = 0;
+    uint8_t complete = 0;
     if (!terminalWrite("\x1b[6n", 4)) return -1;
     while (i < sizeof(buf) - 1) {
-        if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
-        if (buf[i] == 'R') break;
+        if (read(STDIN_FILENO, &buf[i], 1) != 1) {
+            terminalCheckTermination();
+            break;
+        }
+        if (buf[i] == 'R') { complete = 1; i++; break; }
         i++;
     }
     buf[i] = '\0';
-    if (buf[0] != '\x1b' || buf[1] != '[') return -1;
-    if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
-    return 0;
+    return complete && terminalParseCursorPosition(buf, rows, cols) ? 0 : -1;
 }
 
 /**

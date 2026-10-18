@@ -70,13 +70,13 @@ void bufferInsertRow(struct editorBuffer *buffer, int32_t at, const char *text, 
     if (at < 0 || at > buffer->row_count) return;
     if (historyInsertRow(buffer, at, text, len)) return;
     if (len > INT32_MAX || buffer->row_count == INT32_MAX) {
-        errno = ENOMEM; perror("tinyedit: buffer size"); exit(EXIT_FAILURE);
+        teAllocationFailure("buffer size exceeds limit");
     }
     if (buffer->capacity <= buffer->row_count) {
         int32_t capacity = buffer->capacity > 0 ? buffer->capacity : 1;
         capacity = capacity <= INT32_MAX / 2 ? capacity * 2 : INT32_MAX;
         if ((size_t)capacity > SIZE_MAX / sizeof(*buffer->rows)) {
-            errno = ENOMEM; perror("tinyedit: buffer size"); exit(EXIT_FAILURE);
+            teAllocationFailure("buffer size exceeds limit");
         }
         buffer->rows = teRealloc(buffer->rows, sizeof(*buffer->rows) * (size_t)capacity);
         buffer->capacity = capacity;
@@ -165,7 +165,7 @@ void bufferRowInsert(erow *row, int32_t at, const char *text, size_t len) {
         if (row->owner && row->owner->history && row->owner->history->pending) {
             row->owner->history->error = HISTORY_SIZE; return;
         }
-        errno = ENOMEM; perror("tinyedit: row size"); exit(EXIT_FAILURE);
+        teAllocationFailure("row size exceeds limit");
     }
     size_t needed = (size_t)row->size + len + 1;
     if (!historyPrepareRow(row, needed)) return;

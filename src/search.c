@@ -91,9 +91,7 @@ static char *searchDocumentText(const struct editorBuffer *buffer, size_t *out_l
     for (int32_t y = 0; y < buffer->row_count; y++) {
         size_t bytes = (size_t)buffer->rows[y].size + (y + 1 < buffer->row_count ? 1 : 0);
         if (bytes > SIZE_MAX - total - 1) {
-            errno = ENOMEM;
-            perror("tinyedit: search text size");
-            exit(EXIT_FAILURE);
+            teAllocationFailure("search text size exceeds limit");
         }
         total += bytes;
     }

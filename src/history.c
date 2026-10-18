@@ -17,9 +17,7 @@
  * @details Follows the application's fatal allocation contract and cleanup.
  */
 static void historySizeError(void) {
-    errno = ENOMEM;
-    perror("tinyedit: history size");
-    exit(EXIT_FAILURE);
+    teAllocationFailure("history size exceeds limit");
 }
 
 /** @brief Calculate an array size without overflowing size_t. */

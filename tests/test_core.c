@@ -1195,6 +1195,22 @@ static void testMarkdownCodeBlocks(void) {
     editorResetDocument(); settingsDefaults(&S);
 }
 
+static int saved_external_input;
+
+static void beginExternalAnswer(char answer) {
+    int input[2];
+    check(pipe(input) == 0, "external confirmation pipe");
+    saved_external_input = dup(STDIN_FILENO);
+    check(saved_external_input >= 0 && write(input[1], &answer, 1) == 1 &&
+        dup2(input[0], STDIN_FILENO) >= 0, "external confirmation input");
+    close(input[0]); close(input[1]);
+}
+
+static void endExternalAnswer(void) {
+    check(dup2(saved_external_input, STDIN_FILENO) >= 0, "restore external input");
+    close(saved_external_input);
+}
+
 static void testLinks(void) {
     struct textLink link;
     const char *inline_link = "é [guide](<folder/a b.md#title> \"title\") end";
@@ -1331,6 +1347,10 @@ static void testLinks(void) {
     char *old_env = path_env ? teStrdup(path_env) : NULL;
     check(setenv("PATH", root, 1) == 0 && setenv("TINYEDIT_LINK_LOG", log, 1) == 0, "isolated browser environment");
     const char *url = "https://example.org/$(echo-surprise);x?y=1&z=2";
+    check(!linksIsWeb("https:///missing-host") &&
+        !linksIsWeb("https://trusted.example@evil.example/") &&
+        !linksIsWeb("https://example.org\\@evil.example/"),
+        "web links reject empty and ambiguous authorities");
     check(linksOpenWeb(url), "launch web link as one argument");
     struct timespec pause = {0, 10000000};
     for (int32_t attempt = 0; attempt < 100; attempt++) {
@@ -1354,9 +1374,12 @@ static void testLinks(void) {
         !linksIsMailto("mailto:a@example.org\n") && !linksIsMailto("javascript:alert(1)"),
         "mailto transport checks preserve URI parameters and reject unsafe raw bytes");
     check(linksIsImagePath("/a/b.PNG") && linksIsImagePath("x.jpeg") && !linksIsImagePath("/a/run.command") &&
-        !linksIsImagePath("/a.png/tool") && !linksIsImagePath("/a/noext") && !linksOpenFile("/tmp/x.desktop"),
+        !linksIsImagePath("/a.png/tool") && !linksIsImagePath("/a/noext") &&
+        !linksIsImagePath("/a/active.svg") && !linksOpenFile("/tmp/x.desktop"),
         "image opener accepts only image extensions");
+    beginExternalAnswer('y');
     editorFollowLink(mail);
+    endExternalAnswer();
     check(!E.ui.statusmsg_error && strstr(E.ui.statusmsg, "mail application"), "mailto uses desktop mail dispatch");
     for (int32_t attempt = 0; attempt < 100; attempt++) {
         struct stat log_stat;
@@ -1368,10 +1391,58 @@ static void testLinks(void) {
     check(file && fread(logged, 1, sizeof(logged) - 1, file) == strlen(mail) &&
         !strcmp(logged, mail), "mail launcher receives the literal URI without sending mail");
     fclose(file);
+    unlink(log);
+    beginExternalAnswer('n');
+    editorFollowLink(url);
+    endExternalAnswer();
+    check(strstr(E.ui.statusmsg, "not opened") && access(log, F_OK) != 0,
+        "external web link requires consent");
+    beginExternalAnswer('y');
+    editorFollowLink(url);
+    endExternalAnswer();
+    check(!E.ui.statusmsg_error && strstr(E.ui.statusmsg, "browser"),
+        "confirmed external web link opens");
+    for (int32_t attempt = 0; attempt < 100; attempt++) {
+        struct stat log_stat;
+        if (stat(log, &log_stat) == 0 && log_stat.st_size == (off_t)strlen(url)) break;
+        nanosleep(&pause, NULL);
+    }
+    unlink(log);
     char image_path[256];
     snprintf(image_path, sizeof(image_path), "%s/-é image $(echo-surprise).png", root);
     file = fopen(image_path, "wb");
-    check(file && fputs("PNG fixture", file) >= 0 && fclose(file) == 0, "image fixture with literal shell punctuation");
+    static const unsigned char png_header[] = "\x89PNG\r\n\x1a\n";
+    check(file && fwrite(png_header, 1, sizeof(png_header) - 1, file) == sizeof(png_header) - 1 &&
+        fclose(file) == 0, "image fixture with literal shell punctuation");
+    char masquerade[256];
+    snprintf(masquerade, sizeof(masquerade), "%s/masquerade.png", root);
+    file = fopen(masquerade, "wb");
+    check(file && fputs("#!/bin/sh\nexit 1\n", file) >= 0 && fclose(file) == 0 &&
+        !linksVerifyImageFile(masquerade) && errno == EINVAL,
+        "executable content with image suffix is refused");
+    unlink(masquerade);
+    static const struct {
+        const char *extension;
+        const char *header;
+        size_t length;
+    } signatures[] = {
+        {"jpg", "\xff\xd8\xff", 3}, {"gif", "GIF89a", 6},
+        {"webp", "RIFF\0\0\0\0WEBP", 12}, {"bmp", "BM", 2},
+        {"tiff", "II*\0", 4}, {"ico", "\0\0\1\0", 4},
+        {"avif", "\0\0\0\0ftypavif", 12},
+        {"heic", "\0\0\0\0ftypheic", 12}
+    };
+    for (size_t i = 0; i < sizeof(signatures) / sizeof(signatures[0]); i++) {
+        char checked_path[256];
+        snprintf(checked_path, sizeof(checked_path), "%s/signature.%s", root, signatures[i].extension);
+        file = fopen(checked_path, "wb");
+        check(file && fwrite(signatures[i].header, 1, signatures[i].length, file) == signatures[i].length &&
+            fclose(file) == 0 && linksVerifyImageFile(checked_path),
+            "supported image signatures match their extensions");
+        unlink(checked_path);
+    }
+    check(chmod(image_path, 0700) == 0 && !linksVerifyImageFile(image_path) &&
+        chmod(image_path, 0600) == 0, "executable image file is refused");
     char *image_absolute = realpath(image_path, NULL);
     check(image_absolute != NULL, "canonical image path");
     editorResetDocument();
@@ -1387,10 +1458,17 @@ static void testLinks(void) {
     E.document.cursor.cx = 20;
     E.document.selection.active = 1; E.document.selection.anchor_x = 0;
     E.document.file.dirty = 1;
+    beginExternalAnswer('n');
     editorOpenCursorLink();
+    endExternalAnswer();
+    check(strstr(E.ui.statusmsg, "not opened") && access(log, F_OK) != 0,
+        "image confirmation declines without launching");
+    beginExternalAnswer('y');
+    editorOpenCursorLink();
+    endExternalAnswer();
     check(!E.ui.statusmsg_error && E.document.file.dirty && E.document.selection.active &&
         E.document.cursor.cx == 20 && !strcmp(E.document.file.filename, old_path),
-        "image dispatch preserves document, dirty state, cursor and selection without prompting");
+        "confirmed image dispatch preserves document, dirty state, cursor and selection");
     for (int32_t attempt = 0; attempt < 100; attempt++) {
         struct stat log_stat;
         if (stat(log, &log_stat) == 0 && log_stat.st_size == (off_t)strlen(image_absolute)) break;
@@ -1411,7 +1489,9 @@ static void testLinks(void) {
     editorHandleMouseEvent(); editorUpdateLinkHover();
     check(hovered_link_row == 0 && E.document.cursor.cy == 1, "hover over visible image path without moving cursor");
     mouseEventButton = 0;
+    beginExternalAnswer('y');
     editorHandleMouseEvent();
+    endExternalAnswer();
     check(!E.ui.statusmsg_error && E.document.cursor.cy == 1 && E.document.file.dirty &&
         !strcmp(E.document.file.filename, old_path), "live-preview single click opens image without replacing document");
     editorCancelMouseDrag();
@@ -1421,7 +1501,9 @@ static void testLinks(void) {
     editorInsertRow(0, encoded_image, strlen(encoded_image));
     E.document.cursor.cx = 15;
     unlink(log);
+    beginExternalAnswer('y');
     editorOpenCursorLink();
+    endExternalAnswer();
     check(!E.ui.statusmsg_error, "percent-encoded image path resolves before desktop dispatch");
     for (int32_t attempt = 0; attempt < 100; attempt++) {
         struct stat log_stat;

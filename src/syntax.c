@@ -328,7 +328,7 @@ static char **syntaxSplitList(const char *value, int32_t *out_count) {
     for (const char *p = value; *p; p++) {
         if (*p != ',') continue;
         if (count == INT32_MAX) {
-            errno = ENOMEM; perror("tinyedit: syntax list count"); exit(EXIT_FAILURE);
+            teAllocationFailure("syntax list count exceeds limit");
         }
         count++;
     }
@@ -516,7 +516,7 @@ static void syntaxLoadDirectory(const char *dirpath) {
         if (!lang) continue;
 
         if (userLangTableCount == INT32_MAX) {
-            errno = ENOMEM; perror("tinyedit: syntax language count"); exit(EXIT_FAILURE);
+            teAllocationFailure("syntax language count exceeds limit");
         }
         userLangTable = teRealloc(userLangTable,
             teArrayBytes((size_t)userLangTableCount + 1, sizeof(*userLangTable)));

@@ -251,10 +251,12 @@ and unreadable files keep the current document. Same-document fragment links
 move the cursor without replacing the document.
 
 Web links open the system browser using `open` on macOS or `xdg-open` on Linux,
-with a literal argument vector. tinyedit reports a missing launcher but cannot
-confirm whether the browser subsequently loads the page. Inline `mailto:` links
+with a literal argument vector after explicit confirmation. tinyedit reports a
+missing launcher but cannot confirm whether the browser subsequently loads the
+page. Web URLs with an empty host or ambiguous `user@host` authority are refused.
+Inline `mailto:` links
 open the configured mail composer using `open` on macOS or `xdg-email` on Linux;
-tinyedit does not send mail. The address and optional URI parameters (for example,
+tinyedit asks first and does not send mail. The address and optional URI parameters (for example,
 percent-encoded subject/body) are passed unchanged as one argument. This needs
 a desktop mail handler; starting the launcher does not confirm account setup
 or successful composition. Other URI schemes are unsupported. Reference-style Markdown links, HTML links, duplicate-heading
@@ -266,10 +268,13 @@ Markdown images such as `![Diagramma](../imgs/diagramma.png){#fig:diagramma}` op
 file in the operating system's default application (`open` on macOS,
 `xdg-open` on Linux). Relative paths use the Markdown document's directory;
 spaces, UTF-8, percent encoding and escaped parentheses work as for other local
-links. A source fragment is ignored when opening the image file. Only files with an image extension (PNG, JPEG, GIF, WebP, SVG, BMP,
-TIFF, HEIC, AVIF, ICO) and without execute permission are opened. Missing files,
+links. A source fragment is ignored when opening the image file. Only regular files with a matching image extension and header (PNG, JPEG, GIF, WebP, BMP,
+TIFF, HEIC, AVIF, ICO) and without execute permission are offered for opening.
+SVG is excluded because it can contain active content. The editor asks for
+confirmation before launching an external application; the image signature is
+only a preliminary check, not a complete safety or validity guarantee. Missing files,
 directories and launcher failures produce red errors. Opening an image keeps
-the current document and its unsaved changes, without a save prompt.
+the current document and its unsaved changes, without a document save prompt.
 Use Alt+Enter or double-click on the image label or destination; in live preview,
 hover the visible destination to highlight it and single-click to open it.
 Remote HTTP(S) image destinations open in the browser. tinyedit does not render
@@ -610,3 +615,8 @@ and asks whether to restore the changes before proceeding.
 Save refuses pipes, devices and other special-file destinations, including
 through symbolic links. Recovery rejects special files and NUL-containing data
 without replacing the current document.
+
+When tinyedit receives SIGTERM or SIGHUP, it restores the terminal and exits
+with status 128 plus the signal number. It does not save unsaved edits on signal;
+a backup exists only when the configured interval has produced one for a named
+document. SIGKILL cannot be handled.

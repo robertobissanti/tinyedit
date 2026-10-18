@@ -160,3 +160,12 @@ backup content and dangling configuration links. Configuration readers also
 reject FIFO input. `test_terminal.c` isolates Ghostty configuration updates
 with a disabled subprocess launcher: binary data stays untouched, symlinks
 survive and long lines cannot be mistaken for editor-owned bindings.
+
+PTY tests send SIGTERM and SIGHUP to named and unnamed edited documents and
+check terminal modes, escape-protocol cleanup, exit status, unchanged on-disk
+content, and the default disabled-backup policy. Terminal unit tests reject
+malformed and overflowing cursor-position reports.
+Memory contract tests verify that fatal allocation cleanup runs before its
+diagnostic is printed.
+Link tests reject disguised image files and SVG, and check that declining an
+external opener keeps the desktop launcher closed.

@@ -25,6 +25,14 @@ static void check(uint8_t condition, const char *message) {
 }
 
 int main(void) {
+    int32_t rows = -1, cols = -1;
+    check(terminalParseCursorPosition("\x1b[23;80R", &rows, &cols) && rows == 23 && cols == 80,
+        "valid terminal cursor report");
+    const char *invalid[] = {"\x1b[0;80R", "\x1b[23;0R", "\x1b[65536;80R",
+        "\x1b[23;999999999999999999R", "\x1b[23;80Rgarbage", "\x1b[23;80", "\x1b[;80R"};
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++)
+        check(!terminalParseCursorPosition(invalid[i], &rows, &cols) && rows == 23 && cols == 80,
+            "invalid report leaves dimensions intact");
 #ifdef __APPLE__
     char home[] = "/tmp/tinyedit-terminal-XXXXXX";
     check(mkdtemp(home) != NULL, "terminal fixture directory");

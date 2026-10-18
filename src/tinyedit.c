@@ -1875,13 +1875,25 @@ static char *editorLocalLinkPath(const char *decoded) {
  * save/discard/cancel gate, and every failure leaves the current document
  * untouched. Results are reported in the message bar.
  */
+static uint8_t editorConfirmExternalOpen(const char *kind, const char *target) {
+    editorSetStatusMessage("Open external %s: %.60s%s (y/n)", kind, target,
+        strlen(target) > 60 ? "..." : "");
+    editorRefreshScreen();
+    int32_t key = editorReadPromptKey();
+    if (key == 'y' || key == 'Y') return 1;
+    editorSetStatusMessage("External %s not opened", kind);
+    return 0;
+}
+
 static void editorFollowLink(const char *target) {
     if (linksIsMailto(target)) {
+        if (!editorConfirmExternalOpen("mail link", target)) return;
         if (linksOpenMailto(target)) editorSetStatusMessage("Opened link in mail application");
         else editorSetErrorMessage("Can't open mail application: %s", strerror(errno));
         return;
     }
     if (linksIsWeb(target)) {
+        if (!editorConfirmExternalOpen("web link", target)) return;
         if (linksOpenWeb(target)) editorSetStatusMessage("Opened link in browser");
         else editorSetErrorMessage("Can't open browser: %s", strerror(errno));
         return;
@@ -1982,11 +1994,13 @@ static void editorFollowSourceLink(int32_t row, const struct textLink *link) {
     struct stat st;
     if (!absolute || stat(absolute, &st) < 0 || !S_ISREG(st.st_mode))
         editorSetErrorMessage("Image is not an accessible regular file");
-    else if (!linksIsImagePath(absolute) || (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)))
-        editorSetErrorMessage("Refusing to open: not a non-executable image file");
-    else if (!linksOpenFile(absolute))
-        editorSetErrorMessage("Can't open image application: %s", strerror(errno));
-    else editorSetStatusMessage("Opened image in default application");
+    else if (!linksVerifyImageFile(absolute))
+        editorSetErrorMessage("Refusing to open: image type, content or permissions are unsafe");
+    else if (editorConfirmExternalOpen("image", absolute)) {
+        if (!linksOpenFile(absolute))
+            editorSetErrorMessage("Can't open image application: %s", strerror(errno));
+        else editorSetStatusMessage("Opened image in default application");
+    }
     free(absolute);
 }
 
@@ -6696,6 +6710,7 @@ int main(int argc, char **argv) {
         printf("tinyedit %s\n", TE_BUILD_VERSION);
         return 0;
     }
+    terminalEnableTerminationHandling();
     terminalEnableRawMode();
     terminalEnterAlternateScreen();
     terminalEnableBracketedPaste();
@@ -6747,6 +6762,7 @@ int main(int argc, char **argv) {
     editorOfferBackupRecovery();
 
     while (1) {
+        terminalCheckTermination();
         editorRefreshScreen();
         editorMaybeBackup();
         editorProcessKeypress();

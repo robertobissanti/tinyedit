@@ -20,6 +20,35 @@ static void check(uint8_t condition, const char *message) {
     if (!condition) { fprintf(stderr, "FAIL %s\n", message); exit(1); }
 }
 
+static void fatalCleanupMarker(void) {
+    (void)write(STDERR_FILENO, "cleanup-before-error\n", 21);
+}
+
+static void testFatalCleanup(void) {
+    int pipefd[2];
+    check(pipe(pipefd) == 0, "fatal cleanup pipe");
+    pid_t child = fork();
+    check(child >= 0, "fatal cleanup fork");
+    if (!child) {
+        close(pipefd[0]);
+        if (dup2(pipefd[1], STDERR_FILENO) < 0) _exit(2);
+        close(pipefd[1]);
+        teSetFatalCleanup(fatalCleanupMarker);
+        teSizeAdd(SIZE_MAX, 1);
+        _exit(0);
+    }
+    close(pipefd[1]);
+    char output[160] = {0};
+    ssize_t bytes = read(pipefd[0], output, sizeof(output) - 1);
+    close(pipefd[0]);
+    int status;
+    check(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+        WEXITSTATUS(status) == EXIT_FAILURE, "fatal cleanup exits normally");
+    check(bytes > 0 && strstr(output, "cleanup-before-error\n") == output &&
+        strstr(output, "tinyedit: memory allocation failed") != NULL,
+        "fatal cleanup runs before visible error");
+}
+
 static void testRejectedSizes(void) {
     for (int32_t operation = 0; operation < 3; operation++) {
         pid_t child = fork();
@@ -85,6 +114,7 @@ int main(void) {
         "growth near size limit");
     check(teGrowCapacity(0, 0, 0) == 0, "empty capacity");
     testRejectedSizes();
+    testFatalCleanup();
 
     backend = CLIPBOARD_BACKEND_INTERNAL;
     size_t len = 99;

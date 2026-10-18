@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -34,6 +35,13 @@ uint8_t linksIsWeb(const char *target) {
     size_t prefix = !strncasecmp(target, "https://", 8) ? 8 :
         !strncasecmp(target, "http://", 7) ? 7 : 0;
     if (!prefix || !target[prefix]) return 0;
+    const unsigned char *authority = (const unsigned char *)target + prefix;
+    const unsigned char *end = authority;
+    while (*end && *end != '/' && *end != '?' && *end != '#') {
+        if (*end == '@' || *end == '\\') return 0;
+        end++;
+    }
+    if (end == authority) return 0;
     for (const unsigned char *p = (const unsigned char *)target; *p; p++)
         if (*p <= 32 || *p == 127) return 0;
     return 1;
@@ -313,7 +321,7 @@ uint8_t linksOpenMailto(const char *target) {
 
 uint8_t linksIsImagePath(const char *path) {
     static const char *const extensions[] = {
-        "png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "tif", "tiff", "heic", "avif", "ico"
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "heic", "avif", "ico"
     };
     const char *slash = path ? strrchr(path, '/') : NULL;
     const char *dot = path ? strrchr(path, '.') : NULL;
@@ -323,11 +331,59 @@ uint8_t linksIsImagePath(const char *path) {
     return 0;
 }
 
+static uint8_t linksImageSignature(const char *path, const unsigned char *bytes, size_t len) {
+    const char *ext = strrchr(path, '.') + 1;
+    if (!strcasecmp(ext, "png"))
+        return len >= 8 && !memcmp(bytes, "\x89PNG\r\n\x1a\n", 8);
+    if (!strcasecmp(ext, "jpg") || !strcasecmp(ext, "jpeg"))
+        return len >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff;
+    if (!strcasecmp(ext, "gif"))
+        return len >= 6 && (!memcmp(bytes, "GIF87a", 6) || !memcmp(bytes, "GIF89a", 6));
+    if (!strcasecmp(ext, "webp"))
+        return len >= 12 && !memcmp(bytes, "RIFF", 4) && !memcmp(bytes + 8, "WEBP", 4);
+    if (!strcasecmp(ext, "bmp")) return len >= 2 && !memcmp(bytes, "BM", 2);
+    if (!strcasecmp(ext, "tif") || !strcasecmp(ext, "tiff"))
+        return len >= 4 && (!memcmp(bytes, "II*\0", 4) || !memcmp(bytes, "MM\0*", 4));
+    if (!strcasecmp(ext, "ico")) return len >= 4 && !memcmp(bytes, "\0\0\1\0", 4);
+    if (!strcasecmp(ext, "heic") || !strcasecmp(ext, "avif")) {
+        if (len < 12 || memcmp(bytes + 4, "ftyp", 4)) return 0;
+        if (!strcasecmp(ext, "avif"))
+            return !memcmp(bytes + 8, "avif", 4) || !memcmp(bytes + 8, "avis", 4);
+        return !memcmp(bytes + 8, "heic", 4) || !memcmp(bytes + 8, "heix", 4) ||
+            !memcmp(bytes + 8, "hevc", 4) || !memcmp(bytes + 8, "hevx", 4);
+    }
+    return 0;
+}
+
+uint8_t linksVerifyImageFile(const char *path) {
+    if (!path || path[0] != '/' || !linksIsImagePath(path)) { errno = EINVAL; return 0; }
+    int fd = open(path, O_RDONLY | O_NONBLOCK);
+    if (fd < 0) return 0;
+    struct stat st;
+    int checked = fstat(fd, &st);
+    if (checked != 0 || !S_ISREG(st.st_mode) ||
+        (st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH))) {
+        int error = checked != 0 ? errno : EINVAL;
+        close(fd);
+        errno = error ? error : EINVAL;
+        return 0;
+    }
+    unsigned char bytes[16];
+    ssize_t count;
+    do count = read(fd, bytes, sizeof(bytes)); while (count < 0 && errno == EINTR);
+    int error = errno;
+    close(fd);
+    if (count < 0) { errno = error; return 0; }
+    if (!linksImageSignature(path, bytes, (size_t)count)) { errno = EINVAL; return 0; }
+    return 1;
+}
+
 uint8_t linksOpenFile(const char *path) {
     /* The desktop opener dispatches by file type, so an arbitrary target such
      * as a .command or .desktop file could run code from one click. */
     if (!path || path[0] != '/' || !linksIsImagePath(path)) { errno = EINVAL; return 0; }
     for (const uint8_t *p = (const uint8_t *)path; *p; p++)
         if (*p < 32 || *p == 127) { errno = EINVAL; return 0; }
+    if (!linksVerifyImageFile(path)) return 0;
     return linksOpenDesktop(path, 0);
 }

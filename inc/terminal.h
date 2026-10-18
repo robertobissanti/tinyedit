@@ -130,6 +130,12 @@ void terminalSetMenuMouseMotion(uint8_t enabled);
  * recompute terminal dimensions.
  */
 void terminalEnableResizeHandling(void);
+/** @brief Install minimal SIGTERM/SIGHUP handlers that request normal cleanup.
+ * The handlers only set a signal-safe flag; no I/O or save runs there. */
+void terminalEnableTerminationHandling(void);
+/** @brief Exit with 128 + signal when termination was requested.
+ * Call outside a signal handler so registered terminal cleanup runs. */
+void terminalCheckTermination(void);
 /**
  * @brief Decode one terminal input event into the editor's key vocabulary.
  *

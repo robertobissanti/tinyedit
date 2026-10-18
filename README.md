@@ -129,7 +129,7 @@ Identical sources retain the same ID; compiler, flags and platform are not encod
 The generated header is checked on every make, without requiring make clean.
 The application is rebuilt each time, including on make implementations with
 coarse timestamp resolution; unchanged generated header content is retained.
-Packagers may override it with `make BUILD_ID=package-0.3.8-r1` (up to 120
+Packagers may override it with `make BUILD_ID=package-0.3.9-r1` (up to 120
 letters, digits, dots, underscores, plus signs or hyphens). The packager owns
 the accuracy and uniqueness of this override.
 
@@ -228,6 +228,7 @@ and live preview enabled, hover changes a compact link's color and one click
 opens it. Relative text-file links open inside tinyedit with the usual
 save/discard/cancel protection. Web and `mailto:` links open the configured
 browser or mail composer; no mail is sent by tinyedit.
+tinyedit asks before opening a web or mail link in an external application.
 
 Markdown navigation supports heading slugs, explicit Pandoc IDs on headings,
 spans, images and fenced Divs, and Obsidian block IDs. For example:
@@ -255,8 +256,9 @@ for tables, lists, quoted blocks, namespaces, UTF-8 and encoded fragments.
 In an image such as `![Diagramma](imgs/diagramma.png){#fig:diagramma}`, the
 source path opens in the default desktop application using `open` on macOS or
 `xdg-open` on Linux. Hover and single-click the visible path in live preview,
-or use the usual link gestures. Only non-executable files with an image
-extension are opened. The Markdown document and unsaved changes stay
+or use the usual link gestures. Only non-executable raster image files with a
+matching file header are offered for opening, after confirmation; SVG is
+excluded. The Markdown document and unsaved changes stay
 open. A link to `#fig:diagramma` instead jumps to the image's source in the
 document. See [image navigation](docs/usage.md#markdown-images).
 

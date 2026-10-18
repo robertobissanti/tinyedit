@@ -38,5 +38,8 @@ uint8_t linksOpenWeb(const char *target);
 /** Open an absolute local file with the default desktop application.
  * Success confirms launcher execution only; never invokes a shell. */
 uint8_t linksIsImagePath(const char *path);
+/** Check regular, non-executable image content against its filename signature.
+ * SVG is intentionally excluded because it can contain active content. */
+uint8_t linksVerifyImageFile(const char *path);
 uint8_t linksOpenFile(const char *path);
 #endif

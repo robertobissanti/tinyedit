@@ -4,6 +4,14 @@
 
 ### New features
 
+### Important fixes
+
+### Other minor fixing
+
+## 0.3.9 — 2026-10-18
+
+### New features
+
 - Give Markdown H1–H6 independent foreground colors in every RGB/ANSI preset,
   editable in Colors, using Synthwave Pro’s original level sequence and
   theme-specific Catppuccin/One Dark colors. Tint each RGB heading background
@@ -49,6 +57,18 @@
 
 ### Important fixes
 
+- Ask before opening web links, mail links or images in a desktop application.
+  Reject ambiguous or empty web hosts. Match local image filename extensions
+  to their file signatures and reject
+  SVG files, which may contain active content; a renamed script or malformed
+  image header now produces a red error without launching an external app.
+- Show fatal allocation errors after leaving the alternate screen, so the
+  terminal is restored and the reason for exit remains visible. This also
+  covers oversized rows, histories, search buffers and configuration lists.
+- Restore terminal input, paste, mouse and screen modes after SIGTERM or SIGHUP,
+  returning the conventional signal exit status without an implicit save.
+- Reject malformed or overflowing terminal cursor-position reports before they
+  can affect screen dimensions.
 - Reject special files during save instead of replacing FIFOs or other special
   targets, including through symlinks. Reject special recovery/configuration
   files without blocking, and reject NUL-containing recovery data.
@@ -61,7 +81,7 @@
 - Bound Markdown link highlighting depth so heavily nested links cannot exhaust
   the stack and crash the editor. Deeper labels retain their literal text.
 
-- Open only non-executable image files (PNG, JPEG, GIF, WebP, SVG, BMP, TIFF,
+- Open only non-executable image files (PNG, JPEG, GIF, WebP, BMP, TIFF,
   HEIC, AVIF, ICO) from Markdown image links: a crafted `![x](payload.command)`
   or `.desktop` target could otherwise run code through the desktop opener with
   one click. Other targets now produce a red error.

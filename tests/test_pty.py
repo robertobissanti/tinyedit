@@ -7,6 +7,7 @@ import pathlib
 import pty
 import re
 import select
+import signal
 import struct
 import sys
 import subprocess
@@ -72,7 +73,12 @@ def finish(process, master, expect_exit=False):
     finally:
         if process.poll() is None:
             process.terminate()
-            process.wait()
+            deadline = time.monotonic() + 3
+            while process.poll() is None and time.monotonic() < deadline:
+                read_available(master, 0.1)
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=2)
         os.close(master)
 
 
@@ -1966,7 +1972,8 @@ def test_startup_error_survives_alternate_screen(home):
             leave = tail.find(b"\x1b[?1049l")
             assert leave >= 0 and tail.find(message) > leave, \
                 "error text must come after leaving the alternate screen"
-            assert message + b"\r\n" in tail, "raw-mode output ends with CR LF"
+            assert b"\x1b[31m" + message + b"\x1b[0m\r\n" in tail, \
+                "fatal error is red and raw-mode output ends with CR LF"
     finally:
         unreadable.chmod(0o600)
         blocked.chmod(0o700)
@@ -1991,6 +1998,66 @@ def test_documentation_path_with_special_characters(home):
             finish(process, master)
 
 
+def test_termination_restores_terminal(home):
+    isolated = pathlib.Path(home) / "termination-home"
+    isolated.mkdir()
+    target = isolated / "saved.txt"
+    target.write_bytes(b"original\n")
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        for named in (True, False):
+            master, slave = pty.openpty()
+            original_modes = termios.tcgetattr(slave)
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 100, 0, 0))
+            env = os.environ.copy()
+            env.update({"HOME": str(isolated), "TERM": "xterm-256color"})
+            process = subprocess.Popen(
+                [str(BINARY), *([str(target)] if named else [])],
+                stdin=slave, stdout=slave, stderr=slave, env=env, cwd=ROOT,
+                close_fds=True,
+            )
+            try:
+                assert b"F1 help" in read_until(master, b"F1 help"), "editor starts before signal"
+                assert termios.tcgetattr(slave) != original_modes, "raw mode active"
+                os.write(master, b"X")
+                edited = b"Xoriginal" if named else b"X"
+                assert edited in read_until(master, edited), "unsaved edit visible"
+                process.send_signal(sig)
+                output = read_until(master, b"\x1b[?1049l", timeout=3)
+                process.wait(timeout=3)
+                output += read_available(master, 0.1)
+                assert process.returncode == 128 + sig, "signal exit status preserved"
+                assert termios.tcgetattr(slave) == original_modes, "original terminal modes restored"
+                assert b"\x1b[?2004l" in output and b"\x1b[?1049l" in output, \
+                    "paste and alternate screen disabled"
+                assert target.read_bytes() == b"original\n", "unsaved changes not saved implicitly"
+                assert not (isolated / ".tinyedit" / "backup").exists(), \
+                    "backup disabled for named and unnamed documents"
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+                os.close(master)
+                os.close(slave)
+
+
+def test_external_link_requires_confirmation(home):
+    target = pathlib.Path(home) / "external-link.md"
+    target.write_text("[outside](https://example.org)\n")
+    process, master = spawn_editor([str(target)], home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1b\r")
+        prompt = read_until(master, b"Open external web link")
+        assert b"https://example.org" in prompt and b"(y/n)" in prompt, \
+            "external URL and confirmation are visible before launch"
+        os.write(master, b"n")
+        assert b"not opened" in read_until(master, b"not opened"), \
+            "declining external URL leaves the editor open"
+        assert process.poll() is None and target.read_text() == "[outside](https://example.org)\n"
+    finally:
+        finish(process, master)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="tinyedit-tests-") as tmp:
         home = pathlib.Path(tmp)
@@ -2010,6 +2077,8 @@ def main():
         test_ghostty_ctrl_i_is_drained(home)
         test_kitty_keyboard_mode_is_restored(home)
         test_alternate_screen_lifecycle(home)
+        test_termination_restores_terminal(home)
+        test_external_link_requires_confirmation(home)
         test_kitty_cmd_z_undoes(home)
         test_kitty_cmd_a_selects_all(home)
         test_shift_click_extends_selection(home)

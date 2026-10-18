@@ -469,7 +469,7 @@ static void addFiletypeOverride(const char *ext, const char *name) {
         }
     }
     if (filetypeOverrideCount == INT32_MAX) {
-        errno = ENOMEM; perror("tinyedit: filetype count"); exit(EXIT_FAILURE);
+        teAllocationFailure("filetype count exceeds limit");
     }
     filetypeOverrides = teRealloc(filetypeOverrides,
         teArrayBytes((size_t)filetypeOverrideCount + 1, sizeof(*filetypeOverrides)));
