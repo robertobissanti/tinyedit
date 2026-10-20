@@ -6,6 +6,10 @@
 
 ### Important fixes
 
+- Open kDrive Lite Sync files that are available only in the cloud. Their
+  placeholders previously read as NUL bytes and were incorrectly rejected as
+  binary; opening now lets kDrive download the contents first.
+
 ### Other minor fixing
 
 ## 0.3.9 — 2026-10-18

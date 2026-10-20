@@ -36,9 +36,17 @@ char *fileioExpandHomePath(const char *path) {
 /* ---- loading ------------------------------------------------------------- */
 
 FILE *fileioOpenRead(const char *filename) {
-    int fd = open(filename, O_RDONLY | O_NONBLOCK);
-    if (fd == -1) return NULL;
     struct stat st;
+    if (stat(filename, &st) != 0) return NULL;
+    if (!S_ISREG(st.st_mode)) {
+        errno = S_ISDIR(st.st_mode) ? EISDIR : EINVAL;
+        return NULL;
+    }
+
+    /* kDrive Lite Sync ignores O_NONBLOCK opens and caches their authorization;
+     * the first open must be ordinary to request cloud contents. */
+    int fd = open(filename, O_RDONLY);
+    if (fd == -1) return NULL;
     int result = fstat(fd, &st);
     if (result != 0 || !S_ISREG(st.st_mode)) {
         int saved_errno = result != 0 ? errno : S_ISDIR(st.st_mode) ? EISDIR : EINVAL;

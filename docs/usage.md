@@ -178,6 +178,8 @@ while navigating the tree. Below 40 terminal columns the sidebar is temporarily 
 
 PNG and other binary files containing NUL bytes are rejected on opening,
 leaving the current document intact. Malformed UTF-8 text remains editable.
+On macOS, opening a kDrive Lite Sync file that is only in the cloud asks kDrive
+to download its contents before tinyedit checks whether the file is text.
 
 Sidebar hints follow the focused pane and return after temporary messages
 expire. Closing the tree restores the document shortcuts in the bottom bar.
