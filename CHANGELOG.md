@@ -8,7 +8,8 @@
 
 - Open kDrive Lite Sync files that are available only in the cloud. Their
   placeholders previously read as NUL bytes and were incorrectly rejected as
-  binary; opening now lets kDrive download the contents first.
+  binary; opening now lets kDrive download the contents first. Other files
+  retain nonblocking opens so special targets cannot stall the editor.
 
 ### Other minor fixing
 

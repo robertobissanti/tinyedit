@@ -12,6 +12,11 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/xattr.h>
+#endif
+
+#define KDRIVE_STATUS_ATTR "com.infomaniak.drive.desktopclient.litesync.status"
 
 /* ---- input paths --------------------------------------------------------- */
 
@@ -36,17 +41,31 @@ char *fileioExpandHomePath(const char *path) {
 /* ---- loading ------------------------------------------------------------- */
 
 FILE *fileioOpenRead(const char *filename) {
-    struct stat st;
-    if (stat(filename, &st) != 0) return NULL;
-    if (!S_ISREG(st.st_mode)) {
-        errno = S_ISDIR(st.st_mode) ? EISDIR : EINVAL;
-        return NULL;
+#ifdef __APPLE__
+    char cloud_status;
+    uint8_t cloud_only = getxattr(filename, KDRIVE_STATUS_ATTR,
+        &cloud_status, sizeof(cloud_status), 0, 0) == 1 && cloud_status == 'O';
+    if (cloud_only) {
+        struct stat st;
+        if (stat(filename, &st) != 0) return NULL;
+        if (!S_ISREG(st.st_mode)) {
+            errno = S_ISDIR(st.st_mode) ? EISDIR : EINVAL;
+            return NULL;
+        }
     }
+#endif
 
-    /* kDrive Lite Sync ignores O_NONBLOCK opens and caches their authorization;
-     * the first open must be ordinary to request cloud contents. */
-    int fd = open(filename, O_RDONLY);
+    /* kDrive ignores O_NONBLOCK opens and caches their authorization. Keep
+     * nonblocking opens for all other files so special targets cannot stall. */
+    int fd = open(filename,
+#ifdef __APPLE__
+        cloud_only ? O_RDONLY : O_RDONLY | O_NONBLOCK
+#else
+        O_RDONLY | O_NONBLOCK
+#endif
+    );
     if (fd == -1) return NULL;
+    struct stat st;
     int result = fstat(fd, &st);
     if (result != 0 || !S_ISREG(st.st_mode)) {
         int saved_errno = result != 0 ? errno : S_ISDIR(st.st_mode) ? EISDIR : EINVAL;

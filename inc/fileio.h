@@ -18,10 +18,10 @@ enum fileSaveResult {
  * or the result length would overflow. No shell evaluation is performed. */
 char *fileioExpandHomePath(const char *path);
 
-/** @brief Open a regular file for reading, allowing cloud hydration.
- * A stat check rejects pipes/devices before an ordinary open. Returns an owned
- * stream to fclose, or NULL with errno. Checks the opened descriptor too,
- * including when the pathname is a symlink. */
+/** @brief Open a regular file for reading, allowing kDrive hydration on macOS.
+ * Ordinary files open nonblocking so special targets cannot stall. A known
+ * kDrive online placeholder is type-checked before its blocking open. Returns
+ * an owned stream to fclose, or NULL with errno; rechecks the opened descriptor. */
 FILE *fileioOpenRead(const char *filename);
 /** @brief Resolve a save destination, rejecting dangling links and special files.
  * Returns an owned path to free, or NULL with errno. Existing symlinks resolve

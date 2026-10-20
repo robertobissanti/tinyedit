@@ -122,6 +122,10 @@ static void testLoading(const char *path, const char *directory) {
         free(document.file.filename);
         bufferClear(&document.buffer);
     }
+    FILE *ordinary = fileioOpenRead(path);
+    check(ordinary != NULL && (fcntl(fileno(ordinary), F_GETFL) & O_NONBLOCK) != 0,
+        "ordinary files retain nonblocking open");
+    check(fclose(ordinary) == 0, "close ordinary read stream");
     const char binary[] = "text row\n\x89PNG\r\n\x1a\n\0binary";
     putFile(path, binary, sizeof(binary) - 1);
     struct editorDocument binary_document;
