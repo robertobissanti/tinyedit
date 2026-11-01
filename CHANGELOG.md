@@ -4,6 +4,12 @@
 
 ### New features
 
+- Add **Smart Table**, off by default in F2/configuration: conservative Markdown
+  table alignment on pipes and Enter, cell navigation with Tab/Shift-Tab,
+  empty-row exit and an explicit Edit menu realignment command. Preserve literal
+  content, Unicode widths, cursor/selection and atomic undo. Keep existing
+  wrapping for wide tables; document recognition and processing limits.
+
 - Recognize direct `[label][#anchor]` and `![label][#anchor]` navigation;
   image links with fragment-only destinations now jump within the document.
   Keep escaped parentheses and bare fragments literal.

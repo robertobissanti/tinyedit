@@ -178,6 +178,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, home_end_visual_line), 0, 0, NULL, 0 },
     { "backup_interval", "Backup interval s (0=off, min 5)", SETTING_INT,
       offsetof(struct editorSettings, backup_interval), 0, 3600, NULL, 0 },
+    { "smart_table", "Smart Table", SETTING_BOOL,
+      offsetof(struct editorSettings, smart_table), 0, 0, NULL, 0 },
     { "auto_indent", "Auto-indent new lines", SETTING_BOOL,
       offsetof(struct editorSettings, auto_indent), 0, 0, NULL, 0 },
     { "auto_close_pairs", "Auto-close brackets/quotes/tags", SETTING_BOOL,
@@ -322,6 +324,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->home_end_visual_line = 1;
     out->backup_interval = 0;
     out->auto_indent = 1;
+    out->smart_table = 0;
     out->auto_close_pairs = 1;
     out->auto_close_single_quote = 0;
     out->insert_spaces_for_tab = 1;

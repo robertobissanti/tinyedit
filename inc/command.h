@@ -24,6 +24,7 @@ enum editorCommand {
     CMD_PASTE,
     CMD_SELECT_ALL,
     CMD_FIND,
+    CMD_SMART_TABLE,
     CMD_HELP,
     CMD_DOCUMENTATION,
     CMD_TOGGLE_LINE_NUMBERS,

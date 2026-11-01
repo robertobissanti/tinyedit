@@ -264,8 +264,9 @@ struct historyAction {
     struct historyAction *previous, *next;
     struct historyChange *first, *last;
     struct editorCursor before, after;
-    struct editorSelection selection;
+    struct editorSelection selection, selection_after;
     size_t bytes;
+    uint8_t restore_selection;
     uint8_t dirty;
     uint8_t final_newline;
     uint8_t coalesce;

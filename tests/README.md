@@ -183,3 +183,15 @@ Link tests reject disguised image files and SVG, and check that declining an
 external opener keeps the desktop launcher closed.
 
 [Back to top](#test-fixtures)
+
+## Smart Table regressions
+
+`test_core` exercises actual editor dispatch for pipe formatting, continuation,
+empty-row exit, decoded Tab/Shift-Tab, atomic undo/redo, cursor/selection mapping,
+UTF-8 display widths, literal tabs, escaped pipes, inline code, links, malformed
+bytes, disabled settings, non-Markdown documents, fenced code with highlighting
+off, ambiguity and read-only documents. Settings persistence and the explicit
+Edit menu command are covered by their existing test binaries. These automated
+checks do not certify physical modified keys in a real terminal.
+
+[Back to top](#test-fixtures)

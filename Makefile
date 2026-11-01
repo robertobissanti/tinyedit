@@ -11,7 +11,7 @@ SRC_DIR := src
 INC_DIR := inc
 TEST_DIR := tests
 
-SOURCES := $(SRC_DIR)/tinyedit.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c \
+SOURCES := $(SRC_DIR)/smart_table.c $(SRC_DIR)/tinyedit.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c \
 	$(SRC_DIR)/render.c $(SRC_DIR)/editor_state.c $(SRC_DIR)/clipboard.c \
 	$(SRC_DIR)/utf8.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c \
 	$(SRC_DIR)/syntax.c $(SRC_DIR)/markdown.c $(SRC_DIR)/terminal.c $(SRC_DIR)/alloc.c \

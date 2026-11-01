@@ -17,6 +17,7 @@ static const struct commandDescriptor command_descriptors[] = {
     { CMD_COPY, "Copy", "^C", NULL },
     { CMD_PASTE, "Paste", "^V", NULL },
     { CMD_SELECT_ALL, "Select all", "^A", NULL },
+    { CMD_SMART_TABLE, "Smart Table: realign", NULL, NULL },
     { CMD_FIND, "Find...", "^F", NULL },
     { CMD_HELP, "Help", "F1", NULL },
     { CMD_DOCUMENTATION, "Documentation", NULL, NULL },

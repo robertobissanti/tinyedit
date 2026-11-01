@@ -400,6 +400,7 @@ enum historyError historyFinishEdit(struct editorDocument *document) {
     }
     if (!action->first) { historyFreeAction(action); return HISTORY_OK; }
     action->after = document->cursor;
+    action->selection_after = document->selection;
     historyReleaseDisplay(action);
     historyDropStack(history, &history->redo_stack, &history->redo_count);
     uint8_t coalesce = action->coalesce && history->undo_stack &&
@@ -449,6 +450,8 @@ static uint8_t historyReplay(struct editorDocument *document, uint8_t reverse) {
     else { history->redo_count--; history->undo_count++; }
     historyReleaseDisplay(action);
     document->cursor = reverse ? action->before : action->after;
+    if (action->restore_selection)
+        document->selection = reverse ? action->selection : action->selection_after;
     document->file.dirty = 1;
     history->last_edit_type = EDIT_NONE;
     return 1;

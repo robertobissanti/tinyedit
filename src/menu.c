@@ -17,7 +17,7 @@ static const enum editorCommand file_items[] = {
 };
 static const enum editorCommand edit_items[] = {
     CMD_UNDO, CMD_REDO, CMD_NONE, CMD_CUT, CMD_COPY, CMD_PASTE,
-    CMD_NONE, CMD_SELECT_ALL, CMD_FIND
+    CMD_NONE, CMD_SELECT_ALL, CMD_FIND, CMD_SMART_TABLE
 };
 static const enum editorCommand view_items[] = {
     CMD_TOGGLE_LINE_NUMBERS, CMD_TOGGLE_TOP_BAR, CMD_TOGGLE_MENU,

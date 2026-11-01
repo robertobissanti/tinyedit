@@ -28,6 +28,7 @@
  *   render.c       shared row/wrapped-text layout and presentation adapters
  *   search.c       compiled queries, text search and source-coordinate results
  *   settings.c     persistent configuration, color scheme loading and color escapes
+ *   smart_table.c  conservative Markdown table parsing and source formatting
  *   syntax.c       filetype dispatch, shared helpers and other language tokenizers
  *   terminal.c     raw terminal setup, input decoding, and terminal I/O
  *   tree.c         owned filesystem tree and lazy directory expansion
@@ -53,6 +54,7 @@
 #include "clipboard.h"
 #include "command.h"
 #include "syntax.h"
+#include "smart_table.h"
 #include "menu.h"
 #include "terminal.h"
 #include "tree.h"
@@ -167,6 +169,8 @@ static const struct helpEntry helpEntries[] = {
     { "Tab", "Indent (spaces or literal tab, see F2)" },
     { "Tab (with selection)", "Indent every selected line one level" },
     { "Shift-Tab", "Outdent selected lines, or the current one" },
+    { "Smart Table (F2)", "Markdown cells: Tab/Shift-Tab; empty row + Enter exits" },
+    { "Edit > Smart Table: realign", "Align the table under the cursor" },
     { "( { [ \" ` $", "Auto-close pair / skip over / wrap selection" },
     { "'", "Same, only if auto-close single quote is on (F2, off by default)" },
     { "> in XML/HTML", "Insert matching end tag (except HTML void elements)" },
@@ -768,7 +772,7 @@ static void editorReplay(uint8_t reverse) {
         editorSetStatusMessage(reverse ? "Nothing to undo" : "Nothing to redo");
         return;
     }
-    E.document.selection.active = 0;
+    if (!action->restore_selection) E.document.selection.active = 0;
     editorInvalidateDocumentCaches();
     editorRehighlightFrom(0, 1);
     E.document.file.dirty = editorDiffersFromDisk();
@@ -785,6 +789,121 @@ static void editorUndo(void) { editorReplay(1); }
 static void editorRedo(void) { editorReplay(0); }
 
 /* ---- editor operations --------------------------------------------------- */
+
+/* Smart Table operates on source rows inside the existing edit transaction. */
+/** @brief Recognize a bounded Markdown source table outside code. */
+static uint8_t editorTableContext(struct smartTable *table) {
+    int32_t y = E.document.cursor.cy;
+    const char *ext = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
+    if (!ext || !markdownIsExtension(ext + 1) ||
+        !smartTableFind(&E.document.buffer, y, table)) return 0;
+    size_t bytes = 0;
+    for (int32_t i = 0; i <= table->last; i++) {
+        bytes += (size_t)E.document.buffer.rows[i].size + 1;
+        if (bytes > SMART_TABLE_BYTES) return 0;
+    }
+    return markdownSourceVisible(&E.document.buffer, table->first, 0);
+}
+
+/** @brief Format the current table within the caller's undo transaction. */
+static uint8_t editorTableAlign(void) {
+    struct smartTable table;
+    if (!editorTableContext(&table)) return 0;
+    if (E.document.history.pending) {
+        E.document.history.pending->restore_selection = 1;
+        E.document.history.pending->coalesce = 0;
+        E.document.history.last_edit_type = EDIT_OTHER;
+    }
+    int32_t widths[SMART_TABLE_COLUMNS];
+    uint8_t align[SMART_TABLE_COLUMNS] = {0};
+    if (!smartTableWidths(&E.document.buffer, &table, S.tab_stop, widths)) return 0;
+    struct smartTableRow parsed;
+    for (int32_t y = table.first; y <= table.last; y++) {
+        smartTableParse(&E.document.buffer.rows[y], &parsed);
+        if (parsed.separator) {
+            for (int32_t c = 0; c < table.columns; c++)
+                align[c] = parsed.cells[c].right ? (parsed.cells[c].left ? 3 : 2) : 0;
+            break;
+        }
+    }
+    for (int32_t y = table.first; y <= table.last && !historyFailed(&E.document); y++) {
+        erow *row = &E.document.buffer.rows[y];
+        smartTableParse(row, &parsed);
+        int32_t *cursor = E.document.cursor.cy == y ? &E.document.cursor.cx : NULL;
+        int32_t *anchor = E.document.selection.active && E.document.selection.anchor_y == y ?
+            &E.document.selection.anchor_x : NULL;
+        char *text = smartTableFormat(row, &parsed, widths, align, S.tab_stop, cursor, anchor);
+        if (strcmp(text, row->chars)) {
+            bufferRowDeleteRange(row, 0, row->size);
+            bufferRowInsert(row, 0, text, strlen(text));
+            editorUpdateRow(row);
+            E.document.file.dirty = 1;
+        }
+        free(text);
+    }
+    return 1;
+}
+
+/** @brief Distinguish the just-typed separator from escaped or inline-code pipes. */
+static uint8_t editorTableSeparatorTyped(void) {
+    int32_t y = E.document.cursor.cy, x = E.document.cursor.cx - 1;
+    struct smartTableRow parsed;
+    if (y >= E.document.buffer.row_count || !smartTableParse(&E.document.buffer.rows[y], &parsed)) return 0;
+    for (int32_t c = 0; c < parsed.count; c++)
+        if (parsed.cells[c].close == x) return 1;
+    return x == 0;
+}
+
+/** @brief Consume decoded cell navigation only inside an enabled Smart Table. */
+static uint8_t editorTableMove(uint8_t backwards) {
+    struct smartTable table;
+    if (!S.smart_table || !editorTableContext(&table)) return 0;
+    struct smartTableRow parsed;
+    smartTableParse(&E.document.buffer.rows[E.document.cursor.cy], &parsed);
+    int32_t cell = 0;
+    while (cell + 1 < parsed.count && E.document.cursor.cx > parsed.cells[cell].close) cell++;
+    cell += backwards ? -1 : 1;
+    if (cell < 0 || cell >= parsed.count) {
+        int32_t y = E.document.cursor.cy + (backwards ? -1 : 1);
+        if (y < table.first || y > table.last) return 1;
+        E.document.cursor.cy = y;
+        smartTableParse(&E.document.buffer.rows[y], &parsed);
+        cell = backwards ? parsed.count - 1 : 0;
+    }
+    E.document.cursor.cx = parsed.cells[cell].start;
+    return 1;
+}
+
+/** @brief Continue a completed row or remove an empty row's pipes to exit. */
+static uint8_t editorTableEnter(void) {
+    struct smartTable table;
+    if (!S.smart_table || !editorTableContext(&table)) return 0;
+    int32_t y = E.document.cursor.cy;
+    erow *row = &E.document.buffer.rows[y];
+    struct smartTableRow parsed;
+    smartTableParse(row, &parsed);
+    if (!parsed.empty && E.document.cursor.cx < parsed.cells[parsed.count - 1].end) return 0;
+    editorPushUndo(EDIT_OTHER);
+    if (parsed.empty) {
+        bufferRowDeleteRange(row, 0, row->size);
+        editorUpdateRow(row);
+        E.document.cursor.cx = 0;
+        E.document.file.dirty = 1;
+        return 1;
+    }
+    editorTableAlign();
+    char next[SMART_TABLE_COLUMNS * 3 + 2];
+    int32_t at = 0;
+    next[at++] = '|';
+    for (int32_t c = 0; c < table.columns; c++) {
+        next[at++] = ' '; next[at++] = ' '; next[at++] = '|';
+    }
+    editorInsertRow(y + 1, next, (size_t)at);
+    E.document.cursor.cy = y + 1;
+    E.document.cursor.cx = 2;
+    editorTableAlign();
+    return 1;
+}
 
 /**
  * @brief Insert one byte at the cursor as part of a larger action.
@@ -6480,6 +6599,7 @@ static void editorHandleEditKey(int32_t c) {
 
     switch (c) {
         case '\r':
+            if (!had_sel && editorTableEnter()) break;
             if (had_sel)
                 editorReplaceSelectionWithNewline(had_sel_y0, had_sel_x0,
                     had_sel_y1, had_sel_x1);
@@ -6489,6 +6609,7 @@ static void editorHandleEditKey(int32_t c) {
             break;
 
         case '\t':
+            if (!had_sel && editorTableMove(0)) break;
             if (had_sel) {
                 editorIndentSelection(0);
             } else {
@@ -6507,6 +6628,7 @@ static void editorHandleEditKey(int32_t c) {
          * have to be in the indentation for "this line is indented one
          * level too far" to be the obvious intent. */
         case SHIFT_TAB:
+            if (!had_sel && editorTableMove(1)) break;
             if (had_sel) {
                 editorIndentSelection(1);
             } else if (E.document.cursor.cy < E.document.buffer.row_count) {
@@ -6648,6 +6770,7 @@ static void editorHandleEditKey(int32_t c) {
                     had_sel_y1, had_sel_x1);
             }
             E.document.selection.active = 0;
+            if (c == '|' && S.smart_table && editorTableSeparatorTyped()) editorTableAlign();
             break;
         }
     }
@@ -6668,6 +6791,16 @@ static void editorDispatchKey(int32_t c) {
         if (command == CMD_NONE) return;
         if (commandIsSetting(command)) {
             editorToggleMenuSetting(command);
+            return;
+        }
+        if (command == CMD_SMART_TABLE) {
+            T.focused = 0;
+            if (E.document.file.read_only) { editorReadOnly(); return; }
+            editorBeginEdit();
+            editorPushUndo(EDIT_OTHER);
+            uint8_t aligned = editorTableAlign();
+            editorEndEdit();
+            if (!aligned && edit_last_error == HISTORY_OK) editorSetErrorMessage("Smart Table: no unambiguous table, or processing limit exceeded");
             return;
         }
         c = editorMenuCommandKey(command);

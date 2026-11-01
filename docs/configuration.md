@@ -13,7 +13,7 @@
 ## Settings and appearance
 
 Line numbers (gutter), tab width, interface colors, soft-wrap, the top bar,
-cursor shape and blinking, auto-indent, auto-close pairs, tabs-as-spaces,
+cursor shape and blinking, Smart Table (off by default), auto-indent, auto-close pairs, tabs-as-spaces,
 and invisible characters are configurable from the `F2` panel and saved to
 `~/.tinyeditrc`. See the file itself, created automatically on first launch,
 for configuration details. If `~/.tinyeditrc` is a resolvable symbolic link,
@@ -298,3 +298,12 @@ is preserved. Experimental Ghostty binding updates also preserve symlinks and
 long lines, and reject binary configuration without changing it.
 
 [Back to top](#settings-colors-and-themes)
+
+## Smart Table setting
+
+`smart_table = false` is the default. Set it to `true`, or toggle **Smart Table**
+in F2, to enable Markdown table alignment and cell navigation. Save the F2
+settings draft as usual. The [Smart Table guide](usage.md#smart-table) describes
+recognition, exiting a table, the explicit menu command and wide-table limits.
+
+[Back to top](#settings-and-appearance)

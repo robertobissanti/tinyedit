@@ -170,6 +170,7 @@ struct editorSettings {
     /* Enter copies the leading whitespace (spaces/tabs) of the
      * current line onto the new one. */
     int32_t auto_indent;
+    int32_t smart_table;
     /* Typing an opening bracket/quote inserts its matching close
      * right after the cursor (or wraps the active selection); typing
      * the close manually while the cursor sits right before an
