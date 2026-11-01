@@ -6,12 +6,22 @@
 
 ### Important fixes
 
+- Protect installed documentation from editing, paste, replacement, undo and
+  saving, including guides reached through links or Open. Keep search and copy
+  available and display a read-only indicator.
+
 - Open kDrive Lite Sync files that are available only in the cloud. Their
   placeholders previously read as NUL bytes and were incorrectly rejected as
   binary; opening now lets kDrive download the contents first. Other files
   retain nonblocking opens so special targets cannot stall the editor.
 
 ### Other minor fixing
+
+- Review the test suite and retain legacy-input regressions and the deliberate
+  snapshot benchmark baseline; clarify their purpose.
+
+- Replace documentation tables with wrapped lists for narrow terminals and
+  expand the documentation home page with first steps and navigation help.
 
 ## 0.3.9 — 2026-10-18
 

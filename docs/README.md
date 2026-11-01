@@ -1,13 +1,38 @@
 # tinyedit documentation
 
-[Project overview and installation](../README.md)
+tinyedit is a terminal text editor with familiar shortcuts, UTF-8 editing,
+mouse selection, a file tree and Markdown navigation. These guides explain
+how to use it, customize it and develop it.
 
-| Guide | Contents |
-|---|---|
-| [User guide](usage.md) | Shortcuts, files, sidebar, menus, mouse, editing, search and recovery |
-| [Settings, colors and themes](configuration.md) | F2, ANSI/RGB palettes, color schemes, previews, cursor and line-ending settings |
-| [Syntax highlighting](syntax-highlighting.md) | Built-in languages, Markdown, custom definitions and filetype detection |
-| [Development and internals](development.md) | Module responsibilities, memory contracts and function documentation |
+## Start here
+
+- Open a file with `Ctrl-O`, save with `Ctrl-S`, quit with `Ctrl-Q`.
+- Use `Ctrl-F` to find text, `Ctrl-Z` to undo and `Ctrl-Y` to redo.
+- Press `F2` for settings, `F1` for the shortcut reference, `F10` for menus.
+- Show the file tree with `Ctrl-E`; double-click a file to open it.
+
+The installed guides are read-only: you can search, select and copy text.
+Use Alt+Enter on a link to follow it. With mouse support enabled, double-click
+links, or enable Markdown live preview to use hover and a single click.
+Ctrl-O opens your own file; Ctrl-W closes the guide and leaves a new document.
+
+For installation and the project background, read the
+[project overview](../README.md).
+
+## Choose a guide
+
+- [User guide](usage.md): Shortcuts, files, sidebar, menus, mouse, editing,
+  search and recovery
+
+- [Settings, colors and themes](configuration.md): F2, ANSI/RGB palettes,
+  color schemes, previews, cursor and line-ending settings
+
+- [Syntax highlighting](syntax-highlighting.md): Built-in languages, Markdown,
+  custom definitions and filetype detection
+
+- [Development and internals](development.md): Module responsibilities, memory
+  contracts and function documentation
+
 
 Ready-made files: [color schemes](../colorschemes/README.md) and
 [syntax definitions](../syntax-configs/README.md).

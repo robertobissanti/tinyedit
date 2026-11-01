@@ -18,6 +18,16 @@ constructs. `F1`, `F2`, and `F3` should open Help, Settings, and Info.
 F3 accepts both the SS3 sequence commonly emitted by terminal emulators
 and the CSI `ESC[13~` form.
 
+Installed-guide regressions check read-only commands, ordinary file editing,
+selection, direct Open and draining bracketed paste before a new document.
+Sidebar cases distinguish single-click selection from double-click opening.
+Markdown cases cover direct anchor references, image fragments, escaped
+parentheses and local-reference underlining without hover.
+
+The test review found no uncalled test cases. Legacy terminal-sequence tests
+remain regression checks for rejecting obsolete input; the full-snapshot
+benchmark remains a deliberate comparison baseline, outside `make test`.
+
 `test_core.c` exercises the actual private core by including its translation
 unit with a renamed application entry point. It checks prompt growth, bar
 clipping, empty page navigation and UTF-8 tab layout and selection. The render

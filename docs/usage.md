@@ -45,37 +45,86 @@ text from another application to diagnose Wayland access. Terminal-native paste
 
 ## Keyboard shortcuts
 
-| Key | Action |
-|---|---|
-| Arrows, Home, End, PageUp/Down | Move cursor |
-| `Ctrl+Home` / `Ctrl+End` (or `Ctrl+PageUp` / `Ctrl+PageDown`) | Jump to the start/end of the file |
-| `Alt+←` / `Alt+→` (or `Esc b` / `Esc f`) | Jump by word |
-| `Shift+Arrows` / `Shift+PageUp` / `Shift+PageDown` / `Shift+Home` / `Shift+End` | Extend/start text selection (doesn't work on macOS Terminal.app; use `Ctrl-T` instead) |
-| `Ctrl-T` | Toggle selection mode (extends selection with plain arrows, PageUp/PageDown, and Home/End; useful in terminals such as Terminal.app where Shift+Arrows is unsupported) |
-| Enter | New line (inherits the previous line's indentation if `auto_indent` is on) |
-| Tab | Indent (spaces or a literal tab, see `insert_spaces_for_tab`); with a selection, indents every selected line one level |
-| `Shift+Tab` | Outdent the selected lines, or the current one when there's no selection |
-| `(` `{` `[` `"` `` ` `` `$` | Auto-close the pair / skip over an existing closer / wrap the selection (if `auto_close_pairs` is on) |
-| `'` | Same, but only when `auto_close_single_quote` is on (off by default, since apostrophes in prose are more common than pairs) |
-| `>` in `.xml`, `.html`, or `.htm` | Auto-insert the matching closing tag (with `auto_close_pairs` on); HTML void elements such as `img` and `br` are left unclosed |
-| Backspace / Delete | Delete a character (UTF-8 aware) |
-| `Ctrl-A` | Select all |
-| `Ctrl-C` / `Ctrl-X` / `Ctrl-V` | Copy / cut / paste (system clipboard; C/X need an active selection) |
-| `Ctrl-Z` | Undo |
-| `Ctrl-Y` | Redo |
-| `Ctrl-F` | Incremental search (Arrows for next/previous match, `Ctrl-G` to toggle regex search, `Ctrl-R` to switch to search & replace, Esc to cancel) |
-| `F1` | Help screen listing every shortcut (any key closes it) |
-| `F3` | Info screen: version, author, and stats about the current file |
-| `F2` | Settings panel (Up/Down to navigate, Enter/Space to edit, Left/Right to cycle options, `Ctrl-D` resets defaults, `Ctrl-S` saves and exits, Esc exits with a confirmation prompt if there are unsaved changes) |
-| `F10` | Open or close the menu; use arrows to navigate, Enter to choose, or Esc to dismiss |
-| `Ctrl-S` | Save (asks for a filename if none is set) |
-| `F4` (or `Ctrl-Shift-S` where the terminal sends it) | Save as: always asks for a filename; replacing another existing file requires confirmation |
-| `Ctrl-E` | Show or hide the file tree. Opening focuses the tree. |
-| `Ctrl-B` | Switch focus between the visible file tree and document. |
-| `Ctrl-O` | Open another file by entering its path; offers to save the current file first. A missing path becomes a new file on first save. |
-| `Ctrl-N` | New empty unnamed document; offers to save the current document first. |
-| `Ctrl-W` | Close the current file without quitting tinyedit; offers to save first and leaves an empty buffer. |
-| `Ctrl-Q` | Quit (if there are unsaved changes, asks y/n/Esc: save-and-quit / quit without saving / cancel) |
+- Arrows, Home, End, PageUp/Down: Move cursor
+
+- `Ctrl+Home` / `Ctrl+End` (or `Ctrl+PageUp` / `Ctrl+PageDown`): Jump to the
+  start/end of the file
+
+- `Alt+←` / `Alt+→` (or `Esc b` / `Esc f`): Jump by word
+
+- `Shift+Arrows` / `Shift+PageUp` / `Shift+PageDown` / `Shift+Home` /
+  `Shift+End`: Extend/start text selection (doesn't work on macOS
+  Terminal.app; use `Ctrl-T` instead)
+
+- `Ctrl-T`: Toggle selection mode (extends selection with plain arrows,
+  PageUp/PageDown, and Home/End; useful in terminals such as Terminal.app
+  where Shift+Arrows is unsupported)
+
+- Enter: New line (inherits the previous line's indentation if `auto_indent`
+  is on)
+
+- Tab: Indent (spaces or a literal tab, see `insert_spaces_for_tab`); with a
+  selection, indents every selected line one level
+
+- `Shift+Tab`: Outdent the selected lines, or the current one when there's no
+  selection
+
+- `(` `{` `[` `"` `` ` `` `$`: Auto-close the pair / skip over an existing
+  closer / wrap the selection (if `auto_close_pairs` is on)
+
+- `'`: Same, but only when `auto_close_single_quote` is on (off by default,
+  since apostrophes in prose are more common than pairs)
+
+- `>` in `.xml`, `.html`, or `.htm`: Auto-insert the matching closing tag
+  (with `auto_close_pairs` on); HTML void elements such as `img` and `br` are
+  left unclosed
+
+- Backspace / Delete: Delete a character (UTF-8 aware)
+
+- `Ctrl-A`: Select all
+
+- `Ctrl-C` / `Ctrl-X` / `Ctrl-V`: Copy / cut / paste (system clipboard; C/X
+  need an active selection)
+
+- `Ctrl-Z`: Undo
+
+- `Ctrl-Y`: Redo
+
+- `Ctrl-F`: Incremental search (Arrows for next/previous match, `Ctrl-G` to
+  toggle regex search, `Ctrl-R` to switch to search & replace, Esc to cancel)
+
+- `F1`: Help screen listing every shortcut (any key closes it)
+
+- `F3`: Info screen: version, author, and stats about the current file
+
+- `F2`: Settings panel (Up/Down to navigate, Enter/Space to edit, Left/Right
+  to cycle options, `Ctrl-D` resets defaults, `Ctrl-S` saves and exits, Esc
+  exits with a confirmation prompt if there are unsaved changes)
+
+- `F10`: Open or close the menu; use arrows to navigate, Enter to choose, or
+  Esc to dismiss
+
+- `Ctrl-S`: Save (asks for a filename if none is set)
+
+- `F4` (or `Ctrl-Shift-S` where the terminal sends it): Save as: always asks
+  for a filename; replacing another existing file requires confirmation
+
+- `Ctrl-E`: Show or hide the file tree. Opening focuses the tree.
+
+- `Ctrl-B`: Switch focus between the visible file tree and document.
+
+- `Ctrl-O`: Open another file by entering its path; offers to save the current
+  file first. A missing path becomes a new file on first save.
+
+- `Ctrl-N`: New empty unnamed document; offers to save the current document
+  first.
+
+- `Ctrl-W`: Close the current file without quitting tinyedit; offers to save
+  first and leaves an empty buffer.
+
+- `Ctrl-Q`: Quit (if there are unsaved changes, asks y/n/Esc: save-and-quit /
+  quit without saving / cancel)
+
 
 ## Experimental macOS Command keys in Ghostty
 
@@ -224,6 +273,11 @@ the cursor is off-screen. Keyboard input, a text click or a drag resumes
 following the cursor.
 
 ## Links and installed documentation
+
+Installed guides are read-only, including linked pages and guides opened with
+Ctrl-O. You can navigate, search, select and copy text. Editing, replacing,
+cutting, pasting and saving report a red error. The title and status bar show
+`(read-only)`. Ctrl-N starts an editable document; Ctrl-O opens your own file.
 
 `make install` includes the guides. Choose **Help → Documentation** to open
 `$(PREFIX)/share/tinyedit/docs/README.md`, or the personal copy at

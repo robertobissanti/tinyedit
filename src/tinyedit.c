@@ -752,6 +752,10 @@ static uint8_t editorPrepareReplay(struct historyAction *action) {
  * @brief Prepare and replay history while preserving the document on failure.
  */
 static void editorReplay(uint8_t reverse) {
+    if (E.document.file.read_only) {
+        editorSetErrorMessage("Documentation is read-only");
+        return;
+    }
     if (historyFinishEdit(&E.document) != HISTORY_OK) {
         E.document.history.error = HISTORY_OK;
         editorSetErrorMessage("Not enough memory: edit cancelled");
@@ -1337,6 +1341,42 @@ static void editorWarnMissingHighlightConfig(void) {
     editorSetStatusMessage("Filetype '%s': highlight config missing", name);
 }
 
+/* Canonical paths also protect guides opened via symlinks or File > Open. */
+static uint8_t editorInstalledGuide(const char *filename) {
+    char *path = realpath(filename, NULL);
+    if (!path) return 0;
+    const char *home = getenv("HOME");
+    char *personal = home ? teMalloc(teSizeAdd(strlen(home), sizeof("/.tinyedit"))) : NULL;
+    if (personal) { strcpy(personal, home); strcat(personal, "/.tinyedit"); }
+    const char *roots[] = {personal, TE_DATADIR};
+    uint8_t installed = 0;
+    for (size_t i = 0; i < sizeof(roots) / sizeof(*roots); i++) {
+        char *root = roots[i] ? realpath(roots[i], NULL) : NULL;
+        if (root) {
+            size_t length = strlen(root);
+            if (!strncmp(path, root, length) && path[length] == '/') {
+                const char *relative = path + length + 1;
+                installed = !strncmp(relative, "docs/", 5) ||
+                    !strncmp(relative, "colorschemes/", 13) ||
+                    !strncmp(relative, "syntax-configs/", 15) ||
+                    !strcmp(relative, "tests/README.md") || !strcmp(relative, "README.md") ||
+                    !strcmp(relative, "CONTRIBUTING.md") || !strcmp(relative, "IDEAS.md") ||
+                    !strcmp(relative, "LICENSE") || !strcmp(relative, "LICENSE-THIRD-PARTY");
+            }
+            free(root);
+        }
+        if (installed) break;
+    }
+    free(personal); free(path);
+    return installed;
+}
+
+static uint8_t editorReadOnly(void) {
+    if (!E.document.file.read_only) return 0;
+    editorSetErrorMessage("Documentation is read-only");
+    return 1;
+}
+
 /**
  * @brief Associate a filename and load its rows into the active buffer.
  *
@@ -1356,6 +1396,7 @@ static uint8_t editorOpen(const char *filename) {
      * closing the candidate have both succeeded. */
     editorResetDocument();
     E.document = candidate;
+    E.document.file.read_only = editorInstalledGuide(E.document.file.filename);
     editorBindHistory();
     editorResolveFiletype();
     editorUpdateAllRows();
@@ -1471,6 +1512,7 @@ static void editorRecoveryScreen(void) {
  * marks dirty and keeps the backup until save or clean exit.
  */
 static void editorOfferBackupRecovery(void) {
+    if (E.document.file.read_only) return;
     if (!E.document.file.filename || !backupExists(E.document.file.filename)) return;
 
     editorRecoveryScreen();
@@ -1499,9 +1541,15 @@ static void editorOfferBackupRecovery(void) {
  * it must not be mistaken for an untouched target. Undo history is preserved.
  */
 static enum fileSaveResult editorSaveToPath(const char *filename) {
+    if (editorReadOnly()) return FILE_SAVE_FAILED;
     char *path = fileioExpandHomePath(filename);
     if (!path) {
         editorSetErrorMessage("Can't save! Path error: %s", strerror(errno));
+        return FILE_SAVE_FAILED;
+    }
+    if (editorInstalledGuide(path)) {
+        free(path);
+        editorSetErrorMessage("Cannot overwrite installed documentation");
         return FILE_SAVE_FAILED;
     }
     size_t len;
@@ -1511,7 +1559,7 @@ static enum fileSaveResult editorSaveToPath(const char *filename) {
     free(bytes);
     if (result == FILE_SAVE_DURABLE) {
         char *name = teStrdup(path);
-        if (E.document.file.filename) backupRemove(E.document.file.filename);
+        if (E.document.file.filename && !E.document.file.read_only) backupRemove(E.document.file.filename);
         backupRemove(name);
         free(E.document.file.filename);
         E.document.file.filename = name;
@@ -1574,6 +1622,7 @@ static uint8_t editorConfirmOverwrite(const char *name) {
  * name already exists.
  */
 static void editorSaveInternal(uint8_t force_prompt) {
+    if (editorReadOnly()) return;
     char *name = NULL;
     if (E.document.file.filename == NULL || force_prompt) {
         name = editorPrompt("Save as: (Tab complete, Esc cancel) %s");
@@ -1720,7 +1769,7 @@ static void editorResetDocument(void) {
     E.search.direction = 1;
     E.search.last_cy = -1;
     E.search.last_end_y = -1;
-    if (E.document.file.filename) backupRemove(E.document.file.filename);
+    if (E.document.file.filename && !E.document.file.read_only) backupRemove(E.document.file.filename);
     editorFreeUndoRedo();
     editorClearRows();
     free(E.document.file.filename);
@@ -1736,6 +1785,7 @@ static void editorResetDocument(void) {
     E.document.file.line_endings_mixed = 0;
     E.document.file.final_newline = 1;
     E.document.file.dirty = 0;
+    E.document.file.read_only = 0;
     E.document.file.save_uncertain = 0;
     E.document.selection.active = 0;
     E.document.selection.anchor_x = 0;
@@ -2105,7 +2155,7 @@ static void editorQuit(void) {
 
     /* A discarded dirty buffer must not leave a recovery file that would
      * look like evidence of a crash the next time this path is opened. */
-    if (E.document.file.filename) backupRemove(E.document.file.filename);
+    if (E.document.file.filename && !E.document.file.read_only) backupRemove(E.document.file.filename);
 
     exit(0);
 }
@@ -3127,7 +3177,7 @@ static void editorDrawTopBar(struct abuf *ab) {
     char *safe_name = editorDisplayText(name ? name : "[No Name]");
     const char *parts[] = {
         safe_name,
-        E.document.file.dirty ? " (modified)" : ""
+        E.document.file.read_only ? " (read-only)" : E.document.file.dirty ? " (modified)" : ""
     };
     int32_t title_width = 0;
     for (size_t part = 0; part < sizeof(parts) / sizeof(parts[0]); part++) {
@@ -3185,11 +3235,11 @@ static void editorDrawStatusBar(struct abuf *ab) {
     int32_t len;
     if (S.show_top_bar) {
         len = snprintf(status, sizeof(status), "%d lines, %d chars %s",
-            E.document.buffer.row_count, editorCountChars(), E.document.file.dirty ? "(modified)" : "");
+            E.document.buffer.row_count, editorCountChars(), E.document.file.read_only ? "(read-only)" : E.document.file.dirty ? "(modified)" : "");
     } else {
         len = snprintf(status, sizeof(status), "%.20s - %d lines, %d chars %s",
             safe_name, E.document.buffer.row_count, editorCountChars(),
-            E.document.file.dirty ? "(modified)" : "");
+            E.document.file.read_only ? "(read-only)" : E.document.file.dirty ? "(modified)" : "");
     }
 
     free(safe_name);
@@ -4166,6 +4216,7 @@ static void editorFind(void) {
  * not revisited.
  */
 static void editorFindAndReplace(const char *query) {
+    if (editorReadOnly()) return;
     if (!query || query[0] == '\0') return;
 
     /* E.search.regex_mode carries over unchanged from the Ctrl-F search
@@ -6402,6 +6453,16 @@ static uint8_t editorHandleCommandKey(int32_t c) {
  * their own undo and rendering contracts. Paste and UTF-8 input own payload reads.
  */
 static void editorHandleEditKey(int32_t c) {
+    if (E.document.file.read_only && c != CTRL_KEY('a') &&
+        c != CTRL_KEY('c') && c != CTRL_KEY('t') && c != '\x1b') {
+        if (c == PASTE_START_KEY) {
+            size_t length;
+            char *text = terminalReadPastedText(&length);
+            free(text);
+        }
+        editorReadOnly();
+        return;
+    }
     editorBeginEdit();
 
     /* Immutable snapshot for actions that consume or wrap the selection.

@@ -33,17 +33,29 @@ it wins.
 
 ## What's here
 
-| File | Languages | Extensions |
-| --- | --- | --- |
-| `bash.conf` | Bash (overrides built-in Shell; generic tokenizer) | `.sh` `.bash`, Bash/Zsh startup dotfiles |
-| `vimrc.conf` | Basic Vimscript (generic tokenizer) | `.vim` `.vimrc` `.gvimrc` |
-| `latex.conf` | LaTeX | `.tex` `.latex` `.sty` `.cls` |
-| `matlab.conf` | Matlab / Octave | `.m` `.mat` |
-| `json.conf` | JSON (also built in; keys and string values use separate colors) | `.json` |
-| `nunjucks.conf` | Nunjucks (Eleventy) | `.njk` `.nunjucks` |
-| `jinja.conf` | Jinja2 (Flask, Ansible) | `.jinja` `.jinja2` `.j2` |
-| `liquid.conf` | Liquid (Shopify, Jekyll) | `.liquid` |
-| `twig.conf` | Twig (Symfony) | `.twig` |
+- `bash.conf`: Languages: Bash (overrides built-in Shell; generic tokenizer);
+  Extensions: `.sh` `.bash`, Bash/Zsh startup dotfiles
+
+- `vimrc.conf`: Languages: Basic Vimscript (generic tokenizer); Extensions:
+  `.vim` `.vimrc` `.gvimrc`
+
+- `latex.conf`: Languages: LaTeX; Extensions: `.tex` `.latex` `.sty` `.cls`
+
+- `matlab.conf`: Languages: Matlab / Octave; Extensions: `.m` `.mat`
+
+- `json.conf`: Languages: JSON (also built in; keys and string values use
+  separate colors); Extensions: `.json`
+
+- `nunjucks.conf`: Languages: Nunjucks (Eleventy); Extensions: `.njk`
+  `.nunjucks`
+
+- `jinja.conf`: Languages: Jinja2 (Flask, Ansible); Extensions: `.jinja`
+  `.jinja2` `.j2`
+
+- `liquid.conf`: Languages: Liquid (Shopify, Jekyll); Extensions: `.liquid`
+
+- `twig.conf`: Languages: Twig (Symfony); Extensions: `.twig`
+
 
 Bash covers reserved words, builtins, quoted strings, comments and function
 declarations. It uses the generic tokenizer: heredocs, nested expansions and

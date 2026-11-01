@@ -1552,6 +1552,26 @@ static void testLinks(void) {
     editorDocumentation();
     check(E.document.file.filename && !strcmp(E.document.file.filename, docs_index) &&
         !strcmp(E.document.buffer.rows[0].chars, "# Installed documentation"), "Documentation opens installed index");
+    check(E.document.file.read_only, "installed index is read-only");
+    const int32_t blocked[] = {'X', '\r', '\t', SHIFT_TAB, BACKSPACE, DEL_KEY,
+        CTRL_KEY('x'), CTRL_KEY('v'), CTRL_KEY('z'), CTRL_KEY('y'), CTRL_KEY('s'), F4_KEY};
+    for (size_t i = 0; i < sizeof(blocked) / sizeof(*blocked); i++) {
+        editorDispatchKey(blocked[i]);
+        check(E.ui.statusmsg_error && !E.document.file.dirty &&
+            !strcmp(E.document.buffer.rows[0].chars, "# Installed documentation"),
+            "read-only commands preserve guide and report red error");
+    }
+    editorFindAndReplace("Installed");
+    check(E.ui.statusmsg_error && !E.document.file.dirty, "read-only search cannot replace");
+    editorDispatchKey(CTRL_KEY('a'));
+    check(E.document.selection.active, "read-only guide allows selection");
+    check(editorSaveToPath(new_path) == FILE_SAVE_FAILED, "read-only direct save rejected");
+    check(editorOpen(docs_index) && E.document.file.read_only, "direct Open also protects installed guide");
+    check(editorOpen(old_path) && !E.document.file.read_only, "ordinary file remains editable");
+    check(editorSaveToPath(docs_index) == FILE_SAVE_FAILED && E.ui.statusmsg_error,
+        "Save as cannot overwrite an installed guide from another document");
+    editorResetDocument();
+    check(!E.document.file.read_only, "new document clears read-only state");
     if (old_home) { setenv("HOME", old_home, 1); free(old_home); } else unsetenv("HOME");
     unlink(docs_index); rmdir(docs_folder); rmdir(docs_root);
     check(editorMenuCommandKey(CMD_DOCUMENTATION) == DOCUMENTATION_KEY, "Documentation menu dispatch");

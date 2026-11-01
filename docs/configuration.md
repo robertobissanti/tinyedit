@@ -75,14 +75,21 @@ its position and retaining the same draft.
 
 Complete presets are included in [`colorschemes/`](../colorschemes/README.md):
 
-| Scheme | RGB file | ANSI file |
-|---|---|---|
-| One Dark, adapted from Vim One with `background=dark` | `one-dark.conf` | `one-dark-ansi.conf` |
-| Catppuccin Latte (light) | `catppuccin-latte.conf` | — |
-| Catppuccin Frappé (dark) | `catppuccin-frappe.conf` | — |
-| Catppuccin Macchiato (dark) | `catppuccin-macchiato.conf` | — |
-| Synthwave Pro (dark) | `synthwave-pro.conf` | — |
-| Catppuccin Mocha (dark) | `catppuccin-mocha.conf` | `catppuccin-mocha-ansi.conf` |
+- One Dark, adapted from Vim One with `background=dark`: RGB file:
+  `one-dark.conf`; ANSI file: `one-dark-ansi.conf`
+
+- Catppuccin Latte (light): RGB file: `catppuccin-latte.conf`; ANSI file: —
+
+- Catppuccin Frappé (dark): RGB file: `catppuccin-frappe.conf`; ANSI file: —
+
+- Catppuccin Macchiato (dark): RGB file: `catppuccin-macchiato.conf`; ANSI
+  file: —
+
+- Synthwave Pro (dark): RGB file: `synthwave-pro.conf`; ANSI file: —
+
+- Catppuccin Mocha (dark): RGB file: `catppuccin-mocha.conf`; ANSI file:
+  `catppuccin-mocha-ansi.conf`
+
 
 RGB presets use explicit colors; ANSI presets are approximations whose actual
 shades depend on the terminal palette. One Dark includes the customized

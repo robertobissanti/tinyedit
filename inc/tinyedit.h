@@ -288,6 +288,7 @@ struct editorFileState {
     uint8_t line_endings_mixed;
     uint8_t final_newline; /* Keep an unterminated last row unterminated on save. */
     uint8_t dirty;
+    uint8_t read_only; /* Installed documentation is a reference copy. */
     uint8_t save_uncertain; /* Replacement happened but directory sync failed. */
     char *filename;
     time_t last_backup_time;

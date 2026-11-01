@@ -15,19 +15,28 @@ version 1.8.0. Color roles are tinyedit's adaptation, rather than an official
 Catppuccin editor integration. Their MIT notice is included in
 [LICENSE-THIRD-PARTY](../LICENSE-THIRD-PARTY). Select RGB mode to see all four.
 
-| tinyedit role | Official Catppuccin color |
-|---|---|
-| Editor background / normal text | Base / Text |
-| Gutter and comments / invisibles | Overlay 1 / Overlay 0 |
-| Selection / legacy heading background | Surface 1 / Surface 0 |
-| Status bar background / text | Mantle / Subtext 0 |
-| Keywords / strings | Mauve / Green |
-| JSON keys, function names and Markdown link/anchor markers | Blue |
-| Parentheses and brackets | Yellow |
-| Numbers and bold emphasis | Peach |
-| Preprocessor | Lavender |
-| Math / italic text | Teal / Text |
-| Link hover | Sky |
+- Editor background / normal text: Base / Text
+
+- Gutter and comments / invisibles: Overlay 1 / Overlay 0
+
+- Selection / legacy heading background: Surface 1 / Surface 0
+
+- Status bar background / text: Mantle / Subtext 0
+
+- Keywords / strings: Mauve / Green
+
+- JSON keys, function names and Markdown link/anchor markers: Blue
+
+- Parentheses and brackets: Yellow
+
+- Numbers and bold emphasis: Peach
+
+- Preprocessor: Lavender
+
+- Math / italic text: Teal / Text
+
+- Link hover: Sky
+
 
 Ordinary `()`, `[]` and `{}` use the Yellow bracket role. Markdown link/image
 delimiters and recognized Pandoc span, header and Div anchor markers use the
@@ -136,12 +145,16 @@ Pandoc ID/attribute markers keep their navigation color. Fenced/inline code,
 seven hashes and hashes without the heading separator do not become headings.
 Setext headings are outside the existing ATX highlighting support.
 
-| Preset | H1 → H6 |
-|---|---|
-| Synthwave Pro | Magenta, Cyan, Purple, Yellow, Text, Muted (original theme order) |
-| Catppuccin (all four flavors) | Red, Peach, Yellow, Green, Blue, Mauve |
-| One Dark | Red, Blue, Purple, Yellow, Green, Cyan |
-| ANSI adaptations | Light red, dark yellow, light yellow, light green, light blue, light magenta |
+- Synthwave Pro: Magenta, Cyan, Purple, Yellow, Text, Muted (original theme
+  order)
+
+- Catppuccin (all four flavors): Red, Peach, Yellow, Green, Blue, Mauve
+
+- One Dark: Red, Blue, Purple, Yellow, Green, Cyan
+
+- ANSI adaptations: Light red, dark yellow, light yellow, light green, light
+  blue, light magenta
+
 
 ANSI colors depend on the terminal palette. The Catppuccin and One Dark heading
 assignments are tinyedit adaptations using their source palettes, not claims

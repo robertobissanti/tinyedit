@@ -52,6 +52,7 @@ def main():
             installed = destination / "docs" / source.name
             assert installed.read_bytes() == source.read_bytes(), source
             text = prose_only(installed.read_text())
+            assert not re.search(r"^\|.*\|\s*$", text, re.M), (source, "prose tables wrap poorly in terminals")
             targets = [m.group(1) for m in re.finditer(r"!?\[[^\]\n]*\]\(([^)\n]+)\)", text)]
             targets += re.findall(r'<img\s[^>]*src="([^"]+)"', text)  # HTML images too
             for target in targets:

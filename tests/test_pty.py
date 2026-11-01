@@ -115,6 +115,33 @@ def test_path_completion(home):
             finish(process, master)
 
 
+def test_read_only_guides(home):
+    case_home = pathlib.Path(home) / "readonly-guides"
+    guides = case_home / ".tinyedit" / "docs"
+    guides.mkdir(parents=True)
+    guide = guides / "README.md"
+    original = "# Read-only guide\nFollow the instructions.\n"
+    guide.write_text(original)
+    (case_home / ".tinyeditrc").write_text("backup_interval = 0\n")
+    destination = case_home / "editable.txt"
+    process, master = spawn_editor([str(guide)], case_home)
+    try:
+        output = read_available(master)
+        assert b"(read-only)" in output, "installed guide lacks read-only indicator"
+        os.write(master, b"X\x13")
+        assert b"Documentation is read-only" in read_until(master, b"Documentation is read-only")
+        os.write(master, b"\x1b[200~ignored\ntext\x1b[201~")
+        read_until(master, b"Documentation is read-only")
+        os.write(master, b"\x0eEditable\x13")
+        read_until(master, b"Save as:")
+        os.write(master, str(destination).encode() + b"\r")
+        read_until(master, b"bytes written")
+        assert destination.read_bytes() == b"Editable\n", repr(destination.read_bytes())
+        assert guide.read_text() == original, "guide changed on disk"
+    finally:
+        finish(process, master)
+
+
 def test_sidebar(home):
     root = pathlib.Path(home) / "tree-fixture"
     root.mkdir()
@@ -1135,7 +1162,7 @@ def test_settings_refresh_rows(home, save, initially_visible):
     process, master = spawn_editor([str(target)], case_home)
     try:
         expect_rendered_rows(read_until(master, b"\x1b[?25h"), source, initially_visible)
-        os.write(master, b"X")  # snapshot under the original settings
+        os.write(master, b"X")  # record the edit under the original settings
         expect_rendered_rows(read_available(master), "X" + source, initially_visible)
 
         # Discard must preserve both the live settings and row rendering.
@@ -2071,6 +2098,7 @@ def main():
         test_f3(b"\x1bOR", "SS3", home)
         test_path_completion(home)
         test_sidebar(home)
+        test_read_only_guides(home)
         test_binary_open_rejected(home)
         test_f3(b"\x1b[13~", "CSI", home)
         test_kitty_f1_f2(home)
