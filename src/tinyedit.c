@@ -2457,7 +2457,8 @@ static uint8_t editorPreviewLinkAtMouse(int32_t screen_col, int32_t screen_row,
     if (rx >= end_rx) return 0;
     int32_t source = editorRowRxToCx(row, rx);
     struct textLink ordinary;
-    if (linksFind(row->chars, row->size, source, &ordinary) && markdownLinkIsImage(row, &ordinary) &&
+    if (linksFind(row->chars, row->size, source, &ordinary) &&
+        (markdownLinkIsImage(row, &ordinary) || row->chars[ordinary.start] == '(') &&
         source >= ordinary.target_start && source < ordinary.target_end &&
         markdownSourceVisible(&E.document.buffer, cy, source)) {
         int32_t from = markdownSourceRenderByte(row, ordinary.target_start, S.tab_stop);

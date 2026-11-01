@@ -147,6 +147,19 @@ uint8_t linksFind(const char *text, int32_t length, int32_t cursor,
             }
             if (at >= length || text[at] != ')' || last == first) continue;
             end = ++at;
+        } else if (length - at > 2 && text[at] == '(' && text[at + 1] == '#') {
+            first = ++at;
+            while (at < length && text[at] != ')' &&
+                !isspace((unsigned char)text[at])) {
+                if (text[at] == '\\') {
+                    at++;
+                    if (at >= length) break;
+                }
+                at = next(text, at, length);
+            }
+            last = at;
+            if (at >= length || text[at] != ')' || last <= first + 1) continue;
+            end = ++at;
         } else if ((length - at >= 7 && !strncasecmp(text + at, "http://", 7)) ||
                    (length - at >= 8 && !strncasecmp(text + at, "https://", 8))) {
             first = at;

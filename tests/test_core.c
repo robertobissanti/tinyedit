@@ -988,13 +988,13 @@ static void testMarkdownNavigation(void) {
     editorLinkAnchor("^paragrafo");
     check(!E.ui.statusmsg_error && E.document.cursor.cy == 8, "Obsidian paragraph marker");
     editorLinkAnchor("^tabella");
-    check(!E.ui.statusmsg_error && E.document.cursor.cy == 10, "standalone Obsidian marker targets table start");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 14, "standalone Obsidian marker targets marker after table");
     editorLinkAnchor("^lista");
-    check(!E.ui.statusmsg_error && E.document.cursor.cy == 16, "standalone Obsidian marker targets list start");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 19, "standalone Obsidian marker targets marker after list");
     editorLinkAnchor("minimo");
     check(!E.ui.statusmsg_error && E.document.cursor.cy == 21, "minimal Pandoc fenced Div ID");
     editorLinkAnchor("^multilinea");
-    check(!E.ui.statusmsg_error && E.document.cursor.cy == 25, "standalone marker targets multiline paragraph start");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 28, "standalone marker targets its own line after multiline paragraph");
     editorLinkAnchor("Esatto");
     check(E.ui.statusmsg_error, "explicit IDs are case sensitive");
     editorLinkAnchor("^dati");
@@ -1046,12 +1046,12 @@ static void testMarkdownNavigation(void) {
     editorLinkAnchor("^unseparated");
     check(E.ui.statusmsg_error, "standalone marker requires separating blank line");
     editorLinkAnchor("^loose");
-    check(!E.ui.statusmsg_error && E.document.cursor.cy == 7, "standalone block marker targets whole loose list");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 11, "standalone block marker targets its own line after loose list");
 
     const char *const continued_list[] = {"- Primo", "  continuazione", "", "^continued"};
     markdownNavigationRows(continued_list, sizeof(continued_list) / sizeof(*continued_list));
     editorLinkAnchor("^continued");
-    check(!E.ui.statusmsg_error && E.document.cursor.cy == 0, "standalone marker includes list continuation text");
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 3, "standalone marker follows list continuation text");
 
     const char *const references[] = {"é @fig:architettura, poi [@dati].", "[Figura]{#fig:architettura}",
         "## Dati {#dati}", "a@dati @bibliografia `@dati`", "[vai](#d%61ti)"};
@@ -1088,14 +1088,42 @@ static void testMarkdownNavigation(void) {
         check(!E.ui.statusmsg_error && E.document.cursor.cy == (y == 2 ? 0 : 5),
             "image anchor and block link navigate internally");
     }
-    for (int32_t y = 3; y < 5; y++) {
+    for (int32_t y = 3; y < 4; y++) {
         E.document.cursor.cy = y; E.document.cursor.cx = 3;
-        check(!editorCursorLink(&link), "escaped parentheses and bare fragment remain literal");
+        check(!editorCursorLink(&link), "escaped parentheses remain literal");
     }
+    E.document.cursor.cy = 4; E.document.cursor.cx = 3;
+    editorOpenCursorLink();
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 0,
+        "bare block fragment follows the same target as a labelled link");
     for (int32_t y = 7; y < 9; y++) {
         E.document.cursor.cy = y; E.document.cursor.cx = 4;
         check(!editorCursorLink(&link), "code and escaped reference openers remain literal");
     }
+
+    const char *const spaced_block[] = {
+        "## Tabelle", "", "| ciao | prova |", "| --- | --- |", "| uno | due |", "",
+        "[ciao](#^ciao)", "", "", "", "", "", "", "", "", "", "", "", "^ciao"
+    };
+    markdownNavigationRows(spaced_block, sizeof(spaced_block) / sizeof(*spaced_block));
+    E.document.cursor.cy = 6; E.document.cursor.cx = 3;
+    editorOpenCursorLink();
+    check(!E.ui.statusmsg_error && E.document.cursor.cy == 18,
+        "link before many blank lines reaches standalone marker instead of itself");
+    const char *const lone_marker[] = {"^ciao", "", "(#^ciao)", "", "[ciao](#^ciao)"};
+    markdownNavigationRows(lone_marker, sizeof(lone_marker) / sizeof(*lone_marker));
+    for (int32_t y = 2; y <= 4; y += 2) {
+        E.document.cursor.cy = y; E.document.cursor.cx = 2;
+        editorOpenCursorLink();
+        check(!E.ui.statusmsg_error && E.document.cursor.cy == 0,
+            "labelled and bare links resolve a marker without a preceding block");
+    }
+    const char *const bare_code[] = {"`(#^ciao)`", "~~~", "(#^ciao)", "~~~", "", "^ciao"};
+    markdownNavigationRows(bare_code, sizeof(bare_code) / sizeof(*bare_code));
+    E.document.cursor.cy = 0; E.document.cursor.cx = 3;
+    check(!editorCursorLink(&link), "bare fragment inside inline code is not navigable");
+    E.document.cursor.cy = 2;
+    check(!editorCursorLink(&link), "bare fragment inside fenced code is not navigable");
 
     const char *const extra[] = {
         "~~~markdown", "[hidden]{#tilde}", "@dati", "~~~", "`inizio", "[hidden]{#multicode}",

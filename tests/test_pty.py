@@ -566,6 +566,31 @@ def test_markdown_live_preview(home, highlighting=True):
         finish(process, master)
 
 
+def test_standalone_block_links(home):
+    for bare in (False, True):
+        case_home = pathlib.Path(home) / ("bare-block-link" if bare else "labelled-block-link")
+        case_home.mkdir()
+        target = case_home / "links.md"
+        label = "(#^ciao)" if bare else "[ciao](#^ciao)"
+        original = "start\n" + label + "\n" + "\n" * 40 + "^ciao\n"
+        target.write_text(original)
+        (case_home / ".tinyeditrc").write_text(
+            "show_menu = false\nshow_top_bar = false\nshow_line_numbers = false\n"
+            "mouse_enabled = true\nmarkdown_live_preview = true\nbackup_interval = 0\n")
+        process, master = spawn_editor([str(target)], case_home)
+        try:
+            read_available(master)
+            os.write(master, b"\x1b[<35;2;2M")
+            hovered = read_available(master)
+            assert b"\x1b[4m" in hovered, "block reference is not underlined"
+            os.write(master, b"\x1b[<0;2;2M\x1b[<0;2;2m")
+            output = read_until(master, b"43/43: C 1")
+            assert b"43/43: C 1" in output, "block link jumped to preceding text instead of marker"
+            assert target.read_text() == original, "block navigation changed source"
+        finally:
+            finish(process, master)
+
+
 def test_markdown_link_mouse(home, highlighting=True):
     case_home = pathlib.Path(home) / ("markdown-link-mouse" if highlighting else "markdown-mouse-no-highlighting")
     case_home.mkdir()
@@ -2116,6 +2141,7 @@ def main():
         test_menu_show_invisibles_refreshes_rows(home)
         test_menu_view_toggles_settings(home)
         test_markdown_live_preview(home)
+        test_standalone_block_links(home)
         test_markdown_live_preview(home, False)
         test_markdown_link_mouse(home)
         test_markdown_link_mouse(home, False)

@@ -347,6 +347,14 @@ static void syntaxMarkdownSpan(erow *row, int32_t start, int32_t content_start,
  */
 static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t len,
     int32_t i, int32_t nesting) {
+    if (len - i > 2 && s[i] == '(' && s[i + 1] == '#') {
+        struct textLink link;
+        if (!linksFind(s, len, i, &link) || link.start != i) return i;
+        row->hl[i] = row->hl[link.end - 1] = HL_LINK_MARKER;
+        memset(row->hl + link.target_start, HL_LINK_DESTINATION,
+            (size_t)(link.target_end - link.target_start));
+        return link.end;
+    }
     int32_t start = i;
     int32_t span_count = row->markdown_count;
     int32_t bracket = i;
@@ -653,7 +661,7 @@ void markdownHighlightRow(erow *row, uint8_t prev_in_fence, uint8_t prev_in_math
         /* Before the emphasis rule below: URLs are full of '_' and '*'
          * ("some_file", "a*b"), which would otherwise open an emphasis
          * span that swallows the rest of the line. */
-        if (s[i] == '[' || s[i] == '!') {
+        if (s[i] == '[' || s[i] == '!' || (len - i > 1 && s[i] == '(' && s[i + 1] == '#')) {
             int32_t end = syntaxTryHighlightMarkdownLink(row, s, len, i, 0);
             if (end != i) { i = end; continue; }
         }
@@ -989,9 +997,9 @@ static enum markdownAnchorResult markdownResolve(const struct editorBuffer *buff
             if (marker < end && row->chars[marker] == '^' && mask[marker] &&
                 markdownObsidianId(row, marker + 1, end) && markdownIdEquals(row, marker + 1, end, id)) {
                 if (marker == start) {
-                    uint8_t before = y > 0 && markdownTrimStart(&buffer->rows[y - 1]) == buffer->rows[y - 1].size;
+                    uint8_t before = y == 0 || markdownTrimStart(&buffer->rows[y - 1]) == buffer->rows[y - 1].size;
                     uint8_t after = y + 1 == buffer->row_count || markdownTrimStart(&buffer->rows[y + 1]) == buffer->rows[y + 1].size;
-                    if (before && after && last_start >= 0) markdownRecord(&found, last_start, markdownTrimStart(&buffer->rows[last_start]));
+                    if (before && after) markdownRecord(&found, y, start);
                 } else if (kind != 3 && kind != 4) markdownRecord(&found, kind == 2 ? item_start : block_start, 0);
             }
         } else {

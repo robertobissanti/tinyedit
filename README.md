@@ -327,8 +327,9 @@ Un paragrafo identificato. ^paragrafo
 ```
 
 Explicit Pandoc IDs take precedence over heading slugs and match exactly;
-`#^id` searches only Obsidian blocks. Standalone Obsidian markers associate
-with the preceding block using separating blank lines. Missing or duplicate
+`#^id` searches only Obsidian blocks. Standalone Obsidian markers, separated
+by blank lines, jump to their own marker line. Bare fragments such as `(#^id)`
+navigate like `[label](#^id)`. Missing or duplicate
 targets produce red errors; unresolved `@id` citations remain text. Code is
 excluded from navigation. See the [target examples and limits](docs/usage.md#markdown-heading-attribute-and-block-targets)
 for tables, lists, quoted blocks, namespaces, UTF-8 and encoded fragments.

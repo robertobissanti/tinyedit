@@ -6,9 +6,14 @@
 
 - Recognize direct `[label][#anchor]` and `![label][#anchor]` navigation;
   image links with fragment-only destinations now jump within the document.
-  Keep escaped parentheses and bare fragments literal.
+  Keep escaped opening parentheses literal.
 
 ### Important fixes
+
+- Follow standalone Obsidian block IDs to their marker line, including markers
+  after long blank gaps or without a preceding block. A link previously could
+  jump back to itself instead of reaching the visible marker. Bare `(#^id)`
+  references now navigate to the same destination as `[label](#^id)`.
 
 - Protect installed documentation from editing, paste, replacement, undo and
   saving, including guides reached through links or Open. Keep search and copy

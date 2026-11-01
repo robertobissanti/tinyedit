@@ -413,12 +413,12 @@ line on both sides (the end of the document also terminates the marker). For exa
 [Vedi la tabella](#^tabella-dati)
 ```
 
-The jump reaches the associated block's beginning, not the marker line.
-The block association covers contiguous paragraphs, pipe tables, blockquotes
-(including callouts), and ordinary lists with blank-separated items. It is a
-conservative source scan, not a complete parser for arbitrary nested blocks;
-complex nested or multi-paragraph list layouts may need a heading or Pandoc
-span/Div ID instead.
+The jump reaches the standalone marker's own line. A marker can also appear
+at the beginning of a document, without a preceding block.
+Inline paragraph markers retain their association with the paragraph or list
+item. For a jump to the beginning of a structured block, use a heading or a
+Pandoc span/Div ID. Navigation is a conservative source scan, not a complete
+parser for arbitrary nested blocks.
 Obsidian IDs contain only ASCII letters, digits and hyphens. `#^id` searches
 only Obsidian block IDs; it never falls back to a heading or Pandoc ID.
 Cross-file block links work too: `[Tabella](altro.md#^tabella-dati)`.
@@ -446,11 +446,13 @@ and a complete Pandoc or Obsidian parser are outside this subset. See the
 
 [Back to top](#user-guide)
 
-### Direct anchor links and literal parentheses
+### Direct anchor links and bare fragments
 
-`[nota](#^diag)` follows an Obsidian block ID. `[nota]\(#^diag)` has an
-escaped opening parenthesis and remains literal text, as does `(#^diag)`
-without a link label.
+`[nota](#^diag)` and `(#^diag)` follow the same Obsidian block ID. A standalone
+`^diag` separated by blank lines is reached on its own line, even after many
+empty lines. An inline marker such as `Paragraph text. ^diag` still targets
+that paragraph's beginning. A literal backslash in `[nota]\(#^diag)` escapes
+the opening parenthesis; omit it to make the label navigable.
 
 `[Testo][#link]` and `![Testo][#link]` are tinyedit direct-anchor shortcuts:
 they jump to `link` in the current document. An image with a fragment-only
