@@ -487,6 +487,41 @@ def test_menu_mouse_navigation(home):
         finish(process, master)
 
 
+def test_smart_table_menu(home):
+    """Both menu input paths must execute realignment independently of the setting."""
+    source = "|a|long|\n|---|---|\n|longer|b|\n"
+    expected = "| a      | long |\n| ------ | ---- |\n| longer | b    |\n"
+    for enabled in (False, True):
+        for mouse in (False, True):
+            case_home = pathlib.Path(home) / f"smart-table-{enabled}-{mouse}"
+            case_home.mkdir()
+            target = case_home / "table.md"
+            target.write_text(source)
+            (case_home / ".tinyeditrc").write_text(
+                f"smart_table = {str(enabled).lower()}\n"
+                "mouse_enabled = true\nshow_top_bar = false\nshow_menu = true\nbackup_interval = 0\n"
+            )
+            process, master = spawn_editor([str(target)], case_home)
+            try:
+                read_available(master)
+                if mouse:
+                    # Edit title; final item is at menu row + 2 + index 9.
+                    for col, row in ((18, 1), (20, 12)):
+                        os.write(master, f"\x1b[<0;{col};{row}M\x1b[<0;{col};{row}m".encode())
+                        read_available(master, 0.2)
+                else:
+                    os.write(master, b"\x1b[21~\x1b[C\x1b[C\x1b[A\r")
+                    read_available(master)
+                os.write(master, b"\x13")
+                read_available(master)
+                assert target.read_text() == expected, (enabled, mouse, target.read_text())
+                os.write(master, b"\x1a\x13")
+                read_available(master)
+                assert target.read_text() == source, "menu formatting must undo atomically"
+            finally:
+                finish(process, master)
+
+
 def test_menu_show_invisibles_refreshes_rows(home):
     case_home = pathlib.Path(home) / "menu-invisibles"
     case_home.mkdir()
@@ -2113,6 +2148,7 @@ def main():
         test_menu_bar_precedes_first_file_row(home)
         test_menu_restores_editor_background(home)
         test_menu_mouse_navigation(home)
+        test_smart_table_menu(home)
         test_menu_show_invisibles_refreshes_rows(home)
         test_menu_view_toggles_settings(home)
         test_markdown_live_preview(home)

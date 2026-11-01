@@ -5899,6 +5899,7 @@ static int32_t editorMenuCommandKey(enum editorCommand command) {
         case CMD_FIND: return CTRL_KEY('f');
         case CMD_HELP: return F1_KEY;
         case CMD_DOCUMENTATION: return DOCUMENTATION_KEY;
+        case CMD_SMART_TABLE: return SMART_TABLE_KEY;
         default: return 0;
     }
 }
@@ -6136,6 +6137,7 @@ static uint8_t editorTreeKey(int32_t c) {
         case CTRL_KEY('s'): case CTRL_KEY('o'): case CTRL_KEY('w'):
         case CTRL_KEY('q'): case CTRL_KEY('f'):
         case F1_KEY: case F2_KEY: case F3_KEY: case F4_KEY: case SAVE_AS_KEY:
+        case SMART_TABLE_KEY:
             T.focused = 0;
             return 0;
         default: return 1;
@@ -6499,6 +6501,17 @@ static uint8_t editorHandleCommandKey(int32_t c) {
             editorOpenCursorLink();
             break;
 
+        case SMART_TABLE_KEY: {
+            if (E.document.file.read_only) { editorReadOnly(); break; }
+            editorBeginEdit();
+            editorPushUndo(EDIT_OTHER);
+            uint8_t aligned = editorTableAlign();
+            editorEndEdit();
+            if (!aligned && edit_last_error == HISTORY_OK)
+                editorSetErrorMessage("Smart Table: no unambiguous table, or processing limit exceeded");
+            break;
+        }
+
         case DOCUMENTATION_KEY:
             editorDocumentation();
             break;
@@ -6791,16 +6804,6 @@ static void editorDispatchKey(int32_t c) {
         if (command == CMD_NONE) return;
         if (commandIsSetting(command)) {
             editorToggleMenuSetting(command);
-            return;
-        }
-        if (command == CMD_SMART_TABLE) {
-            T.focused = 0;
-            if (E.document.file.read_only) { editorReadOnly(); return; }
-            editorBeginEdit();
-            editorPushUndo(EDIT_OTHER);
-            uint8_t aligned = editorTableAlign();
-            editorEndEdit();
-            if (!aligned && edit_last_error == HISTORY_OK) editorSetErrorMessage("Smart Table: no unambiguous table, or processing limit exceeded");
             return;
         }
         c = editorMenuCommandKey(command);

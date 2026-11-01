@@ -16,6 +16,10 @@
 
 ### Important fixes
 
+- Execute **Edit → Smart Table: realign** when clicked with the mouse. The
+  command previously worked through keyboard menu navigation but mouse clicks
+  silently discarded it, regardless of the Smart Table setting.
+
 - Protect installed documentation from editing, paste, replacement, undo and
   saving, including guides reached through links or Open. Keep search and copy
   available and display a read-only indicator.

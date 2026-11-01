@@ -193,5 +193,7 @@ bytes, disabled settings, non-Markdown documents, fenced code with highlighting
 off, ambiguity and read-only documents. Settings persistence and the explicit
 Edit menu command are covered by their existing test binaries. These automated
 checks do not certify physical modified keys in a real terminal.
+`test_pty.py` also verifies Smart Table menu realignment and atomic undo through
+both mouse clicks and keyboard menu navigation, with the setting on and off.
 
 [Back to top](#test-fixtures)
