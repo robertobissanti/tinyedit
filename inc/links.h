@@ -8,7 +8,7 @@ struct textLink {
     int32_t target_start, target_end;
 };
 
-/** @brief Find the inline link or bare web URL under a source-byte cursor offset.
+/** @brief Find an inline link, direct `[label][#anchor]` or bare web URL under a source-byte cursor offset.
  * @details All offsets are source-byte boundaries with exclusive ends; no
  * allocation or ownership transfer. Returns 1 and fills link, otherwise 0. */
 uint8_t linksFind(const char *text, int32_t length, int32_t cursor,

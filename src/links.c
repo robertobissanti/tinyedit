@@ -91,6 +91,26 @@ uint8_t linksFind(const char *text, int32_t length, int32_t cursor,
                 at = next(text, at, length);
             }
             if (depth) return 0;
+            if (length - at > 1 && text[at] == '[' && text[at + 1] == '#') {
+                first = ++at;
+                while (at < length && text[at] != ']' &&
+                    !isspace((unsigned char)text[at])) {
+                    if (text[at] == '\\') {
+                        at++;
+                        if (at >= length) break;
+                    }
+                    at = next(text, at, length);
+                }
+                last = at;
+                if (at < length && text[at] == ']' && last > first + 1) {
+                    end = ++at;
+                    if (cursor >= start && cursor < end) {
+                        *link = (struct textLink){start, end, first, last};
+                        return 1;
+                    }
+                }
+                continue;
+            }
             if (at >= length || text[at] != '(') continue;
             at++;
             while (at < length && text[at] == ' ') at++;

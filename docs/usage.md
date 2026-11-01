@@ -421,6 +421,18 @@ and a complete Pandoc or Obsidian parser are outside this subset. See the
 [Pandoc spans and Divs](https://pandoc.org/MANUAL.html#divs-and-spans) and
 [Obsidian block convention](https://obsidian.md/help/links#Link%20to%20a%20block%20in%20a%20note).
 
+### Direct anchor links and literal parentheses
+
+`[nota](#^diag)` follows an Obsidian block ID. `[nota]\(#^diag)` has an
+escaped opening parenthesis and remains literal text, as does `(#^diag)`
+without a link label.
+
+`[Testo][#link]` and `![Testo][#link]` are tinyedit direct-anchor shortcuts:
+they jump to `link` in the current document. An image with a fragment-only
+destination, such as `![Testo](#link)`, also jumps internally. For portable
+Markdown use `[Testo](#link)`; general reference definitions such as
+`[Testo][ref]` followed by `[ref]: destination` are not supported.
+
 ## Menus
 
 The menu bar is visible below the optional top bar by default. Press `F10` to

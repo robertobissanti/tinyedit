@@ -1074,6 +1074,29 @@ static void testMarkdownNavigation(void) {
     editorOpenCursorLink();
     check(!E.ui.statusmsg_error && E.document.cursor.cy == 2, "explicit fragment retains percent decoding");
 
+    const char *const anchor_forms[] = {
+        "![Testo][#fig:figura]", "![Testo](#fig:figura)",
+        "[nota](#^diag)", "[nota]\\(#^diag)", "(#^diag)",
+        "![Figura](image.png){#fig:figura}", "Diagramma. ^diag",
+        "`![Testo][#fig:figura]`", "\\[Testo][#fig:figura]"
+    };
+    markdownNavigationRows(anchor_forms, sizeof(anchor_forms) / sizeof(*anchor_forms));
+    for (int32_t y = 0; y < 3; y++) {
+        E.document.cursor.cy = y; E.document.cursor.cx = 3;
+        check(editorCursorLink(&link), "anchor link form recognized");
+        editorOpenCursorLink();
+        check(!E.ui.statusmsg_error && E.document.cursor.cy == (y == 2 ? 0 : 5),
+            "image anchor and block link navigate internally");
+    }
+    for (int32_t y = 3; y < 5; y++) {
+        E.document.cursor.cy = y; E.document.cursor.cx = 3;
+        check(!editorCursorLink(&link), "escaped parentheses and bare fragment remain literal");
+    }
+    for (int32_t y = 7; y < 9; y++) {
+        E.document.cursor.cy = y; E.document.cursor.cx = 4;
+        check(!editorCursorLink(&link), "code and escaped reference openers remain literal");
+    }
+
     const char *const extra[] = {
         "~~~markdown", "[hidden]{#tilde}", "@dati", "~~~", "`inizio", "[hidden]{#multicode}",
         "@dati", "fine`", "[ok]{title=\"#fake\" #dati}", "## Literal \\{#escaped-heading}",
@@ -1104,6 +1127,14 @@ static void testMarkdownNavigation(void) {
     S.show_line_numbers = S.show_menu = S.show_top_bar = 0;
     E.view.rowoff = E.view.coloff = 0;
     E.search.search_match_y = E.search.search_match_end_y = -1;
+    struct abuf reference_frame = ABUF_INIT;
+    document_pointer_valid = 0; hovered_link_row = -1;
+    editorDrawRowSegment(&reference_frame, 1, 0, E.document.buffer.rows[1].rsize,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    abAppend(&reference_frame, "\0", 1);
+    check(strstr(reference_frame.b, "\x1b[4m") != NULL,
+        "local references are underlined without pointer hover");
+    abFree(&reference_frame);
     mouseEventButton = 35; mouseEventPress = 1; mouseEventCol = 2; mouseEventRow = 2;
     editorHandleMouseEvent();
     editorUpdateLinkHover();

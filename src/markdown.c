@@ -341,7 +341,8 @@ static void syntaxMarkdownSpan(erow *row, int32_t start, int32_t content_start,
  * Returns the index just past the closing ')', or `i` unchanged when this
  * isn't a well-formed link -- an unmatched "[link]" or a stray "(text)" in
  * prose is left as plain text, same conservative stance as the HTML tag
- * scanner. Reference-style links ("[text][ref]") and bare autolinks are out of
+ * scanner. Direct anchor references ("[text][#id]") are supported; general
+ * reference-style links ("[text][ref]") and bare autolinks are out of
  * scope for this first pass.
  */
 static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t len,
@@ -363,13 +364,23 @@ static int32_t syntaxTryHighlightMarkdownLink(erow *row, const char *s, int32_t 
         }
     }
     if (label_end < 0) return start;
-    if (label_end + 1 >= len || s[label_end + 1] != '(') return start;
+    if (label_end + 1 >= len) return start;
+    uint8_t anchor_reference = len - label_end > 2 &&
+        s[label_end + 1] == '[' && s[label_end + 2] == '#';
+    if (!anchor_reference && s[label_end + 1] != '(') return start;
 
     /* Matching ')', allowing nested parens (they appear in real URLs,
      * e.g. Wikipedia article titles). */
     depth = 0;
     int32_t url_end = -1;
-    for (int32_t k = label_end + 1; k < len; k++) {
+    for (int32_t k = label_end + 1; k < len; k = markdownNext(s, k, len)) {
+        if (syntaxMarkdownEscaped(row, k)) continue;
+        if (anchor_reference) {
+            if (k == label_end + 1) continue;
+            if (markdownSpace(s[k])) break;
+            if (s[k] == ']') { if (k > label_end + 3) url_end = k; break; }
+            continue;
+        }
         if (s[k] == '(') depth++;
         else if (s[k] == ')') {
             depth--;

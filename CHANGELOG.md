@@ -4,6 +4,10 @@
 
 ### New features
 
+- Recognize direct `[label][#anchor]` and `![label][#anchor]` navigation;
+  image links with fragment-only destinations now jump within the document.
+  Keep escaped parentheses and bare fragments literal.
+
 ### Important fixes
 
 - Protect installed documentation from editing, paste, replacement, undo and
@@ -16,6 +20,9 @@
   retain nonblocking opens so special targets cannot stall the editor.
 
 ### Other minor fixing
+
+- Underline resolved local Markdown references such as `[@fig:figure]` without
+  requiring mouse hover.
 
 - Review the test suite and retain legacy-input regressions and the deliberate
   snapshot benchmark baseline; clarify their purpose.

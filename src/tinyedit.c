@@ -2019,7 +2019,7 @@ static void editorFollowSourceLink(int32_t row, const struct textLink *link) {
     const char *ext = E.document.file.filename ? strrchr(E.document.file.filename, '.') : NULL;
     uint8_t image = ext && markdownIsExtension(ext + 1) &&
         markdownLinkIsImage(&E.document.buffer.rows[row], link);
-    if (!image || linksIsWeb(target)) {
+    if (!image || target[0] == '#' || linksIsWeb(target)) {
         editorFollowLink(target);
         free(target);
         return;
@@ -2611,6 +2611,8 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
 
     int32_t source_byte = 0, render_byte = 0, source_rx = 0;
     uint8_t in_sel = 0;
+    struct textLink reference = {0};
+    uint8_t has_references = markdown_styles && memchr(row->chars, '@', (size_t)row->size);
     for (int32_t j = 0; j < len; ) {
         int32_t rendercol = seg_from + j;
         /* Selection and search coordinates refer to bytes in chars[],
@@ -2629,6 +2631,10 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
             source_rx += width;
         }
         int32_t filecol = source_byte;
+        if (has_references && filecol >= reference.end && filecol < row->size &&
+            (j == 0 || row->chars[filecol] == '@' || row->chars[filecol] == '['))
+            markdownFindReference(&E.document.buffer, filerow, filecol, &reference);
+        uint8_t local_reference = filecol >= reference.start && filecol < reference.end;
         size_t char_len = utf8NextCharLen(line, (size_t)j, (size_t)len);
         if (char_len == 0 || (size_t)j + char_len > (size_t)len) char_len = 1;
         int32_t emitted_len = (int32_t)char_len;
@@ -2705,7 +2711,7 @@ static void editorDrawRowSegment(struct abuf *ab, int32_t filerow, int32_t seg_f
                 abAppend(ab, "\x1b[1m", 4);
             else if (row->hl[rendercol] == HL_EMPHASIS)
                 abAppend(ab, "\x1b[3m", 4);
-            else if (renderByteUnderlined(row, rendercol) || link_hover ||
+            else if (renderByteUnderlined(row, rendercol) || local_reference || link_hover ||
                 row->hl[rendercol] == HL_LINK_LABEL || row->hl[rendercol] == HL_LINK_DESTINATION)
                 abAppend(ab, "\x1b[4m", 4);
             else styled = 0;
