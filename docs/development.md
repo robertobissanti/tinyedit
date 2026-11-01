@@ -84,7 +84,8 @@ not by itself handle termination signals; SIGTERM/SIGHUP cleanup remains pending
   application dispatch.
 - `src/markdown.c`, `inc/markdown.h`: Markdown highlighting and row-owned source
   spans, compact-preview projection/edit state, heading slugs, explicit Pandoc
-  and Obsidian anchor resolution, and local `@id` reference recognition.
+  and Obsidian anchor resolution, local `@id` reference recognition, and table
+  punctuation highlighting through the shared Smart Table parser.
   Fenced-code state records its opener and embedded comment/math state;
   declared languages reuse the standalone syntax tokenizers without per-row
   language allocations. Edits propagate through the closing fence so language

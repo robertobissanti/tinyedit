@@ -23,7 +23,7 @@
  *   history.c      bounded row deltas, undo/redo and allocation-failure rollback
  *   linenoise.c    historical line-editor implementation; not built
  *   links.c        inline/bare links and safe browser/mail/file dispatch
- *   markdown.c     Markdown syntax, fenced-code dispatch, preview and source navigation
+ *   markdown.c     Markdown syntax, fenced-code dispatch, preview, table delimiters and source navigation
  *   menu.c         UTF-8 menu layout, viewport clipping and input navigation
  *   render.c       shared row/wrapped-text layout and presentation adapters
  *   search.c       compiled queries, text search and source-coordinate results
@@ -4545,6 +4545,7 @@ static const char *editorSettingsSyntaxColorSample(const struct settingDescripto
     if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_emphasis_strong") == 0) return "**bold**";
     if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_math") == 0) return "$x^2$";
     if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_function") == 0) return "main()";
+    if (strcmp(d->key + (d->type == SETTING_RGB ? 4 : 6), "syntax_table_delimiter") == 0) return "| ---: |";
     if (strstr(d->key, "markdown_h")) return "# Heading";
     return "sample";
 }

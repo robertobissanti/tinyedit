@@ -41,7 +41,39 @@ static void highlight(erow *row, const char *filename, uint8_t prev_comment,
     syntaxHighlightRow(row, filename, 1, prev_comment, prev_math, 0, 1, 0);
 }
 
+static void testMarkdownTables(void) {
+    erow rows[4];
+    const char *text[] = {"|h|h|", "|:---|---:|", "|---|---|", "|a\\|b|`c|d`|"};
+    struct editorBuffer buffer = {0}; buffer.rows = rows; buffer.row_count = 4;
+    for (int32_t y = 0; y < 4; y++) {
+        initRow(&rows[y], text[y]); rows[y].owner = &buffer;
+        syntaxHighlightRow(&rows[y], "table.md", 1, 0, 0, 0, y, 0);
+    }
+    expectClass(&rows[0], 0, HL_TABLE_DELIMITER, "header table pipe");
+    expectClass(&rows[0], 1, HL_NORMAL, "header table text");
+    expectClass(&rows[1], 1, HL_TABLE_DELIMITER, "left alignment colon");
+    expectClass(&rows[1], 2, HL_TABLE_DELIMITER, "header separator dash");
+    expectClass(&rows[1], 9, HL_TABLE_DELIMITER, "right alignment colon");
+    expectClass(&rows[2], 1, HL_NORMAL, "body dashes remain cell text");
+    expectClass(&rows[3], 3, HL_NORMAL, "escaped pipe remains content");
+    expectClass(&rows[3], 9, HL_STRING, "inline code pipe keeps code color");
+    for (int32_t y = 0; y < 4; y++) freeRow(&rows[y]);
+    erow row;
+    initRow(&row, "|a|b|"); highlight(&row, "table.c", 0, 0);
+    expectClass(&row, 0, HL_NORMAL, "non Markdown pipes unaffected"); freeRow(&row);
+    initRow(&row, "|a|b|"); highlight(&row, "table.md", 1, 0);
+    expectClass(&row, 0, HL_STRING, "fenced table stays code"); freeRow(&row);
+    initRow(&row, "|a|b|"); syntaxHighlightRow(&row, "table.md", 0, 0, 0, 0, 1, 0);
+    if (row.hl) { fprintf(stderr, "FAIL disabled table highlighting\n"); failures++; } freeRow(&row);
+    struct editorSettings colors; settingsDefaults(&colors);
+    colors.color_syntax_table_delimiter = COLOR_RED_DARK;
+    if (strcmp(syntaxColorFor(HL_TABLE_DELIMITER, &colors), ansiColorCode(COLOR_RED_DARK))) failures++;
+    colors.color_mode = COLOR_MODE_RGB; colors.rgb_color_syntax_table_delimiter = 0x61afef;
+    if (strcmp(syntaxColorFor(HL_TABLE_DELIMITER, &colors), "\x1b[38;2;97;175;239m")) failures++;
+}
+
 int main(void) {
+    testMarkdownTables();
     erow row;
 
     struct rlimit original_stack, small_stack;

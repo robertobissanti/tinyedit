@@ -2995,12 +2995,35 @@ static void testSmartTableSeparator(void) {
     editorResetDocument(); settingsDefaults(&S);
 }
 
+static void testTableHighlightPropagation(void) {
+    const char *rows[] = {"|h|h|", "|---|---|", "|---|---|", "|é\t界|`a|b`|"};
+    tableFixture("table.md", rows, 4);
+    editorUpdateAllRows();
+    check(E.document.buffer.rows[1].hl[2] == HL_TABLE_DELIMITER &&
+        E.document.buffer.rows[2].hl[2] == HL_NORMAL, "only second-row dashes are table markers");
+    erow *last = &E.document.buffer.rows[3];
+    int32_t code_pipe = (int32_t)(strstr(last->render, "a|b") - last->render) + 1;
+    check(last->hl[code_pipe] == HL_STRING && last->hl[last->rsize - 1] == HL_TABLE_DELIMITER,
+        "expanded tabs and Unicode keep render delimiter offsets correct");
+    E.document.cursor.cx = 1; editorHandleEditKey(BACKSPACE);
+    check(E.document.buffer.rows[1].hl[2] == HL_NORMAL &&
+        E.document.buffer.rows[2].hl[2] == HL_TABLE_DELIMITER,
+        "header editing refreshes both dependent rows");
+    editorUndo();
+    check(E.document.buffer.rows[1].hl[2] == HL_TABLE_DELIMITER &&
+        E.document.buffer.rows[2].hl[2] == HL_NORMAL, "undo restores delimiter highlighting");
+    S.syntax_highlight = 0; editorUpdateAllRows();
+    check(!E.document.buffer.rows[1].hl, "disabled syntax leaves table markers uncolored");
+    editorResetDocument(); settingsDefaults(&S);
+}
+
 int main(void) {
     settingsDefaults(&S);
     E.search.search_match_y = -1;
     E.search.search_match_end_y = -1;
     testSmartTable();
     testSmartTableSeparator();
+    testTableHighlightPropagation();
     testErrorMessages();
     testAuditRegressions();
     testControlBytes();

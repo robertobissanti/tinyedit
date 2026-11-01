@@ -737,6 +737,11 @@ document. SIGKILL cannot be handled.
 
 ## Smart Table
 
+With syntax highlighting enabled, structural table pipes and the second row's
+alignment dashes/colons have a separate color, even when Smart Table is off.
+Cell text, escaped pipes and inline/fenced code retain their syntax colors.
+Choose **Syntax: Markdown table delimiters** in **F2 → Colors** to change it.
+
 Enable **Smart Table** in F2, or set `smart_table = true` in `~/.tinyeditrc`.
 It is off by default. In Markdown files, typing a real pipe separator or
 pressing Enter at the end of a table row aligns the contiguous table. Start

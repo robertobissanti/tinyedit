@@ -110,6 +110,10 @@ brackets. Link labels and destinations share the navigation color and are underl
 when Markdown text styles or live preview is enabled.
 Brackets inside strings, comments or literal code spans retain those token colors;
 selection, search and hovered link content keep their normal precedence.
+Markdown table punctuation uses **Syntax: Markdown table delimiters** independently
+of Smart Table: `color_syntax_table_delimiter` for ANSI and
+`rgb_syntax_table_delimiter` for RGB. One Dark uses Blue `#61AFEF`. Older configs
+and themes without these keys inherit their function-name color until customized.
 
 Select **Mode: rgb** to see every Catppuccin flavor. All four presets use colors
 from the official [Catppuccin palette](https://catppuccin.com/palette/), version

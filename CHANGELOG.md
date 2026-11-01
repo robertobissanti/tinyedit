@@ -4,6 +4,11 @@
 
 ### New features
 
+- Highlight Markdown table pipes and second-row dashes/colons with a dedicated
+  configurable syntax color, independent of Smart Table. One Dark uses its blue
+  `#61AFEF`; shipped themes include matching colors and older palettes retain
+  compatibility. Preserve cell text, escaped pipes and code colors.
+
 - Require Smart Table's second row to delimit the header. Header completion and
   explicit realignment create a missing separator without overwriting data.
   Normalize default, left, right and centered delimiters, preserving colons and

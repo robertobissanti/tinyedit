@@ -83,7 +83,8 @@ enum syntaxHighlight {
     HL_HEADING_3,
     HL_HEADING_4,
     HL_HEADING_5,
-    HL_HEADING_6
+    HL_HEADING_6,
+    HL_TABLE_DELIMITER
 };
 
 struct syntaxLang {

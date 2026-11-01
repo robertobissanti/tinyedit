@@ -500,10 +500,12 @@ def test_smart_table_menu(home):
             (case_home / ".tinyeditrc").write_text(
                 f"smart_table = {str(enabled).lower()}\n"
                 "mouse_enabled = true\nshow_top_bar = false\nshow_menu = true\nbackup_interval = 0\n"
+                "color_mode = rgb\nrgb_syntax_table_delimiter = #61AFEF\nsyntax_highlight = true\n"
             )
             process, master = spawn_editor([str(target)], case_home)
             try:
-                read_available(master)
+                initial = read_available(master)
+                assert b"\x1b[38;2;97;175;239m" in initial, "table delimiter RGB color reaches renderer"
                 if mouse:
                     # Edit title; final item is at menu row + 2 + index 9.
                     for col, row in ((18, 1), (20, 12)):

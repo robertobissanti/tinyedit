@@ -11,10 +11,10 @@ SRC_DIR := src
 INC_DIR := inc
 TEST_DIR := tests
 
-SOURCES := $(SRC_DIR)/smart_table.c $(SRC_DIR)/tinyedit.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c \
+SOURCES := $(SRC_DIR)/tinyedit.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c \
 	$(SRC_DIR)/render.c $(SRC_DIR)/editor_state.c $(SRC_DIR)/clipboard.c \
 	$(SRC_DIR)/utf8.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c \
-	$(SRC_DIR)/syntax.c $(SRC_DIR)/markdown.c $(SRC_DIR)/terminal.c $(SRC_DIR)/alloc.c \
+	$(SRC_DIR)/syntax.c $(SRC_DIR)/markdown.c $(SRC_DIR)/smart_table.c $(SRC_DIR)/terminal.c $(SRC_DIR)/alloc.c \
 	$(SRC_DIR)/tree.c $(SRC_DIR)/command.c $(SRC_DIR)/menu.c $(SRC_DIR)/fileio.c $(SRC_DIR)/search.c $(SRC_DIR)/links.c
 HEADERS := $(wildcard $(INC_DIR)/*.h) $(BIN_DIR)/build_info.h
 TEST_BINS := $(TEST_DIR)/test_syntax $(TEST_DIR)/test_settings_backup \
@@ -109,8 +109,8 @@ install-syntax-force:
 	@mkdir -p "$(SYNTAX_DIR)"
 	@cp syntax-configs/*.conf "$(SYNTAX_DIR)/" && echo "overwrote $(SYNTAX_DIR) with shipped configs"
 
-$(TEST_DIR)/test_syntax: $(TEST_DIR)/test_syntax.c $(SRC_DIR)/syntax.c $(SRC_DIR)/markdown.c $(SRC_DIR)/settings.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(HEADERS)
-	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_syntax.c $(SRC_DIR)/syntax.c $(SRC_DIR)/markdown.c $(SRC_DIR)/settings.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c
+$(TEST_DIR)/test_syntax: $(TEST_DIR)/test_syntax.c $(SRC_DIR)/syntax.c $(SRC_DIR)/markdown.c $(SRC_DIR)/smart_table.c $(SRC_DIR)/settings.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(HEADERS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_syntax.c $(SRC_DIR)/syntax.c $(SRC_DIR)/markdown.c $(SRC_DIR)/smart_table.c $(SRC_DIR)/settings.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c
 
 $(TEST_DIR)/test_settings_backup: $(TEST_DIR)/test_settings_backup.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(HEADERS)
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_settings_backup.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c $(SRC_DIR)/alloc.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c
@@ -124,11 +124,11 @@ $(TEST_DIR)/test_buffer: $(TEST_DIR)/test_buffer.c $(SRC_DIR)/buffer.c $(SRC_DIR
 $(TEST_DIR)/test_history: $(TEST_DIR)/test_history.c $(SRC_DIR)/history.c $(SRC_DIR)/buffer.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
 
-$(TEST_DIR)/test_render: $(TEST_DIR)/test_render.c $(SRC_DIR)/render.c $(SRC_DIR)/markdown.c $(SRC_DIR)/syntax.c $(SRC_DIR)/settings.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
-	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_render.c $(SRC_DIR)/render.c $(SRC_DIR)/markdown.c $(SRC_DIR)/syntax.c $(SRC_DIR)/settings.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
+$(TEST_DIR)/test_render: $(TEST_DIR)/test_render.c $(SRC_DIR)/render.c $(SRC_DIR)/markdown.c $(SRC_DIR)/smart_table.c $(SRC_DIR)/syntax.c $(SRC_DIR)/settings.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_render.c $(SRC_DIR)/render.c $(SRC_DIR)/markdown.c $(SRC_DIR)/smart_table.c $(SRC_DIR)/syntax.c $(SRC_DIR)/settings.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
 
-$(TEST_DIR)/test_utf8: $(TEST_DIR)/test_utf8.c $(SRC_DIR)/render.c $(SRC_DIR)/markdown.c $(SRC_DIR)/syntax.c $(SRC_DIR)/settings.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
-	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_utf8.c $(SRC_DIR)/render.c $(SRC_DIR)/markdown.c $(SRC_DIR)/syntax.c $(SRC_DIR)/settings.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
+$(TEST_DIR)/test_utf8: $(TEST_DIR)/test_utf8.c $(SRC_DIR)/render.c $(SRC_DIR)/markdown.c $(SRC_DIR)/smart_table.c $(SRC_DIR)/syntax.c $(SRC_DIR)/settings.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(HEADERS)
+	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_utf8.c $(SRC_DIR)/render.c $(SRC_DIR)/markdown.c $(SRC_DIR)/smart_table.c $(SRC_DIR)/syntax.c $(SRC_DIR)/settings.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c
 
 $(TEST_DIR)/test_fileio: $(TEST_DIR)/test_fileio.c $(SRC_DIR)/fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c $(HEADERS)
 	$(CC) $(CPPFLAGS) $(TEST_CFLAGS) -o $@ $(TEST_DIR)/test_fileio.c $(SRC_DIR)/buffer.c $(SRC_DIR)/history.c $(SRC_DIR)/utf8.c $(SRC_DIR)/alloc.c $(SRC_DIR)/settings.c $(SRC_DIR)/backup.c

@@ -197,6 +197,9 @@ checks do not certify physical modified keys in a real terminal.
 both mouse clicks and keyboard menu navigation, with the setting on and off.
 Delimiter regressions cover all four alignment forms, short and oversized dash
 runs, mandatory second-row insertion, header completion, data preservation,
-position mapping and atomic undo/redo.
+position mapping and atomic undo/redo. Syntax regressions verify structural-pipe
+and delimiter classes, code/escape exclusions, UTF-8/tab render offsets, nearby
+edit/undo propagation, disabled highlighting, independent palette persistence,
+and RGB delimiter output through the PTY renderer.
 
 [Back to top](#test-fixtures)
