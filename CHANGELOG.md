@@ -23,6 +23,9 @@
 - Replace documentation tables with wrapped lists for narrow terminals and
   expand the documentation home page with first steps and navigation help.
 
+- Require a double mouse click to open files in the sidebar; a single click
+  selects them, while Enter still opens the selection.
+
 ## 0.3.9 — 2026-10-18
 
 ### New features

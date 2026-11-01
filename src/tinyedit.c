@@ -6087,8 +6087,9 @@ static int32_t editorHandleMouseEvent(void) {
                         editorTreeRoot(T.entries[index].path);
                     else editorTreeActivate();
                 } else {
-                    tree_click_pending = 0;
-                    editorTreeActivate();
+                    struct timespec now;
+                    if (clock_gettime(CLOCK_MONOTONIC, &now) == 0 && editorTreeDoubleClick(&now, index))
+                        editorTreeActivate();
                 }
             }
         }

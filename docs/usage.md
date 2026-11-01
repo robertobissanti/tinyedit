@@ -202,6 +202,7 @@ entry, scrolling it into view. Right on a folder makes it the new root of the tr
 on a folder name or triangle expands or collapses it; a double click makes
 it the new root. Left collapses a
 folder or selects its tree parent.
+A single click selects a file; double-click opens it.
 Enter toggles a folder or opens a file; Space also toggles a folder. Opening
 a file uses the usual save/discard/cancel
 confirmation for unsaved changes. Esc returns to the document; Tab keeps its normal indentation behavior

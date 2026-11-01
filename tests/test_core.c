@@ -165,6 +165,21 @@ static void testFilesystemTree(void) {
         "sidebar preserves at least half the terminal");
     treeClear(&tree);
 
+    check(treeSetRoot(&T, nested), "file double-click fixture root");
+    settingsDefaults(&S);
+    E.view.screencols = 100; E.view.screenrows = 20;
+    T.visible = 1; T.focused = 0;
+    mouseEventRow = 4 + (S.show_top_bar ? 1 : 0) + (S.show_menu ? 1 : 0);
+    mouseEventCol = 2; mouseEventPress = 1; mouseEventButton = 0;
+    tree_click_pending = 0;
+    editorHandleMouseEvent();
+    check(T.focused && T.selected == 1 && !E.document.file.filename,
+        "single file click selects without opening");
+    mouseEventPress = 0; editorHandleMouseEvent();
+    mouseEventPress = 1; editorHandleMouseEvent();
+    check(E.document.file.filename && strstr(E.document.file.filename, "é long filename.md"),
+        "second file click opens selected file");
+    editorResetDocument(); treeClear(&T);
     check(treeSetRoot(&T, root), "application tree root");
     E.view.screencols = 100;
     E.view.screenrows = 20;
