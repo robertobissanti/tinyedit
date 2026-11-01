@@ -25,6 +25,8 @@
 - [Find and replace](#find-and-replace)
 - [Backup and crash recovery](#backup-and-crash-recovery)
 
+[Back to top](#user-guide)
+
 ## System clipboard on Linux
 
 Ctrl-C/X/V use external clipboard tools when available: `wl-copy` and `wl-paste`
@@ -42,6 +44,8 @@ to its internal clipboard, shared only within the current editor session.
 Check `command -v wl-copy wl-paste` and run `wl-paste --no-newline` after copying
 text from another application to diagnose Wayland access. Terminal-native paste
 (such as Ctrl-Shift-V in Konsole) uses bracketed paste and does not require these tools.
+
+[Back to top](#user-guide)
 
 ## Keyboard shortcuts
 
@@ -125,6 +129,7 @@ text from another application to diagnose Wayland access. Terminal-native paste
 - `Ctrl-Q`: Quit (if there are unsaved changes, asks y/n/Esc: save-and-quit /
   quit without saving / cancel)
 
+[Back to top](#user-guide)
 
 ## Experimental macOS Command keys in Ghostty
 
@@ -142,6 +147,8 @@ buffer. `Cmd-V` remains the terminal's native paste shortcut. Keyboard state
 and the bindings managed by tinyedit are restored on exit, so no sequences
 leak into the shell. Remove any older manual `super+...` keybind bridges from
 your Ghostty configuration to avoid conflicts.
+
+[Back to top](#user-guide)
 
 ## Opening and closing files
 
@@ -179,6 +186,8 @@ Relative paths, absolute paths, `~/`, spaces, and UTF-8 names are supported.
 Hidden names are offered when the last component starts with `.`. You can
 still type a new filename when saving.
 
+[Back to top](#user-guide)
+
 ### Missing symbolic-link targets
 
 Opening or saving through a symbolic link whose target does not exist reports
@@ -186,6 +195,8 @@ an error. tinyedit preserves the link and does not create its missing target;
 a failed save preserves the document and its unsaved state. Links to existing
 files continue to save through to the real target. Editor message-bar errors
 are shown in red; ordinary prompts and successful results use the normal color.
+
+[Back to top](#user-guide)
 
 ## File tree sidebar
 
@@ -234,12 +245,16 @@ to download its contents before tinyedit checks whether the file is text.
 Sidebar hints follow the focused pane and return after temporary messages
 expire. Closing the tree restores the document shortcuts in the bottom bar.
 
+[Back to top](#user-guide)
+
 ## File information
 
 ![tinyedit file information screen](../imgs/file-info-screen.png)
 
 *The `F3` screen summarizes the program version and the current file without
 leaving the editor.*
+
+[Back to top](#user-guide)
 
 ## Fast terminal paste
 
@@ -255,6 +270,8 @@ a time). This requires terminal support for the protocol, which is available
 in virtually every modern terminal, including Ghostty, iTerm2, and Terminal.app.
 If paste feels slow inside `tmux` or `screen`, ensure bracketed-paste
 passthrough is enabled in the multiplexer.
+
+[Back to top](#user-guide)
 
 ## Mouse support
 
@@ -272,6 +289,8 @@ Scrolling with the wheel leaves the cursor in place. The viewport stays at
 the scrolled position while you move the pointer or hover over links, even if
 the cursor is off-screen. Keyboard input, a text click or a drag resumes
 following the cursor.
+
+[Back to top](#user-guide)
 
 ## Links and installed documentation
 
@@ -319,6 +338,8 @@ a desktop mail handler; starting the launcher does not confirm account setup
 or successful composition. Other URI schemes are unsupported. Reference-style Markdown links, HTML links, duplicate-heading
 suffixes and Setext heading anchors are not yet supported.
 
+[Back to top](#user-guide)
+
 ### Markdown images
 
 Markdown images such as `![Diagramma](../imgs/diagramma.png){#fig:diagramma}` open their local source
@@ -340,6 +361,8 @@ displayed the image. Ordinary text-file links still open inside tinyedit.
 Opening the image destination is separate from following a link to its Pandoc
 ID: `#fig:diagramma` jumps to the image source within the Markdown document.
 For language-aware code blocks, see the [fenced-code guide](syntax-highlighting.md#fenced-code-blocks).
+
+[Back to top](#user-guide)
 
 ### Markdown heading, attribute and block targets
 
@@ -421,6 +444,8 @@ and a complete Pandoc or Obsidian parser are outside this subset. See the
 [Pandoc spans and Divs](https://pandoc.org/MANUAL.html#divs-and-spans) and
 [Obsidian block convention](https://obsidian.md/help/links#Link%20to%20a%20block%20in%20a%20note).
 
+[Back to top](#user-guide)
+
 ### Direct anchor links and literal parentheses
 
 `[nota](#^diag)` follows an Obsidian block ID. `[nota]\(#^diag)` has an
@@ -432,6 +457,8 @@ they jump to `link` in the current document. An image with a fragment-only
 destination, such as `![Testo](#link)`, also jumps internally. For portable
 Markdown use `[Testo](#link)`; general reference definitions such as
 `[Testo][ref]` followed by `[ref]: destination` are not supported.
+
+[Back to top](#user-guide)
 
 ## Menus
 
@@ -457,6 +484,8 @@ on.
 
 *The File menu shows commands and their keyboard shortcuts.*
 
+[Back to top](#user-guide)
+
 ## Indentation and tabs
 
 With `auto_indent` on (default), Enter copies the leading
@@ -473,6 +502,8 @@ whatever indentation the file already uses rather than only the flavor
 tinyedit would produce: a leading tab counts as one full level,
 otherwise up to `tab_stop` spaces are removed, stopping at the first
 non-space so a partially indented line only loses what it has.
+
+[Back to top](#user-guide)
 
 ## Automatic pair and tag closing
 
@@ -517,6 +548,8 @@ alone. For HTML, tinyedit also recognizes the standard void elements —
 tag for them. XML has no such void-element rule, so `<br>` in an XML document
 correctly becomes `<br>|</br>`.
 
+[Back to top](#user-guide)
+
 ## Soft wrapping and navigation
 
 Lines too long for the screen width always wrap (soft-wrap is always
@@ -537,6 +570,8 @@ is `0`, which keeps the current edge-following behavior; values from `1` to
 `20` progressively keep the cursor away from the top and bottom of the view.
 Near the start or end of a file the viewport remains clamped to available
 text, so the requested margin may be smaller.
+
+[Back to top](#user-guide)
 
 ## Markdown display and live preview
 
@@ -602,6 +637,7 @@ Selection and search highlighting take precedence over Markdown heading
 reverse video and inline bold/italic styles, including selected newline cells.
 The empty area to the right of an ATX heading retains its heading background.
 
+[Back to top](#user-guide)
 
 ## Top and status bars
 
@@ -616,6 +652,8 @@ only line/char counts); when it's off, the filename shows up there
 instead. The unsaved-changes indicator is always visible in the
 bottom bar either way. The bottom bar also shows the cursor's actual
 source byte column, on the right (`line/total: C column`) next to the line number.
+
+[Back to top](#user-guide)
 
 ## UTF-8 text
 
@@ -633,6 +671,8 @@ points, values above `U+10FFFF`, and incomplete sequences. Each bad byte is
 one cursor and deletion step, displayed as `�`; valid bytes after it are
 decoded normally. Display never rewrites the file buffer. Saving an otherwise
 unchanged file preserves its UTF-8 bytes and whether its final row has a newline.
+
+[Back to top](#user-guide)
 
 ## Find and replace
 
@@ -660,6 +700,8 @@ query wouldn't leave room for both, and if even that isn't enough the
 message bar scrolls to always show the most recent part of what's
 being typed. The message's leading part (whatever is left of the
 fixed instructions) is what disappears first.
+
+[Back to top](#user-guide)
 
 ## Backup and crash recovery
 
@@ -689,3 +731,5 @@ When tinyedit receives SIGTERM or SIGHUP, it restores the terminal and exits
 with status 128 plus the signal number. It does not save unsaved edits on signal;
 a backup exists only when the configured interval has produced one for a named
 document. SIGKILL cannot be handled.
+
+[Back to top](#user-guide)

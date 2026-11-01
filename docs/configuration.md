@@ -8,6 +8,8 @@
 - [Colors page and RGB](#colors-page-and-rgb)
 - [Invisible characters and colors](#invisible-characters-and-colors)
 
+[Back to top](#settings-colors-and-themes)
+
 ## Settings and appearance
 
 Line numbers (gutter), tab width, interface colors, soft-wrap, the top bar,
@@ -41,6 +43,8 @@ for supported constructs and cursor expansion. With mouse support enabled,
 compact links change color under the pointer and open with a single click.
 **Colors → Interface → Link hover color** controls the hovered label using
 independent `color_link_hover` (ANSI) and `rgb_link_hover` (RGB) values.
+
+[Back to top](#settings-colors-and-themes)
 
 ## Colors page and RGB
 
@@ -213,6 +217,8 @@ roles using those references. ANSI light/dark/dim choices remain exclusive to
 ANSI; RGB colors have no implicit intensity variants. ANSI dim backgrounds
 continue to use their dark counterparts. RGB fallback excludes dim variants.
 
+[Back to top](#settings-colors-and-themes)
+
 ## Invisible characters and colors
 
 With `show_invisibles` on (off by default), spaces and tabs render as
@@ -290,3 +296,5 @@ Configuration and color-scheme readers reject pipes and devices without waiting
 for input. A missing symlink target is an error when saving settings; the link
 is preserved. Experimental Ghostty binding updates also preserve symlinks and
 long lines, and reject binary configuration without changing it.
+
+[Back to top](#settings-colors-and-themes)

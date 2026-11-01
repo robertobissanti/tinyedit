@@ -31,6 +31,8 @@ silently, and a file missing `extensions` or `keywords` is ignored
 entirely. A user file may redefine an extension that ships built in, and
 it wins.
 
+[Back to top](#ready-made-syntax-configurations)
+
 ## What's here
 
 - `bash.conf`: Languages: Bash (overrides built-in Shell; generic tokenizer);
@@ -77,6 +79,8 @@ consequence worth knowing: since `~/.tinyeditrc` is consulted first,
 changing a `filetype` value here later won't override the name already
 recorded there.
 
+[Back to top](#ready-made-syntax-configurations)
+
 ## Writing your own
 
 The format and every available key are documented in the
@@ -114,3 +118,5 @@ command abbreviations and full Vim9 syntax are not parsed.
 currently ignored: extension values omit the leading dot, `base_tokenizer = bash`
 is unsupported, and a generic definition requires `keywords`. Use `bash.conf`
 for working shell highlighting, including `.zshrc`.
+
+[Back to top](#ready-made-syntax-configurations)

@@ -45,6 +45,8 @@ selection, and optional mouse support for clicking and scrolling.
 - [Project status](#project-status)
 - [Author and license](#author-and-license)
 
+[Back to top](#tinyedit)
+
 ## Why it exists
 
 I kept building tinyedit because I became convinced that a terminal editor
@@ -62,6 +64,8 @@ keep the editor simple and focused.
 
 *Python source in tinyedit, with line numbers, soft wrapping, file statistics,
 and configurable syntax colors.*
+
+[Back to top](#tinyedit)
 
 ## Features at a glance
 
@@ -156,6 +160,7 @@ editor. The current version is a true full-screen editor with a freely moving
 cursor; linenoise remains in the repository for historical reference but is
 not a build dependency.
 
+[Back to top](#tinyedit)
 
 ## Homebrew (macOS / Linux)
 
@@ -166,6 +171,8 @@ brew install robertobissanti/tinyedit/tinyedit
 
 ```
 
+[Back to top](#tinyedit)
+
 ## Build
 
 ```sh
@@ -174,6 +181,8 @@ make clean  # removes it
 ```
 
 Needs only a C99 compiler and a POSIX system (macOS or Linux).
+
+[Back to top](#tinyedit)
 
 ### Build identification
 
@@ -190,6 +199,7 @@ Packagers may override it with `make BUILD_ID=package-0.3.9-r1` (up to 120
 letters, digits, dots, underscores, plus signs or hyphens). The packager owns
 the accuracy and uniqueness of this override.
 
+[Back to top](#tinyedit)
 
 ## Usage
 
@@ -201,6 +211,8 @@ bin/tinyedit --version  # print version and build ID without starting the editor
 Pass a folder to start an empty unnamed document with that folder as the
 visible sidebar root and the base for relative Open/Save paths. Keyboard focus
 starts in the document.
+
+[Back to top](#tinyedit)
 
 ### Optional command installation
 
@@ -235,6 +247,8 @@ These optional commands still install personal copies; run them without `sudo`:
 make install-resources      # color schemes + syntax definitions, never overwrites
 make install-docs           # personal guides for Help → Documentation
 ```
+
+[Back to top](#tinyedit)
 
 ## Quick reference
 
@@ -276,6 +290,8 @@ Obsidian theme. Theme sources and adaptation limits are listed in the
 [palette guide](colorschemes/README.md#theme-sources-and-terminal-adaptations).
 See the [settings and themes guide](docs/configuration.md) for installation
 and configuration.
+
+[Back to top](#tinyedit)
 
 ## Markdown editing and navigation
 
@@ -338,6 +354,8 @@ Wheel scrolling leaves the cursor stationary and keeps the viewport where you
 scrolled while the pointer moves or hovers over links. Keyboard input, a text
 click, dragging or an anchor jump restores cursor-following.
 
+[Back to top](#tinyedit)
+
 ## Documentation
 
 `make install` includes the guides and their linked resources. Open
@@ -360,10 +378,14 @@ with mouse support enabled. Double-clicking ordinary text selects a word.
 
 Browse the [documentation index](docs/README.md) for all guides and preset files.
 
+[Back to top](#tinyedit)
+
 ## Project status
 
 See [`IDEAS.md`](IDEAS.md) for future features not yet prioritized, and
 the repository issues and pull requests for publicly discussed work.
+
+[Back to top](#tinyedit)
 
 ## Author and license
 
@@ -378,3 +400,5 @@ under Salvatore Sanfilippo and Pieter Noordhuis's original BSD
 
 Catppuccin palette data is distributed under its MIT license; see
 [`LICENSE-THIRD-PARTY`](LICENSE-THIRD-PARTY) for its copyright and notice.
+
+[Back to top](#tinyedit)

@@ -24,6 +24,8 @@ or a change to an open design decision, start a discussion in an issue before
 writing the implementation. Small bug fixes, tests, and documentation fixes
 can usually go directly to a pull request.
 
+[Back to top](#contributing-to-tinyedit)
+
 ## Reporting a bug
 
 Open a GitHub issue and include enough information for another person to
@@ -44,6 +46,8 @@ emulators can send different byte sequences for the same physical keys.
 
 Do not include private files, secrets, tokens, or other sensitive information
 in an issue or attachment.
+
+[Back to top](#contributing-to-tinyedit)
 
 ## Proposing a feature
 
@@ -79,6 +83,8 @@ emergency saves that override this policy. Terminal cleanup is a separate duty.
 Do not add third-party code or dependencies without prior maintainer
 agreement.
 
+[Back to top](#contributing-to-tinyedit)
+
 ## Development setup
 
 You need a C99 compiler, `make`, Python 3 for the PTY test suite, and a POSIX
@@ -105,7 +111,11 @@ Add or update tests for changed behavior whenever it can be exercised
 reliably. Features tied to a real terminal may also require documented manual
 testing.
 
+[Back to top](#contributing-to-tinyedit)
+
 ## Coding guidelines
+
+[Back to top](#contributing-to-tinyedit)
 
 ### Types
 
@@ -136,6 +146,8 @@ These rules must reduce, not create, casts. If assigning two values to the
 same nominal type would require an otherwise unnecessary cast, choose the
 type that keeps the operation natural and reconsider which type family the
 value belongs to.
+
+[Back to top](#contributing-to-tinyedit)
 
 ### UTF-8 and text handling
 
@@ -188,6 +200,8 @@ boundary. Malformed-input tests must also cover invalid leading and continuation
 bytes, overlong encodings, surrogate encodings, values above `U+10FFFF`, and
 sequences truncated at every possible byte boundary.
 
+[Back to top](#contributing-to-tinyedit)
+
 ### Dynamic memory
 
 Application code must use `teMalloc()`, `teRealloc()`, and `teStrdup()` from
@@ -203,9 +217,13 @@ If a new API must recover from an allocation failure instead of terminating,
 document that contract explicitly. Such an API must keep the original pointer
 until allocation succeeds and propagate the error to its caller.
 
+[Back to top](#contributing-to-tinyedit)
+
 ### Memory design and use in C99
 
 Memory management must preserve correctness, clarity, and portability. Every optimization must provide a verifiable benefit and follow the project's rules.
+
+[Back to top](#contributing-to-tinyedit)
 
 #### Scope and precedence
 
@@ -213,11 +231,15 @@ These guidelines are subordinate to the requirements for types, allocation helpe
 
 Memory savings do not justify an exception. Any change to these constraints must be discussed and approved before implementation. The techniques below are options to evaluate, not requirements to introduce new representations or infrastructure.
 
+[Back to top](#contributing-to-tinyedit)
+
 #### Account for the complete cost
 
 Consider payload, metadata, padding, pointers, separate allocations, unused capacity, allocator overhead, and temporary copies.
 
 Distinguish steady-state use from peaks during loading, growth, conversions, and rebuilding. Prioritize costs multiplied by each element or retained operation.
+
+[Back to top](#contributing-to-tinyedit)
 
 #### Follow type conventions
 
@@ -227,11 +249,15 @@ Preserve documented exceptions and signatures required by external APIs. Compact
 
 Measure structure size and padding with `sizeof` and `offsetof` before rearranging fields. A smaller field type does not necessarily reduce the overall structure size.
 
+[Back to top](#contributing-to-tinyedit)
+
 #### Make ownership and lifetime explicit
 
 Every allocation must have an identifiable owner. Function contracts must clarify who releases memory, whether a reference is borrowed, and which operations invalidate it.
 
 Document ownership transfers and sharing when they are not evident from the code. Avoid comments that merely repeat an allocation or release.
+
+[Back to top](#contributing-to-tinyedit)
 
 #### Use the project's allocation helpers
 
@@ -243,6 +269,8 @@ An API that must recover from allocation failure must document that exception, p
 
 Check overflow and limits before calculating allocation sizes, including sums, products, capacity growth, and numeric conversions. Use `sizeof(*ptr)` when sizing elements.
 
+[Back to top](#contributing-to-tinyedit)
+
 #### Reduce unnecessary copies and allocations
 
 Before duplicating data, consider ownership transfer, borrowed references, or processing in chunks.
@@ -250,6 +278,8 @@ Before duplicating data, consider ownership transfer, borrowed references, or pr
 Avoid allocations for empty states or implicit values when this keeps the code simple. For objects with the same lifetime, consider contiguous storage if it reduces allocations without complicating ownership or mutation. C99 flexible array members may be used with correct alignment, checked size calculations, and reference invalidation during growth.
 
 Sharing, arenas, and alternative representations require a measured benefit; do not introduce additional infrastructure for marginal savings. Adaptive representations must have explicit thresholds and conversions that preserve semantics and avoid costly oscillation.
+
+[Back to top](#contributing-to-tinyedit)
 
 #### Manage length and capacity
 
@@ -259,6 +289,8 @@ Choose a growth policy suited to the workload: spare capacity for frequent chang
 
 Treat unused capacity as a deliberate cost. Avoid reallocating on every insertion or deletion; consider shrinking after substantial reductions.
 
+[Back to top](#contributing-to-tinyedit)
+
 #### Preserve correct text handling
 
 Optimizations must distinguish byte representation from characters, grapheme clusters, and display columns.
@@ -266,6 +298,8 @@ Optimizations must distinguish byte representation from characters, grapheme clu
 Use the prescribed UTF-8 helpers for interpretation, traversal, and width calculation. Already bounded spans may be copied with `memcpy()` or `memmove()`; these operations do not replace correct determination of text boundaries.
 
 Preserve original bytes even when UTF-8 is malformed. Do not remove coordinates or metadata required for correctness by assuming that byte offsets and display columns coincide.
+
+[Back to top](#contributing-to-tinyedit)
 
 #### Control caches and retained memory
 
@@ -275,6 +309,8 @@ For potentially large structures, measure retained memory and temporary peaks. B
 
 Do not silently lose data, history, or results to meet a limit. Account for old and new representations coexisting during conversions and rebuilding.
 
+[Back to top](#contributing-to-tinyedit)
+
 #### Preserve C99 and portability
 
 Respect alignment, aliasing rules, object lifetimes, and buffer bounds. Do not use casts to bypass these constraints. Do not access memory beyond the size requested from the allocator.
@@ -282,6 +318,8 @@ Respect alignment, aliasing rules, object lifetimes, and buffer bounds. Do not u
 Do not introduce packed structures, pointer tagging, or allocator-specific APIs as routine optimizations. Their use requires explicit evaluation against the project's requirements and prior agreement for any exceptions.
 
 Do not introduce third-party libraries or code without the prior agreement required by the project's rules.
+
+[Back to top](#contributing-to-tinyedit)
 
 #### Measure and verify
 
@@ -292,6 +330,8 @@ Verify empty cases, growth, shrinkage, limits, and conversion thresholds. Run th
 Keep changes focused and update documentation, contracts, and the Module map when necessary.
 
 An optimization is acceptable when it reduces a demonstrated cost, keeps the code understandable, and fully respects the project's rules.
+
+[Back to top](#contributing-to-tinyedit)
 
 ### Source organization
 
@@ -324,6 +364,8 @@ When modifying an area that does not yet follow the prescribed order, bring
 that area into order as part of the change instead of appending new code at
 the end of the file.
 
+[Back to top](#contributing-to-tinyedit)
+
 ### Comments and scope
 
 Write comments where the reason for a choice is not evident from the code.
@@ -332,6 +374,8 @@ Avoid comments that merely restate an operation.
 Keep pull requests focused. Do not combine an unrelated refactor, formatting
 rewrite, or cleanup with a behavioral change. Preserve established behavior
 unless changing it is part of the proposal.
+
+[Back to top](#contributing-to-tinyedit)
 
 ## Testing terminal input
 
@@ -353,6 +397,8 @@ they reach tinyedit. A failed automated attempt to send `Ctrl-Q` or `Ctrl-S`
 through that harness is therefore not sufficient evidence of an editor bug;
 repeat the check in a real terminal.
 
+[Back to top](#contributing-to-tinyedit)
+
 ## Documentation
 
 Update user-facing documentation in the same pull request as the behavior it
@@ -367,6 +413,8 @@ describes. Depending on the change, this may include:
 
 Do not mark planned work complete until its implementation and relevant tests
 or manual verification are included.
+
+[Back to top](#contributing-to-tinyedit)
 
 ## Submitting a pull request
 
@@ -400,6 +448,8 @@ Review may ask for changes to keep the implementation portable, focused, or
 consistent with the project's architecture. A pull request may be declined
 when its goal does not fit the project even if the implementation is sound.
 
+[Back to top](#contributing-to-tinyedit)
+
 ## Licensing and attribution
 
 By contributing, you agree that your contribution may be distributed under
@@ -411,12 +461,16 @@ notice and attribution. Identify the source and license in the pull request.
 When compatibility or attribution is uncertain, discuss it before including
 the material.
 
+[Back to top](#contributing-to-tinyedit)
+
 ## Community expectations
 
 Be respectful, constructive, and specific in issues, reviews, and pull
 requests. Discuss the code and the design rather than the person, assume good
 intent, and make room for contributors with different levels of experience.
 Harassment, personal attacks, and discriminatory behavior are not acceptable.
+
+[Back to top](#contributing-to-tinyedit)
 
 ## Release notes
 
@@ -438,6 +492,8 @@ to a dated version heading in `CHANGELOG.md`, leaving `Unreleased` ready for
 future work. Verify that the release tag points to the tested published commit;
 do not silently move an existing published tag.
 
+[Back to top](#contributing-to-tinyedit)
+
 ## Commits
 
 Commit a coherent, reviewable change after its relevant checks pass; complete
@@ -455,3 +511,5 @@ queries as literal prompt data`. Keep the subject concise (preferably within
 validation. Do not commit knowingly broken intermediate states to the branch
 being merged. Commit before merging; push after the merge and final checks.
 Do not rewrite shared history or move published tags without explicit approval.
+
+[Back to top](#contributing-to-tinyedit)

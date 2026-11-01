@@ -19,6 +19,8 @@ Ctrl-O opens your own file; Ctrl-W closes the guide and leaves a new document.
 For installation and the project background, read the
 [project overview](../README.md).
 
+[Back to top](#tinyedit-documentation)
+
 ## Choose a guide
 
 - [User guide](usage.md): Shortcuts, files, sidebar, menus, mouse, editing,
@@ -39,6 +41,8 @@ Ready-made files: [color schemes](../colorschemes/README.md) and
 Contributor workflow: [CONTRIBUTING.md](../CONTRIBUTING.md).
 Testing and benchmarks: [tests/README.md](../tests/README.md).
 
+[Back to top](#tinyedit-documentation)
+
 ## Markdown and mouse navigation
 
 - [Markdown display and live preview](usage.md#markdown-display-and-live-preview):
@@ -52,3 +56,5 @@ Testing and benchmarks: [tests/README.md](../tests/README.md).
   installed syntax definitions, multiline comments and fallback code styling.
 - [Mouse support](usage.md#mouse-support): selection and wheel scrolling with
   a stable viewport while moving the pointer.
+
+[Back to top](#tinyedit-documentation)

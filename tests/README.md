@@ -133,6 +133,8 @@ browser arguments using a fake launcher. `test_docs.py` verifies installation
 in a temporary path containing spaces and checks guide resources without
 modifying the user's active syntax definitions.
 
+[Back to top](#test-fixtures)
+
 ## Integrity regressions
 
 Core tests reject unbound control keys as document input and prevent stored
@@ -179,3 +181,5 @@ Memory contract tests verify that fatal allocation cleanup runs before its
 diagnostic is printed.
 Link tests reject disguised image files and SVG, and check that declining an
 external opener keeps the desktop launcher closed.
+
+[Back to top](#test-fixtures)

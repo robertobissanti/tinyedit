@@ -10,6 +10,8 @@
 - [Markup templates](#markup-templates)
 - [Ready-made syntax configurations](#ready-made-syntax-configurations)
 
+[Back to top](#syntax-highlighting-guide)
+
 ## Syntax highlighting
 
 With `syntax_highlight` on (default), files get highlighted based on
@@ -54,6 +56,8 @@ live preview is enabled. Brackets within strings, comments and
 inline code keep their token's color; selection/search and link-hover feedback
 take precedence.
 
+[Back to top](#syntax-highlighting-guide)
+
 ### Fenced code blocks
 
 **Fenced code blocks** use the declared language's highlighter. For example:
@@ -82,6 +86,8 @@ Code remains literal source: Markdown links/emphasis and preview hiding are
 disabled inside the fence, and no code is executed. Changing the language tag
 or a code row refreshes the remainder of its fenced block, including across
 blank lines and undo/redo.
+
+[Back to top](#syntax-highlighting-guide)
 
 ### Other Markdown constructs
 
@@ -130,6 +136,8 @@ including in unnamed files and files without a recognized syntax. It also
 works with syntax highlighting disabled. With syntax highlighting enabled,
 strings, comments, and other classified spans keep their own colors.
 Selection, search matches, and matching-bracket highlighting take priority.
+
+[Back to top](#syntax-highlighting-guide)
 
 ## Extending syntax highlighting
 
@@ -182,6 +190,8 @@ math_mode = true
 *A user-defined LaTeX syntax configuration highlights commands and mathematical
 expressions without adding a compiled-in language or an external dependency.*
 
+[Back to top](#syntax-highlighting-guide)
+
 ### Markup templates
 
 A template format like Nunjucks, Jinja, Liquid or Twig is HTML with a
@@ -218,6 +228,8 @@ wins. Languages with a grammar that doesn't reduce to
 keywords/strings/comments, where prefixed keywords and math mode
 still are not enough, such as Markdown/HTML/CSS, cannot be extended
 from an external file; they need a dedicated tokenizer in `syntax.c`.
+
+[Back to top](#syntax-highlighting-guide)
 
 ## Ready-made syntax configurations
 
@@ -305,3 +317,5 @@ Because step 2 writes to `~/.tinyeditrc` and step 1 reads it first,
 editing a `.conf`'s `filetype` afterwards won't change the name already
 recorded there. Update the `filetype.<extension>` line in
 `~/.tinyeditrc` (or delete it to let the `.conf` be consulted again).
+
+[Back to top](#syntax-highlighting-guide)

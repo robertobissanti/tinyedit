@@ -12,6 +12,8 @@ nel README; decisioni e verifiche sono registrate in `local/TODO.md`.
 La sidebar può rimanere aperta mentre si modifica il documento: Ctrl-E la
 mostra/nasconde e Ctrl-B cambia focus. Non abilita ancora buffer multipli.
 
+[Torna all'inizio](#ideas)
+
 ## Editing avanzato
 
 - **Syntax highlighting: linguaggi oltre agli 8 già coperti** (vedi
@@ -52,6 +54,8 @@ mostra/nasconde e Ctrl-B cambia focus. Non abilita ancora buffer multipli.
   LF/CRLF, rilevamento dei file misti e newline finale sono già gestiti.
   Il salvataggio usa però un solo stile per documento; conservare esattamente
   una mescolanza originale richiederebbe metadati per riga.
+
+[Torna all'inizio](#ideas)
 
 ## Robustezza
 
@@ -111,6 +115,8 @@ mostra/nasconde e Ctrl-B cambia focus. Non abilita ancora buffer multipli.
     è la stessa esperienza dei programmi desktop dove il terminale lo permette,
     con l'alternativa dichiarata dove no.
 
+[Torna all'inizio](#ideas)
+
 ## Interfaccia
 
 - **Mouse support opzionale (implementato)** — attivabile da F2/config,
@@ -121,6 +127,8 @@ mostra/nasconde e Ctrl-B cambia focus. Non abilita ancora buffer multipli.
 - **Status bar personalizzabile** (mostrare/nascondere backend clipboard
   attivo, encoding, posizione cursore in formato riga:colonna invece di
   solo riga).
+
+[Torna all'inizio](#ideas)
 
 ## Portabilità
 
@@ -139,3 +147,5 @@ mostra/nasconde e Ctrl-B cambia focus. Non abilita ancora buffer multipli.
   mode via `tcsetattr`). Un porting Windows nativo richiederebbe la
   Console API di Windows (non termios) — fuori scope a meno di richiesta
   esplicita futura. Sotto WSL funziona già come Linux normale.
+
+[Torna all'inizio](#ideas)

@@ -8,6 +8,8 @@
 - [Code layout](#code-layout)
 - [Function documentation](#function-documentation)
 
+[Back to top](#development-and-internals)
+
 ## How an edit reaches the screen and disk
 
 The terminal is the window that sends input bytes and displays output. The
@@ -35,6 +37,8 @@ A signal is a separate notification from the operating system, not a typed
 character. Terminal cleanup restores the terminal modes changed at startup;
 it is distinct from saving text or creating a backup. Normal-exit cleanup does
 not by itself handle termination signals; SIGTERM/SIGHUP cleanup remains pending.
+
+[Back to top](#development-and-internals)
 
 ## Code layout
 
@@ -119,6 +123,8 @@ not by itself handle termination signals; SIGTERM/SIGHUP cleanup remains pending
   line-editor prototype. Not compiled into the current binary (except
   for the UTF-8 logic, ported separately into `utf8.c`).
 
+[Back to top](#development-and-internals)
+
 ## Function documentation
 
 Functions use Doxygen-style comments in English, including private helpers and
@@ -186,3 +192,5 @@ explain who releases them and whether they are NUL-terminated. Editing helpers
 also say who records undo and refreshes derived row data. Keep comments aligned
 with behavior when changing a function; Doxygen is optional and is not a build
 dependency.
+
+[Back to top](#development-and-internals)

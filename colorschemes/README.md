@@ -90,6 +90,8 @@ presets, run `make install-colorschemes-force` (this overwrites personal preset
 files), then re-select the theme and save Settings. Already saved palette values
 are not changed by copying preset files alone.
 
+[Back to top](#colorschemes)
+
 ## File format
 
 Each `.conf` is a plain `key = value` file using the same color names and
@@ -111,6 +113,8 @@ an independent user choice. Non-color settings and filetype overrides are
 preserved. Settings labels always use terminal defaults.
 
 You can also replace the corresponding entries in `~/.tinyeditrc` manually.
+
+[Back to top](#colorschemes)
 
 ## Theme sources and terminal adaptations
 
@@ -134,6 +138,8 @@ tag pills, code backgrounds, glow, rounded corners,
 images and CSS layout are not reproduced by a color preset. Live-preview
 underlining and navigation retain tinyedit's existing behavior. MIT notices
 are in [LICENSE-THIRD-PARTY](../LICENSE-THIRD-PARTY).
+
+[Back to top](#colorschemes)
 
 ## Markdown heading levels
 
@@ -170,3 +176,5 @@ terminal-default background. ANSI reverse-video headings use the level’s
 foreground color as their background; exact shades depend on the terminal.
 Installing files alone does not replace saved settings:
 select the updated preset and save to activate the six colors.
+
+[Back to top](#colorschemes)

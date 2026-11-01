@@ -21,6 +21,9 @@
 
 ### Other minor fixing
 
+- Add a return-to-top link to every documentation subsection, including
+  installed guides and linked project, theme, syntax and contributor pages.
+
 - Underline resolved local Markdown references such as `[@fig:figure]` without
   requiring mouse hover.
 
