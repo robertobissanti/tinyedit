@@ -741,13 +741,26 @@ Enable **Smart Table** in F2, or set `smart_table = true` in `~/.tinyeditrc`.
 It is off by default. In Markdown files, typing a real pipe separator or
 pressing Enter at the end of a table row aligns the contiguous table. Start
 with an outer pipe, separate cells with pipes, and close the row with a pipe.
-The first completed row can be formatted before an optional header separator
-is added. Header cells accept `---`, `:---`, `:---:` and `---:`; their colons
-control left, centered and right padding. At least three dashes are required.
+The first row remains an editable header while its columns are being built.
+Enter confirms it, creates the mandatory second delimiter row and prepares the
+first data row below it. **Edit → Smart Table: realign** also creates a missing
+delimiter, including for a lone header. Existing second-row text moves down;
+no data is overwritten. Automatic alignment of multiple completed rows likewise
+inserts the missing delimiter. Only the second row controls column alignment.
 
-Enter prepares the next row with the same number of cells. Enter again on an
+Delimiter cells are normalized as `| ----- |` (default left), `|:----- |`
+(explicit left), `| -----:|` (right), or `|:-----:|` (center). Colons replace
+the boundary padding spaces so the pipes remain aligned. The dash count follows
+the displayed content width, grows or shrinks with it, and is at least three.
+Existing short delimiters such as `:-:` are accepted and expanded. Excess dashes
+do not force a column to stay wide. This follows the header/delimiter/body
+structure of [GFM tables](https://github.github.com/gfm/#tables-extension-);
+Smart Table retains its conservative recognition limits below.
+
+Enter on a completed data row prepares the next row with the same number of cells. Enter again on an
 empty row removes its pipes and leaves a normal blank line. Splitting within
-cell content retains ordinary Enter behavior. Tab and Shift-Tab move to the
+cell content retains ordinary Enter behavior. Once the delimiter exists, Tab
+and Shift-Tab move to the
 next or previous cell and cross existing row boundaries; at the table ends
 they stay in the current cell. A selection retains ordinary indent/outdent
 behavior. Elsewhere Tab and Enter retain their existing meanings.
@@ -763,7 +776,8 @@ outer pipe, have equal cell counts, and contain balanced inline backtick
 spans. Indented rows, fenced code, incomplete rows, mismatched cell counts and
 unmatched backticks are left alone. Escape-protected pipes and pipes inside
 inline code remain cell content. Links, UTF-8, malformed bytes and literal
-tabs retain their bytes; only padding spaces and separator dashes change.
+tabs retain their bytes; formatting adjusts padding and the second delimiter
+row, inserting that row when needed.
 Widths use the editor's Unicode helpers and tab stops; fonts may differ.
 Tabs can constrain exact centering or right alignment.
 

@@ -44,7 +44,7 @@ uint8_t smartTableParse(const erow *row, struct smartTableRow *out) {
             if (p < end && row->chars[end - 1] == ':') { cell->right = 1; end--; }
             int32_t dashes = 0;
             while (p < end && row->chars[p] == '-') { dashes++; p++; }
-            cell->separator = p == end && dashes >= 3;
+            cell->separator = p == end && dashes >= 1;
             if (!cell->separator) out->separator = 0;
             if (cell->end != cell->start) out->empty = 0;
             start = next; last = at;
@@ -97,7 +97,7 @@ uint8_t smartTableWidths(const struct editorBuffer *buffer, const struct smartTa
         for (int32_t y = table->first; y <= table->last; y++) {
             smartTableParse(&buffer->rows[y], &parsed);
             struct smartTableCell *cell = &parsed.cells[c];
-            int32_t width = parsed.separator ? cell->end - cell->start :
+            int32_t width = y == table->first + 1 && parsed.separator ? 3 :
                 tableWidth(&buffer->rows[y], cell, column, tab_stop);
             if (width > widths[c]) widths[c] = width;
         }
@@ -127,13 +127,10 @@ char *smartTableFormat(const erow *row, const struct smartTableRow *parsed,
     text[at++] = '|';
     for (int32_t c = 0; c < parsed->count; c++) {
         const struct smartTableCell *cell = &parsed->cells[c];
-        text[at++] = ' ';
+        text[at++] = parsed->separator && cell->left ? ':' : ' ';
         int32_t begin = at;
         if (parsed->separator) {
-            if (cell->left) text[at++] = ':';
-            int32_t dashes = widths[c] - cell->left - cell->right;
-            memset(text + at, '-', (size_t)dashes); at += dashes;
-            if (cell->right) text[at++] = ':';
+            memset(text + at, '-', (size_t)widths[c]); at += widths[c];
         } else {
             int32_t width = tableWidth(row, cell, at, tab_stop);
             int32_t padding = widths[c] - width, leading = 0;
@@ -162,7 +159,9 @@ char *smartTableFormat(const erow *row, const struct smartTableRow *parsed,
                 begin + cell->end - cell->start : old_anchor;
             if (old_anchor >= cell->start && old_anchor <= cell->end) tableMap(anchor, cell->start, cell->end, begin);
         }
-        text[at++] = ' '; text[at++] = '|';
+        if (cursor && old_cursor >= left && old_cursor <= right && *cursor > at) *cursor = at;
+        if (anchor && old_anchor >= left && old_anchor <= right && *anchor > at) *anchor = at;
+        text[at++] = parsed->separator && cell->right ? ':' : ' '; text[at++] = '|';
     }
     text[at] = '\0';
     if (cursor && old_cursor == row->size) *cursor = at;

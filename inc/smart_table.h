@@ -16,6 +16,7 @@ struct smartTableRow {
 struct smartTable { int32_t first, last, columns; };
 
 /* Conservative source parser: outer pipes, balanced code spans, no indentation.
+ * Delimiter candidates accept one or more dashes; formatting emits at least three.
  * Offsets are source bytes; returned formatted strings belong to the caller.
  * Format requires validated parse/width results and tab_stop in [1,16]. */
 uint8_t smartTableParse(const erow *row, struct smartTableRow *parsed);

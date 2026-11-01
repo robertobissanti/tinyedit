@@ -805,8 +805,12 @@ static uint8_t editorTableContext(struct smartTable *table) {
     return markdownSourceVisible(&E.document.buffer, table->first, 0);
 }
 
-/** @brief Format the current table within the caller's undo transaction. */
-static uint8_t editorTableAlign(void) {
+/**
+ * @brief Format a table within the caller's undo transaction.
+ * @details complete also creates the delimiter for a lone header; pipe typing
+ * leaves a lone header open for additional columns until Enter confirms it.
+ */
+static uint8_t editorTableAlign(uint8_t complete) {
     struct smartTable table;
     if (!editorTableContext(&table)) return 0;
     if (E.document.history.pending) {
@@ -818,17 +822,38 @@ static uint8_t editorTableAlign(void) {
     uint8_t align[SMART_TABLE_COLUMNS] = {0};
     if (!smartTableWidths(&E.document.buffer, &table, S.tab_stop, widths)) return 0;
     struct smartTableRow parsed;
-    for (int32_t y = table.first; y <= table.last; y++) {
-        smartTableParse(&E.document.buffer.rows[y], &parsed);
+    uint8_t separator = 0;
+    if (table.last > table.first) {
+        smartTableParse(&E.document.buffer.rows[table.first + 1], &parsed);
+        separator = parsed.separator;
+    }
+    if (!separator && (complete || table.last > table.first)) {
+        if (table.last - table.first + 1 >= SMART_TABLE_ROWS) return 0;
+        char line[SMART_TABLE_COLUMNS * 4 + 2];
+        int32_t length = 0;
+        line[length++] = '|';
+        for (int32_t c = 0; c < table.columns; c++) {
+            memcpy(line + length, "---|", 4); length += 4;
+        }
+        int32_t at = table.first + 1;
+        editorInsertRow(at, line, (size_t)length);
+        if (historyFailed(&E.document)) return 0;
+        if (E.document.cursor.cy >= at) E.document.cursor.cy++;
+        if (E.document.selection.active && E.document.selection.anchor_y >= at)
+            E.document.selection.anchor_y++;
+        table.last++;
+    }
+    if (table.last > table.first) {
+        smartTableParse(&E.document.buffer.rows[table.first + 1], &parsed);
         if (parsed.separator) {
             for (int32_t c = 0; c < table.columns; c++)
                 align[c] = parsed.cells[c].right ? (parsed.cells[c].left ? 3 : 2) : 0;
-            break;
         }
     }
     for (int32_t y = table.first; y <= table.last && !historyFailed(&E.document); y++) {
         erow *row = &E.document.buffer.rows[y];
         smartTableParse(row, &parsed);
+        parsed.separator = parsed.separator && y == table.first + 1;
         int32_t *cursor = E.document.cursor.cy == y ? &E.document.cursor.cx : NULL;
         int32_t *anchor = E.document.selection.active && E.document.selection.anchor_y == y ?
             &E.document.selection.anchor_x : NULL;
@@ -859,6 +884,8 @@ static uint8_t editorTableMove(uint8_t backwards) {
     struct smartTable table;
     if (!S.smart_table || !editorTableContext(&table)) return 0;
     struct smartTableRow parsed;
+    if (table.last == table.first ||
+        !smartTableParse(&E.document.buffer.rows[table.first + 1], &parsed) || !parsed.separator) return 0;
     smartTableParse(&E.document.buffer.rows[E.document.cursor.cy], &parsed);
     int32_t cell = 0;
     while (cell + 1 < parsed.count && E.document.cursor.cx > parsed.cells[cell].close) cell++;
@@ -891,7 +918,12 @@ static uint8_t editorTableEnter(void) {
         E.document.file.dirty = 1;
         return 1;
     }
-    editorTableAlign();
+    if (!editorTableAlign(1)) {
+        if (!historyFailed(&E.document)) editorSetErrorMessage("Smart Table: processing limit exceeded");
+        return 1;
+    }
+    y = E.document.cursor.cy;
+    if (y == table.first) y++;
     char next[SMART_TABLE_COLUMNS * 3 + 2];
     int32_t at = 0;
     next[at++] = '|';
@@ -901,7 +933,7 @@ static uint8_t editorTableEnter(void) {
     editorInsertRow(y + 1, next, (size_t)at);
     E.document.cursor.cy = y + 1;
     E.document.cursor.cx = 2;
-    editorTableAlign();
+    editorTableAlign(0);
     return 1;
 }
 
@@ -6505,7 +6537,7 @@ static uint8_t editorHandleCommandKey(int32_t c) {
             if (E.document.file.read_only) { editorReadOnly(); break; }
             editorBeginEdit();
             editorPushUndo(EDIT_OTHER);
-            uint8_t aligned = editorTableAlign();
+            uint8_t aligned = editorTableAlign(1);
             editorEndEdit();
             if (!aligned && edit_last_error == HISTORY_OK)
                 editorSetErrorMessage("Smart Table: no unambiguous table, or processing limit exceeded");
@@ -6783,7 +6815,7 @@ static void editorHandleEditKey(int32_t c) {
                     had_sel_y1, had_sel_x1);
             }
             E.document.selection.active = 0;
-            if (c == '|' && S.smart_table && editorTableSeparatorTyped()) editorTableAlign();
+            if (c == '|' && S.smart_table && editorTableSeparatorTyped()) editorTableAlign(0);
             break;
         }
     }

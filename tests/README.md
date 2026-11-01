@@ -195,5 +195,8 @@ Edit menu command are covered by their existing test binaries. These automated
 checks do not certify physical modified keys in a real terminal.
 `test_pty.py` also verifies Smart Table menu realignment and atomic undo through
 both mouse clicks and keyboard menu navigation, with the setting on and off.
+Delimiter regressions cover all four alignment forms, short and oversized dash
+runs, mandatory second-row insertion, header completion, data preservation,
+position mapping and atomic undo/redo.
 
 [Back to top](#test-fixtures)

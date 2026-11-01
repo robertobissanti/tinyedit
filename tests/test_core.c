@@ -2832,7 +2832,7 @@ static void testSmartTable(void) {
     E.document.selection.active = 1;
     E.document.selection.anchor_y = 2; E.document.selection.anchor_x = 11;
     editorBeginEdit(); editorPushUndo(EDIT_OTHER);
-    check(editorTableAlign(), "Smart Table explicit alignment"); editorEndEdit();
+    check(editorTableAlign(1), "Smart Table explicit alignment"); editorEndEdit();
     check(!strcmp(E.document.buffer.rows[0].chars, "| a     | long |"), "display widths and right alignment");
     check(strstr(E.document.buffer.rows[2].chars, "界😀é") != NULL, "Unicode bytes preserved");
     check(E.document.cursor.cx == 3 && E.document.selection.active,
@@ -2846,19 +2846,19 @@ static void testSmartTable(void) {
     editorHandleEditKey(SHIFT_TAB); check(E.document.cursor.cx == 2, "decoded Shift Tab previous cell");
     E.document.cursor.cx = E.document.buffer.rows[0].size;
     editorHandleEditKey('\r');
-    check(E.document.buffer.row_count == 4 && E.document.cursor.cy == 1, "Enter creates table row");
+    check(E.document.buffer.row_count == 4 && E.document.cursor.cy == 2, "Enter creates data row after separator");
     editorHandleEditKey('\r');
-    check(!E.document.buffer.rows[1].size && E.document.cursor.cy == 1, "empty row exits table");
-    editorUndo(); check(E.document.buffer.rows[1].chars[0] == '|', "exit undo atomic");
+    check(!E.document.buffer.rows[2].size && E.document.cursor.cy == 2, "empty row exits table");
+    editorUndo(); check(E.document.buffer.rows[2].chars[0] == '|', "exit undo atomic");
     editorUndo(); check(E.document.buffer.row_count == 3, "continuation undo atomic");
     const char *literal[] = {"|a\\|b|`c|d`|[é](path)|", "|x|``a`|b``|\xff|"};
     tableFixture("table.md", literal, 2); S.smart_table = 1;
     struct smartTableRow parsed;
     check(smartTableParse(&E.document.buffer.rows[0], &parsed) && parsed.count == 3,
         "escaped pipes and inline code do not split cells");
-    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(), "literal cells align"); editorEndEdit();
+    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(1), "literal cells align"); editorEndEdit();
     check(strstr(E.document.buffer.rows[0].chars, "a\\|b") && strstr(E.document.buffer.rows[0].chars, "[é](path)") &&
-        strstr(E.document.buffer.rows[1].chars, "\xff"), "links and malformed bytes preserved");
+        strstr(E.document.buffer.rows[2].chars, "\xff"), "links and malformed bytes preserved");
     const char *fence[] = {"```", "|a|b|", "```"};
     tableFixture("table.md", fence, 3); S.smart_table = 1; S.syntax_highlight = 0;
     E.document.cursor.cy = 1;
@@ -2889,12 +2889,12 @@ static void testSmartTable(void) {
     E.document.file.read_only = 0;
     const char *combining[] = {"|a|́b|"};
     tableFixture("table.md", combining, 1);
-    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(), "leading combining cell aligns"); editorEndEdit();
+    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(1), "leading combining cell aligns"); editorEndEdit();
     check(strstr(E.document.buffer.rows[0].chars, "́b") != NULL,
         "combining marks immediately after a pipe are retained");
     const char *tabs[] = {"|a\tb|界|", "|:---:|---:|", "|x|longer|"};
     tableFixture("table.md", tabs, 3); S.smart_table = 1;
-    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(), "tab table aligns"); editorEndEdit();
+    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(1), "tab table aligns"); editorEndEdit();
     int32_t columns[3];
     for (int32_t y = 0; y < 3; y++) {
         smartTableParse(&E.document.buffer.rows[y], &parsed);
@@ -2919,7 +2919,7 @@ static void testSmartTable(void) {
     check(!editorTableContext(&table), "unmatched inline code left intact");
     const char *wide[] = {"|abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz|b|"};
     tableFixture("table.md", wide, 1);
-    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(), "wide table aligns"); editorEndEdit();
+    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(1), "wide table aligns"); editorEndEdit();
     check(strstr(E.document.buffer.rows[0].chars, "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz") != NULL,
         "more than eighty display columns never truncates content");
     char many[SMART_TABLE_COLUMNS * 2 + 4]; int32_t n = 0;
@@ -2949,11 +2949,58 @@ static void testSmartTable(void) {
     editorResetDocument(); settingsDefaults(&S);
 }
 
+static void testSmartTableSeparator(void) {
+    const char *rows[] = {"|aa|bb|cc|dd|", "|---------|:-----------|-------------:|:----------:|", "|x|y|longer|z|"};
+    tableFixture("separator.md", rows, 3);
+    E.document.cursor.cy = 1; E.document.cursor.cx = 45;
+    E.document.selection.active = 1; E.document.selection.anchor_y = 1;
+    E.document.selection.anchor_x = 49;
+    editorHandleCommandKey(SMART_TABLE_KEY);
+    check(!strcmp(E.document.buffer.rows[1].chars, "| --- |:--- | ------:|:---:|"),
+        "second row normalizes all four alignments and shrinks surplus dashes");
+    check(E.document.cursor.cx <= E.document.buffer.rows[1].size &&
+        E.document.selection.anchor_x <= E.document.buffer.rows[1].size,
+        "shrinking delimiter keeps cursor and selection in bounds");
+    char *formatted = teStrdup(E.document.buffer.rows[1].chars);
+    editorUndo(); check(!strcmp(E.document.buffer.rows[1].chars, rows[1]), "delimiter undo preserves original markers");
+    editorRedo(); check(!strcmp(E.document.buffer.rows[1].chars, formatted), "delimiter redo exact");
+    editorHandleCommandKey(SMART_TABLE_KEY);
+    check(!strcmp(E.document.buffer.rows[1].chars, formatted), "delimiter formatting is idempotent"); free(formatted);
+    const char *short_rows[] = {"|h|h|h|h|", "|-|:-|-:|:-:|"};
+    tableFixture("separator.md", short_rows, 2);
+    editorHandleCommandKey(SMART_TABLE_KEY);
+    check(!strcmp(E.document.buffer.rows[1].chars, "| --- |:--- | ---:|:---:|"),
+        "short GFM delimiters expand to at least three dashes");
+    const char *missing[] = {"|head|value|", "|界|bytes\xff|"};
+    tableFixture("separator.md", missing, 2);
+    E.document.cursor.cy = 1; E.document.cursor.cx = 4;
+    E.document.selection.active = 1; E.document.selection.anchor_y = 1; E.document.selection.anchor_x = 1;
+    editorHandleCommandKey(SMART_TABLE_KEY);
+    check(E.document.buffer.row_count == 3 && E.document.cursor.cy == 2 &&
+        E.document.selection.anchor_y == 2 && strstr(E.document.buffer.rows[2].chars, "bytes\xff"),
+        "missing delimiter is inserted without overwriting data or losing logical selection");
+    editorUndo(); check(E.document.buffer.row_count == 2 && E.document.cursor.cy == 1 &&
+        !strcmp(E.document.buffer.rows[1].chars, missing[1]), "insertion and alignment undo atomically");
+    const char *header[] = {"|head|value|"};
+    tableFixture("separator.md", header, 1); S.smart_table = 1;
+    E.document.cursor.cx = E.document.buffer.rows[0].size;
+    editorHandleEditKey('\r');
+    check(E.document.buffer.row_count == 3 && E.document.cursor.cy == 2 &&
+        !strcmp(E.document.buffer.rows[1].chars, "| ---- | ----- |"),
+        "Enter confirms header with mandatory delimiter and prepares first data row");
+    editorUndo(); check(E.document.buffer.row_count == 1 &&
+        !strcmp(E.document.buffer.rows[0].chars, header[0]), "header completion undo atomic");
+    editorRedo(); check(E.document.buffer.row_count == 3 && E.document.cursor.cy == 2,
+        "header completion redo atomic");
+    editorResetDocument(); settingsDefaults(&S);
+}
+
 int main(void) {
     settingsDefaults(&S);
     E.search.search_match_y = -1;
     E.search.search_match_end_y = -1;
     testSmartTable();
+    testSmartTableSeparator();
     testErrorMessages();
     testAuditRegressions();
     testControlBytes();

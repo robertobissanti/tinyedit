@@ -4,6 +4,11 @@
 
 ### New features
 
+- Require Smart Table's second row to delimit the header. Header completion and
+  explicit realignment create a missing separator without overwriting data.
+  Normalize default, left, right and centered delimiters, preserving colons and
+  sizing their dashes to the current Unicode display widths in both directions.
+
 - Add **Smart Table**, off by default in F2/configuration: conservative Markdown
   table alignment on pipes and Enter, cell navigation with Tab/Shift-Tab,
   empty-row exit and an explicit Edit menu realignment command. Preserve literal

@@ -489,8 +489,8 @@ def test_menu_mouse_navigation(home):
 
 def test_smart_table_menu(home):
     """Both menu input paths must execute realignment independently of the setting."""
-    source = "|a|long|\n|---|---|\n|longer|b|\n"
-    expected = "| a      | long |\n| ------ | ---- |\n| longer | b    |\n"
+    source = "|aa|bb|cc|dd|\n|-|:-|-:|:-:|\n|x|y|longer|z|\n"
+    expected = "| aa  | bb  |     cc | dd  |\n| --- |:--- | ------:|:---:|\n| x   | y   | longer |  z  |\n"
     for enabled in (False, True):
         for mouse in (False, True):
             case_home = pathlib.Path(home) / f"smart-table-{enabled}-{mouse}"
