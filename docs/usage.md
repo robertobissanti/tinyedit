@@ -790,9 +790,13 @@ Tabs can constrain exact centering or right alignment.
 
 Processing is limited to 128 cells per row, 1,024 contiguous rows, and 1 MiB of
 source through the table's last row; formatted display width is also bounded
-by 1 MiB. Automatic assistance leaves unsupported text untouched; the explicit
-command reports an ambiguous table or processing limit in red. No data is
-truncated. Scanning happens on separator/Enter/navigation actions, not every
+by 1 MiB. Smart Table checks the complete prospective result before applying
+formatting, including the source prefix, mandatory delimiter and any new data
+row from Enter. A result beyond the byte or row budget is rejected in red;
+existing text and logical positions remain unchanged. A pipe already typed by
+the user stays inserted and can be undone normally when its automatic alignment
+is rejected. Unsupported/ambiguous input is left alone automatically; the
+explicit command reports an error in red. No data is truncated. Scanning happens on separator/Enter/navigation actions, not every
 ordinary character. Tables wider than 80 columns keep the existing soft-wrap
 rendering: aligning source does not guarantee that a wide table fits or is
 readable in the terminal. No dedicated wide-table renderer is provided.

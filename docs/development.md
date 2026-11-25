@@ -43,8 +43,12 @@ not by itself handle termination signals; SIGTERM/SIGHUP cleanup remains pending
 ## Code layout
 
 - `smart_table.c` / `smart_table.h`: bounded source parsing, Unicode/tab widths
-  and Markdown table formatting. The core owns edit transactions, context
-  checks, cursor/selection mapping and menu dispatch.
+  and Markdown table formatting. Byte offsets and absolute display columns are
+  tracked separately, including across UTF-8 cells before literal tabs. Width
+  calculation parses each row once, retaining only temporary source spans
+  (at most 1 MiB, freed before output preparation). The core prepares every
+  output row and logical position, checks the aggregate byte/row budget, then
+  applies the result through the existing edit transaction and menu dispatch.
 - `src/`, `inc/`: C source files and corresponding public/internal headers.
   `Makefile` supplies `-Iinc` to every compilation.
 - `src/tinyedit.c`, `inc/tinyedit.h`: Application flow, editing commands,
