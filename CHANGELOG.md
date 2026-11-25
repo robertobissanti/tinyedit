@@ -4,6 +4,14 @@
 
 ### New features
 
+### Important fixes
+
+### Other minor fixing
+
+## 0.3.10 — 2026-11-25
+
+### New features
+
 - Highlight Markdown table pipes and second-row dashes/colons with a dedicated
   configurable syntax color, independent of Smart Table. One Dark uses its blue
   `#61AFEF`; shipped themes include matching colors and older palettes retain
