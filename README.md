@@ -295,11 +295,29 @@ and configuration.
 
 ## Markdown editing and navigation
 
-**Smart Table**, off by default in F2 (`smart_table = true` in `~/.tinyeditrc`),
-aligns Markdown tables while typing pipes or completing rows with Enter. Tab and
-Shift-Tab move between cells; Enter on an empty table row exits.
-**Edit → Smart Table: realign** formats an existing table, even with the setting
-off. See [Smart Table recognition and limits](docs/usage.md#smart-table).
+**Smart Table** aligns editable Markdown source while preserving cell contents.
+Enable it in **F2 → Smart Table** and save the settings, or set
+`smart_table = true` in `~/.tinyeditrc` (off by default). Type a header such as
+`| Item | Qty |`, then press Enter at its end: tinyedit aligns it, inserts the
+header separator and creates the first data row.
+
+- Type a closing pipe or complete a row with Enter to align the table.
+- Use Tab / Shift-Tab to move between existing cells once the separator exists.
+- Press Enter on an empty table row to return to ordinary text.
+- Use **Edit → Smart Table: realign** for a one-off cleanup, even with automatic
+  Smart Table disabled. Ctrl-Z undoes the edit and its formatting together.
+
+![Smart Table with left, centered and right-aligned columns](imgs/smart-table-aligned.png)
+
+*Actual tinyedit v0.3.10 terminal output, captured in a 96-column PTY and rendered
+as PNG with the One Dark RGB theme. Item is left-aligned, Status centered, and
+Qty / Price right-aligned. Markdown source remains visible and editable.*
+
+The second row's colons select alignment (`:---`, `:---:`, `---:`). Structural
+pipes and delimiter markers have their own syntax color, independently of the
+Smart Table setting. Tables must have outer pipes and consistent cell counts;
+wide tables retain normal wrapping. See the [illustrated Smart Table guide](docs/usage.md#smart-table)
+for before/after screenshots, a copyable example, Unicode handling and limits.
 
 Enable **View → Markdown live preview**, or the same option in F2, to hide
 paired bold/italic markers and display inline links as underlined labels.

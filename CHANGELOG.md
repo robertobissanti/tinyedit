@@ -8,6 +8,9 @@
 
 ### Other minor fixing
 
+- Expand Smart Table documentation with a guided example, manual versus automatic
+  editing, settings and three screenshots captured from the running editor.
+
 ## 0.3.10 — 2026-11-25
 
 ### New features

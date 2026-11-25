@@ -746,6 +746,56 @@ document. SIGKILL cannot be handled.
 
 ## Smart Table
 
+### Quick start: create a table
+
+1. Open or save a document with a Markdown filename such as `notes.md`.
+2. Press F2, enable **Smart Table**, and save the settings with F2 or Ctrl-S.
+3. Type `| Item | Qty |` and press Enter at the end of the row. The first row
+   becomes the header; tinyedit adds the separator and an empty data row.
+4. Fill the cells, using Tab / Shift-Tab to move through existing cells. Enter
+   at the end of a completed row adds the next data row.
+5. Press Enter on an empty row to leave the table. Save the document with Ctrl-S.
+
+To try an existing table, copy this source into your own Markdown file:
+
+```markdown
+| Item | Status | Qty | Price |
+|:---|:---:|---:|---:|
+| Keyboard | Ready | 2 | 49.90 |
+| USB cable | Ordered | 12 | 8.50 |
+| Cafe display | Ready | 1 | 125.00 |
+```
+
+Installed guides are read-only; use a separate editable document for practice.
+Opening a table alone does not reformat it, even when Smart Table is enabled.
+
+### Before and after realignment
+
+Put the cursor anywhere in the table and choose **Edit → Smart Table: realign**.
+The command works with the automatic setting both on and off. It adjusts the
+entire contiguous table, not just the current row or selected cells.
+
+![Markdown table before realignment](../imgs/smart-table-before.png)
+
+*Before: valid source with uneven pipe positions and short separator cells.*
+
+![Smart Table realign command selected in the Edit menu](../imgs/smart-table-menu.png)
+
+*Open Edit by mouse or through F10; select Smart Table: realign.*
+
+![The same Markdown table after realignment](../imgs/smart-table-aligned.png)
+
+*After: Item is left-aligned, Status centered, and the numeric columns
+right-aligned. Delimiters expand to match the content. The modified indicator
+means the result has not yet been saved; Ctrl-Z reverses the operation.*
+
+These images render actual tinyedit v0.3.10 output captured in a 96 × 23 PTY,
+using the shipped One Dark RGB theme with Markdown live preview off. Font and
+terminal settings can change the appearance; this is source formatting, not a
+separate graphical table view.
+
+### Automatic editing and column alignment
+
 With syntax highlighting enabled, structural table pipes and the second row's
 alignment dashes/colons have a separate color, even when Smart Table is off.
 Cell text, escaped pipes and inline/fenced code retain their syntax colors.
@@ -784,6 +834,8 @@ with Smart Table disabled. This preserves selection and the cursor's byte
 offset within cell content. Padding positions map to the nearest content
 boundary. Each edit and its automatic formatting share one undo/redo action.
 The command respects read-only documentation and reports errors in red.
+
+### Recognition and limits
 
 Recognition is deliberately conservative: rows must begin and end with an
 outer pipe, have equal cell counts, and contain balanced inline backtick

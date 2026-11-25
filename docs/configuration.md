@@ -305,9 +305,27 @@ long lines, and reject binary configuration without changing it.
 
 ## Smart Table setting
 
-`smart_table = false` is the default. Set it to `true`, or toggle **Smart Table**
-in F2, to enable Markdown table alignment and cell navigation. Save the F2
-settings draft as usual. The [Smart Table guide](usage.md#smart-table) describes
-recognition, exiting a table, the explicit menu command and wide-table limits.
+`smart_table = false` is the default. To enable assistance while editing:
 
-[Back to top](#settings-and-appearance)
+1. Press F2 and toggle **Smart Table** on.
+2. Save the settings draft with F2 or Ctrl-S.
+3. Return to an editable Markdown document. The next real pipe separator or
+   Enter at the end of a completed row triggers alignment.
+
+The equivalent entry in `~/.tinyeditrc` is:
+
+```ini
+smart_table = true
+```
+
+Turning the setting off disables automatic alignment and cell navigation;
+it does not undo formatting already applied. **Edit → Smart Table: realign**
+remains available for manual cleanup. Table syntax colors are independent:
+keep syntax highlighting enabled and adjust **Syntax: Markdown table delimiters**
+in **F2 → Colors** (`color_syntax_table_delimiter` for ANSI,
+`rgb_syntax_table_delimiter` for RGB).
+
+See the [illustrated Smart Table guide](usage.md#smart-table) for before/after
+screenshots, header creation, alignment markers, undo and processing limits.
+
+[Back to top](#settings-colors-and-themes)

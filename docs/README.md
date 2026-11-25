@@ -45,6 +45,8 @@ Testing and benchmarks: [tests/README.md](../tests/README.md).
 
 ## Markdown and mouse navigation
 
+- [Smart Table](usage.md#smart-table): create and realign Markdown tables,
+  choose column alignment and navigate cells, with before/after screenshots.
 - [Markdown display and live preview](usage.md#markdown-display-and-live-preview):
   compact emphasis and link labels, source editing from link boundaries,
   hover colors and single-click opening.
