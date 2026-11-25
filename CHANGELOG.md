@@ -24,6 +24,10 @@
   image links with fragment-only destinations now jump within the document.
   Keep escaped opening parentheses literal.
 
+- Detect changes made to the open file by another program. Ask whether to reload
+  or keep the editor copy, and require confirmation before a save overwrites a
+  newer disk version.
+
 ### Important fixes
 
 - Follow standalone Obsidian block IDs to their marker line, including markers
@@ -52,6 +56,13 @@
   retain nonblocking opens so special targets cannot stall the editor.
 
 ### Other minor fixing
+
+- Handle failed information-line formatting with an empty line and remove
+  unused status-bar length assignments.
+
+- Read complete child-process output in the allocation-cleanup test, avoiding
+  intermittent failures caused by partial pipe reads. Remove unused file-hash
+  bookkeeping from metadata-based external-change detection.
 
 - Parse each Smart Table source row once while measuring widths, with a bounded
   temporary cell-span buffer released before formatting. Use UTF-8 helpers for

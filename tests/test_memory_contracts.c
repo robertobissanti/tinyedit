@@ -4,6 +4,7 @@
 #include "clipboard.h"
 
 #include <stdint.h>
+#include <errno.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -39,7 +40,14 @@ static void testFatalCleanup(void) {
     }
     close(pipefd[1]);
     char output[160] = {0};
-    ssize_t bytes = read(pipefd[0], output, sizeof(output) - 1);
+    size_t bytes = 0;
+    while (bytes < sizeof(output) - 1) {
+        ssize_t count = read(pipefd[0], output + bytes, sizeof(output) - 1 - bytes);
+        if (count < 0 && errno == EINTR) continue;
+        check(count >= 0, "read fatal cleanup output");
+        if (!count) break;
+        bytes += (size_t)count;
+    }
     close(pipefd[0]);
     int status;
     check(waitpid(child, &status, 0) == child && WIFEXITED(status) &&

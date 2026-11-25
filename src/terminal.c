@@ -398,10 +398,20 @@ static void terminalRemoveGhosttyCommandBindings(void) {
  * apply the whole burst before redrawing once.
  */
 uint8_t terminalInputReady(void) {
+    if (pending_key >= 0) return 1;
     fd_set fds;
     FD_ZERO(&fds);
     FD_SET(STDIN_FILENO, &fds);
     struct timeval tv = {0, 0};
+    return select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0;
+}
+
+uint8_t terminalWaitInput(int32_t timeout_ms) {
+    if (pending_key >= 0) return 1;
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(STDIN_FILENO, &fds);
+    struct timeval tv = {timeout_ms / 1000, (timeout_ms % 1000) * 1000};
     return select(STDIN_FILENO + 1, &fds, NULL, NULL, &tv) > 0;
 }
 

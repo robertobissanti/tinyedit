@@ -178,7 +178,14 @@ file when it is first saved.
 Save as asks before replacing an existing file other than the current document.
 Press `y` or `Y` to replace it; any other key cancels and preserves the destination
 and the current document name. Saving to the file already open, including another
-path to the same device and inode, does not ask for overwrite confirmation.
+path to the same device and inode, does not ask for ordinary overwrite confirmation.
+While the editor is open, tinyedit checks the file on disk about once per second.
+If another program changes or replaces it, press `r` to reload the disk version
+or `k` to keep the editor copy. Reloading discards unsaved edits. After keeping
+the editor copy, saving over a changed disk version asks for explicit confirmation;
+declining leaves both copies intact. Detection uses file identity, size and
+high-resolution modification/change times, so changes that preserve all of those
+metadata values may go unnoticed.
 
 In the Open, Save as, and first-save prompts, press **Tab** to complete file
 and folder names. Repeated Tab presses cycle matching names alphabetically;

@@ -100,6 +100,10 @@ static int32_t document_click_x, document_click_y;
 static uint8_t drawing_heading;
 static int32_t drawing_heading_foreground, drawing_heading_background;
 static uint8_t drawing_heading_bold;
+static struct stat disk_baseline, disk_observed;
+static uint8_t disk_baseline_exists, disk_baseline_valid;
+static uint8_t disk_observed_exists, disk_observed_valid;
+static time_t last_disk_check;
 
 static const char *const void_tags[] = {
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
@@ -1605,6 +1609,12 @@ static uint8_t editorOpen(const char *filename) {
     editorResetDocument();
     E.document = candidate;
     E.document.file.read_only = editorInstalledGuide(E.document.file.filename);
+    disk_baseline_exists = stat(E.document.file.filename, &disk_baseline) == 0;
+    disk_baseline_valid = 1;
+    disk_observed = disk_baseline;
+    disk_observed_exists = disk_baseline_exists;
+    disk_observed_valid = 1;
+    last_disk_check = time(NULL);
     editorBindHistory();
     editorResolveFiletype();
     editorUpdateAllRows();
@@ -1771,6 +1781,11 @@ static enum fileSaveResult editorSaveToPath(const char *filename) {
         backupRemove(name);
         free(E.document.file.filename);
         E.document.file.filename = name;
+        disk_baseline_exists = stat(name, &disk_baseline) == 0;
+        disk_baseline_valid = 1;
+        disk_observed = disk_baseline;
+        disk_observed_exists = disk_baseline_exists;
+        disk_observed_valid = 1;
         E.document.file.dirty = 0;
         E.document.file.save_uncertain = 0;
         E.document.file.last_backup_time = 0;
@@ -1818,6 +1833,75 @@ static uint8_t editorConfirmOverwrite(const char *name) {
     return key == 'y' || key == 'Y';
 }
 
+/* Compare the target, including replacements and same-size edits. A symlink
+ * is followed so the identity describes the actual file being edited. */
+static uint8_t editorSameDiskVersion(const struct stat *a, const struct stat *b) {
+#ifdef __APPLE__
+    return a->st_dev == b->st_dev && a->st_ino == b->st_ino &&
+        a->st_size == b->st_size &&
+        a->st_mtimespec.tv_sec == b->st_mtimespec.tv_sec &&
+        a->st_mtimespec.tv_nsec == b->st_mtimespec.tv_nsec &&
+        a->st_ctimespec.tv_sec == b->st_ctimespec.tv_sec &&
+        a->st_ctimespec.tv_nsec == b->st_ctimespec.tv_nsec;
+#else
+    return a->st_dev == b->st_dev && a->st_ino == b->st_ino &&
+        a->st_size == b->st_size &&
+        a->st_mtim.tv_sec == b->st_mtim.tv_sec &&
+        a->st_mtim.tv_nsec == b->st_mtim.tv_nsec &&
+        a->st_ctim.tv_sec == b->st_ctim.tv_sec &&
+        a->st_ctim.tv_nsec == b->st_ctim.tv_nsec;
+#endif
+}
+
+static uint8_t editorDiskChanged(void) {
+    if (!disk_baseline_valid) return 0;
+    struct stat current;
+    uint8_t exists = stat(E.document.file.filename, &current) == 0;
+    if (!exists && errno != ENOENT) return 1;
+    return exists != disk_baseline_exists ||
+        (exists && !editorSameDiskVersion(&current, &disk_baseline));
+}
+
+static uint8_t editorConfirmDiskOverwrite(void) {
+    if (!E.document.file.filename || !editorDiskChanged()) return 1;
+    editorSetStatusMessage("File changed on disk. Overwrite? (y/N)");
+    editorRefreshScreen();
+    int32_t key = editorReadPromptKey();
+    if (key == 'y' || key == 'Y') return 1;
+    editorSetStatusMessage("Save cancelled; external file preserved.");
+    return 0;
+}
+
+static void editorCheckExternalChange(void) {
+    if (!E.document.file.filename || !disk_baseline_valid) return;
+    time_t now = time(NULL);
+    if (now == last_disk_check) return;
+    last_disk_check = now;
+    struct stat current;
+    uint8_t exists = stat(E.document.file.filename, &current) == 0;
+    if (!exists && errno != ENOENT) return;
+    if (disk_observed_valid && exists == disk_observed_exists &&
+        (!exists || editorSameDiskVersion(&current, &disk_observed))) return;
+    if (exists) disk_observed = current;
+    disk_observed_exists = exists;
+    disk_observed_valid = 1;
+    if (!editorDiskChanged()) return;
+
+    editorSetStatusMessage(E.document.file.dirty ?
+        "File changed externally. (r)eload discards unsaved edits / (k)eep" :
+        "File changed externally. (r)eload / (k)eep editing");
+    editorRefreshScreen();
+    int32_t key = editorReadPromptKey();
+    if (key == 'r' || key == 'R') {
+        char *name = teStrdup(E.document.file.filename);
+        if (editorOpen(name)) editorSetStatusMessage("Reloaded file from disk.");
+        else editorSetErrorMessage("Reload failed: %s", strerror(errno));
+        free(name);
+    } else {
+        editorSetStatusMessage("Kept editor copy; saving will ask before overwrite.");
+    }
+}
+
 /**
  * @brief Save the active document, asking for a name when needed.
  *
@@ -1849,7 +1933,16 @@ static void editorSaveInternal(uint8_t force_prompt) {
             return;
         }
     }
-    editorSaveToPath(name ? name : E.document.file.filename);
+    const char *destination = name ? name : E.document.file.filename;
+    uint8_t current_target = !name || (E.document.file.filename &&
+        strcmp(name, E.document.file.filename) == 0);
+    if (!current_target && E.document.file.filename) {
+        struct stat target, source;
+        current_target = stat(destination, &target) == 0 &&
+            stat(E.document.file.filename, &source) == 0 &&
+            target.st_dev == source.st_dev && target.st_ino == source.st_ino;
+    }
+    if (!current_target || editorConfirmDiskOverwrite()) editorSaveToPath(destination);
     free(name);
 }
 
@@ -1982,6 +2075,10 @@ static void editorResetDocument(void) {
     editorClearRows();
     free(E.document.file.filename);
     E.document.file.filename = NULL;
+    disk_baseline_exists = 0;
+    disk_baseline_valid = 0;
+    disk_observed_valid = 0;
+    last_disk_check = 0;
 
     E.document.cursor.cx = 0;
     E.document.cursor.cy = 0;
@@ -3449,10 +3546,10 @@ static void editorDrawStatusBar(struct abuf *ab) {
     char *safe_name = editorDisplayText(E.document.file.filename ? E.document.file.filename : "[No Name]");
     int32_t len;
     if (S.show_top_bar) {
-        len = snprintf(status, sizeof(status), "%d lines, %d chars %s",
+        (void)snprintf(status, sizeof(status), "%d lines, %d chars %s",
             E.document.buffer.row_count, editorCountChars(), E.document.file.read_only ? "(read-only)" : E.document.file.dirty ? "(modified)" : "");
     } else {
-        len = snprintf(status, sizeof(status), "%.20s - %d lines, %d chars %s",
+        (void)snprintf(status, sizeof(status), "%.20s - %d lines, %d chars %s",
             safe_name, E.document.buffer.row_count, editorCountChars(),
             E.document.file.read_only ? "(read-only)" : E.document.file.dirty ? "(modified)" : "");
     }
@@ -3463,10 +3560,10 @@ static void editorDrawStatusBar(struct abuf *ab) {
     const char *mixed = E.document.file.line_endings_mixed ? "*" : "";
     int32_t rlen;
     if (filetype)
-        rlen = snprintf(rstatus, sizeof(rstatus), "%s | %s%s | %d/%d: C %d",
+        (void)snprintf(rstatus, sizeof(rstatus), "%s | %s%s | %d/%d: C %d",
             filetype, ending, mixed, E.document.cursor.cy + 1, E.document.buffer.row_count, E.document.cursor.cx + 1);
     else
-        rlen = snprintf(rstatus, sizeof(rstatus), "%s%s | %d/%d: C %d",
+        (void)snprintf(rstatus, sizeof(rstatus), "%s%s | %d/%d: C %d",
             ending, mixed, E.document.cursor.cy + 1, E.document.buffer.row_count, E.document.cursor.cx + 1);
     char *safe_status = editorDisplayText(status);
     char *safe_rstatus = editorDisplayText(rstatus);
@@ -3509,7 +3606,6 @@ static void editorDrawMessageBar(struct abuf *ab) {
         else if (editorSidebarWidth())
             msg = "^S save | ^O open | ^E close tree | ^B tree focus | F1 help";
         else msg = "^S save | ^O open | ^E show tree | F1 help";
-        msglen = (int32_t)strlen(msg);
     }
     struct textLink link;
     if ((default_hint || (E.ui.statusmsg_sticky && !E.ui.statusmsg_error)) &&
@@ -5047,8 +5143,7 @@ static void editorInfoAppendLine(struct abuf *ab, int32_t *rows_used, const char
     va_start(ap, fmt);
     int32_t len = vsnprintf(line, sizeof(line), fmt, ap);
     va_end(ap);
-    if (len < 0) len = 0;
-    if ((size_t)len >= sizeof(line)) len = (int32_t)sizeof(line) - 1;
+    if (len < 0) line[0] = '\0';
     char *safe_line = editorDisplayText(line);
     abAppend(ab, safe_line, (int32_t)strlen(safe_line));
     free(safe_line);
@@ -7060,7 +7155,8 @@ int main(int argc, char **argv) {
         terminalCheckTermination();
         editorRefreshScreen();
         editorMaybeBackup();
-        editorProcessKeypress();
+        editorCheckExternalChange();
+        if (terminalWaitInput(1000)) editorProcessKeypress();
     }
 
     return 0;

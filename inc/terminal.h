@@ -102,6 +102,8 @@ uint8_t terminalConfigureGhosttyCommandBindings(uint8_t enabled);
  * @return 1 when select() reports readable stdin, otherwise 0.
  */
 uint8_t terminalInputReady(void);
+/** @brief Wait for input or a queued decoded key, up to timeout_ms. */
+uint8_t terminalWaitInput(int32_t timeout_ms);
 /**
  * @brief Enable SGR click and drag reports for the editor.
  *

@@ -1383,6 +1383,8 @@ static void testLinks(void) {
     check(editorOpen(old_path), "reopen link source for save failure");
     free(E.document.file.filename);
     E.document.file.filename = teStrdup("/nonexistent-tinyedit-directory/source.md");
+    disk_baseline_exists = disk_observed_exists = 0;
+    disk_baseline_valid = disk_observed_valid = 1;
     E.document.file.dirty = 1;
     E.document.cursor.cx = 2;
     /* Use an absolute target so save failure is reached before replacement. */
@@ -3171,6 +3173,74 @@ static void testTableAuditFixes(void) {
     editorResetDocument(); settingsDefaults(&S);
 }
 
+static void testExternalChangeAction(char answer, uint8_t save) {
+    int input[2];
+    check(pipe(input) == 0 && write(input[1], &answer, 1) == 1,
+        "queue external-change answer");
+    close(input[1]);
+    int saved_in = dup(STDIN_FILENO), saved_out = dup(STDOUT_FILENO);
+    int sink = open("/dev/null", O_WRONLY);
+    check(saved_in >= 0 && saved_out >= 0 && sink >= 0 &&
+        dup2(input[0], STDIN_FILENO) >= 0 &&
+        dup2(sink, STDOUT_FILENO) >= 0, "redirect external-change prompt");
+    close(input[0]); close(sink);
+    if (save) editorSave();
+    else { last_disk_check = 0; editorCheckExternalChange(); }
+    check(dup2(saved_in, STDIN_FILENO) >= 0 &&
+        dup2(saved_out, STDOUT_FILENO) >= 0, "restore prompt descriptors");
+    close(saved_in); close(saved_out);
+}
+
+static void testExternalChange(void) {
+    char directory[] = "/tmp/tinyedit-external-XXXXXX";
+    check(mkdtemp(directory) != NULL, "external-change fixture directory");
+    char path[256], replacement[256];
+    snprintf(path, sizeof(path), "%s/document.txt", directory);
+    snprintf(replacement, sizeof(replacement), "%s/replacement.txt", directory);
+    FILE *file = fopen(path, "w");
+    check(file && fputs("first\n", file) >= 0 && fclose(file) == 0,
+        "initial document");
+    E.view.screencols = 80; E.view.screenrows = 20;
+    editorResetDocument();
+    check(editorOpen(path) && !editorDiskChanged(), "opened file records disk version");
+    file = fopen(path, "w");
+    check(file && fputs("other\n", file) >= 0 && fclose(file) == 0,
+        "same-size external edit");
+    check(editorDiskChanged(), "same-size edit detected");
+    testExternalChangeAction('k', 0);
+    check(!strcmp(E.document.buffer.rows[0].chars, "first") &&
+        disk_observed_valid && !editorSameDiskVersion(&disk_baseline, &disk_observed),
+        "keep preserves editor text and acknowledges one disk version");
+    testExternalChangeAction('n', 1);
+    file = fopen(path, "r");
+    char line[32] = {0};
+    check(file && fgets(line, sizeof(line), file) && fclose(file) == 0 &&
+        !strcmp(line, "other\n"), "declined save preserves external edit");
+    file = fopen(replacement, "w");
+    check(file && fputs("third\n", file) >= 0 && fclose(file) == 0 &&
+        rename(replacement, path) == 0, "atomic external replacement");
+    testExternalChangeAction('r', 0);
+    check(!strcmp(E.document.buffer.rows[0].chars, "third") &&
+        !editorDiskChanged(), "reload takes replacement and refreshes baseline");
+    editorInsertRow(1, "local", 5);
+    E.document.file.dirty = 1;
+    file = fopen(path, "w");
+    check(file && fputs("outside\n", file) >= 0 && fclose(file) == 0,
+        "second external edit");
+    testExternalChangeAction('k', 0);
+    check(E.document.file.dirty && E.document.buffer.row_count == 2,
+        "keeping a dirty editor copy retains unsaved rows");
+    testExternalChangeAction('y', 1);
+    file = fopen(path, "r");
+    char saved[32] = {0};
+    check(file && fread(saved, 1, sizeof(saved) - 1, file) > 0 && fclose(file) == 0 &&
+        !strcmp(saved, "third\nlocal\n") && !E.document.file.dirty &&
+        !editorDiskChanged(), "confirmed overwrite saves editor copy and resets baseline");
+    editorResetDocument();
+    check(unlink(path) == 0 && rmdir(directory) == 0,
+        "remove external-change fixture");
+}
+
 int main(void) {
     settingsDefaults(&S);
     E.search.search_match_y = -1;
@@ -3205,6 +3275,7 @@ int main(void) {
     testEmptyPages();
     testUnicodeTabs();
     testDocumentTransactions();
+    testExternalChange();
     testNewDocument();
     testColorSettings();
     testMouseDispatch();
