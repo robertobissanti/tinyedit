@@ -19,14 +19,6 @@
 
 </div>
 
-<div align="center">
-
-![tinyedit: typing a Markdown title, a table aligned by Smart Table and a $$ equation](imgs/demo-typing.gif)
-
-![tinyedit: browsing the menus and the settings screen](imgs/demo-menus-settings.gif)
-
-</div>
-
 A small full-screen terminal text editor written in plain C (kilo-style,
 after [kilo](https://github.com/antirez/kilo) by Salvatore Sanfilippo),
 with no dependencies beyond the POSIX standard library.
@@ -40,6 +32,12 @@ memorizing non-standard key sequences (Emacs), or working around limited
 navigation and selection (Nano). tinyedit reduces that friction with familiar
 shortcuts such as `Ctrl-C`, `Ctrl-V`, `Ctrl-Z`, and `Ctrl-F`, Shift+Arrow text
 selection, and optional mouse support for clicking and scrolling.
+
+<div align="center">
+
+![tinyedit demo: Markdown with a Smart Table and a $$ equation, then the menus and settings](imgs/demo.gif)
+
+</div>
 
 ## Contents
 
