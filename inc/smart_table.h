@@ -7,6 +7,10 @@
 #define SMART_TABLE_ROWS 1024
 #define SMART_TABLE_BYTES (1024 * 1024)
 
+struct smartTableSpan { int32_t start, end; };
+
+enum smartTableAlignment { SMART_TABLE_LEFT = 0, SMART_TABLE_RIGHT = 2, SMART_TABLE_CENTER = 3 };
+
 struct smartTableCell { int32_t start, end, open, close; uint8_t left, right, separator; };
 struct smartTableRow {
     int32_t count;
@@ -18,7 +22,8 @@ struct smartTable { int32_t first, last, columns; };
 /* Conservative source parser: outer pipes, balanced code spans, no indentation.
  * Delimiter candidates accept one or more dashes; formatting emits at least three.
  * Offsets are source bytes; returned formatted strings belong to the caller.
- * Format requires validated parse/width results and tab_stop in [1,16]. */
+ * Format requires validated parse/width results and tab_stop in [1,16].
+ * Invalid widths/padding return NULL without changing cursor/anchor outputs. */
 uint8_t smartTableParse(const erow *row, struct smartTableRow *parsed);
 uint8_t smartTableFind(const struct editorBuffer *buffer, int32_t y, struct smartTable *table);
 char *smartTableFormat(const erow *row, const struct smartTableRow *parsed,

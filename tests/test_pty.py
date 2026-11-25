@@ -524,6 +524,28 @@ def test_smart_table_menu(home):
                 finish(process, master)
 
 
+def test_smart_table_unicode_tabs(home):
+    """Header continuation must use visual columns after multibyte cells."""
+    case_home = pathlib.Path(home) / "smart-table-unicode-tabs"
+    case_home.mkdir()
+    target = case_home / "table.md"
+    original = "|界aaaa|\t|\n|---|---|\n"
+    target.write_text(original)
+    (case_home / ".tinyeditrc").write_text("smart_table = true\nbackup_interval = 0\ntab_stop = 4\n")
+    process, master = spawn_editor([str(target)], case_home)
+    try:
+        read_available(master)
+        os.write(master, b"\x1b[F\r\x13")
+        read_available(master)
+        assert process.poll() is None, "UTF-8 before a tab must not crash formatting"
+        assert target.read_text() == "| 界aaaa | \t   |\n| ------ | --- |\n|        |     |\n"
+        os.write(master, b"\x1a\x13")
+        read_available(master)
+        assert target.read_text() == original, "header formatting and continuation undo together"
+    finally:
+        finish(process, master)
+
+
 def test_menu_show_invisibles_refreshes_rows(home):
     case_home = pathlib.Path(home) / "menu-invisibles"
     case_home.mkdir()
@@ -2151,6 +2173,7 @@ def main():
         test_menu_restores_editor_background(home)
         test_menu_mouse_navigation(home)
         test_smart_table_menu(home)
+        test_smart_table_unicode_tabs(home)
         test_menu_show_invisibles_refreshes_rows(home)
         test_menu_view_toggles_settings(home)
         test_markdown_live_preview(home)

@@ -2816,6 +2816,7 @@ static void testErrorMessages(void) {
 
 static void tableFixture(const char *name, const char *const *rows, int32_t count) {
     editorResetDocument(); settingsDefaults(&S);
+    editorSetStatusMessage("");
     E.document.file.filename = teStrdup(name);
     for (int32_t y = 0; y < count; y++) editorInsertRow(y, rows[y], strlen(rows[y]));
     E.document.cursor.cy = 0; E.document.cursor.cx = 0;
@@ -2832,7 +2833,7 @@ static void testSmartTable(void) {
     E.document.selection.active = 1;
     E.document.selection.anchor_y = 2; E.document.selection.anchor_x = 11;
     editorBeginEdit(); editorPushUndo(EDIT_OTHER);
-    check(editorTableAlign(1), "Smart Table explicit alignment"); editorEndEdit();
+    check(editorTableAlign(1, 0), "Smart Table explicit alignment"); editorEndEdit();
     check(!strcmp(E.document.buffer.rows[0].chars, "| a     | long |"), "display widths and right alignment");
     check(strstr(E.document.buffer.rows[2].chars, "界😀é") != NULL, "Unicode bytes preserved");
     check(E.document.cursor.cx == 3 && E.document.selection.active,
@@ -2856,7 +2857,7 @@ static void testSmartTable(void) {
     struct smartTableRow parsed;
     check(smartTableParse(&E.document.buffer.rows[0], &parsed) && parsed.count == 3,
         "escaped pipes and inline code do not split cells");
-    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(1), "literal cells align"); editorEndEdit();
+    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(1, 0), "literal cells align"); editorEndEdit();
     check(strstr(E.document.buffer.rows[0].chars, "a\\|b") && strstr(E.document.buffer.rows[0].chars, "[é](path)") &&
         strstr(E.document.buffer.rows[2].chars, "\xff"), "links and malformed bytes preserved");
     const char *fence[] = {"```", "|a|b|", "```"};
@@ -2889,12 +2890,12 @@ static void testSmartTable(void) {
     E.document.file.read_only = 0;
     const char *combining[] = {"|a|́b|"};
     tableFixture("table.md", combining, 1);
-    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(1), "leading combining cell aligns"); editorEndEdit();
+    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(1, 0), "leading combining cell aligns"); editorEndEdit();
     check(strstr(E.document.buffer.rows[0].chars, "́b") != NULL,
         "combining marks immediately after a pipe are retained");
     const char *tabs[] = {"|a\tb|界|", "|:---:|---:|", "|x|longer|"};
     tableFixture("table.md", tabs, 3); S.smart_table = 1;
-    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(1), "tab table aligns"); editorEndEdit();
+    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(1, 0), "tab table aligns"); editorEndEdit();
     int32_t columns[3];
     for (int32_t y = 0; y < 3; y++) {
         smartTableParse(&E.document.buffer.rows[y], &parsed);
@@ -2919,7 +2920,7 @@ static void testSmartTable(void) {
     check(!editorTableContext(&table), "unmatched inline code left intact");
     const char *wide[] = {"|abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz|b|"};
     tableFixture("table.md", wide, 1);
-    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(1), "wide table aligns"); editorEndEdit();
+    editorBeginEdit(); editorPushUndo(EDIT_OTHER); check(editorTableAlign(1, 0), "wide table aligns"); editorEndEdit();
     check(strstr(E.document.buffer.rows[0].chars, "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz") != NULL,
         "more than eighty display columns never truncates content");
     char many[SMART_TABLE_COLUMNS * 2 + 4]; int32_t n = 0;
@@ -3017,6 +3018,131 @@ static void testTableHighlightPropagation(void) {
     editorResetDocument(); settingsDefaults(&S);
 }
 
+static char *tableAuditText(size_t *length) {
+    return bufferSerialize(&E.document.buffer, LINE_ENDING_LF, 1, length);
+}
+
+static void testTableAuditFixes(void) {
+    const char *first[] = {"界aaaa", "éaaaaa", "éaaaaa", "😀aaaa", "👩‍💻aaaa", ("\xff" "aaaaa")};
+    const char *separators[] = {"|---|---|", "|:---|:---|", "|---:|---:|", "|:---:|:---:|"};
+    for (size_t variant = 0; variant < sizeof(first) / sizeof(first[0]); variant++) {
+        for (size_t alignment = 0; alignment < sizeof(separators) / sizeof(separators[0]); alignment++) {
+            char header[128]; snprintf(header, sizeof(header), "|%s|\t|", first[variant]);
+            const char *rows[] = {header, separators[alignment], "|x|y|"};
+            tableFixture("audit.md", rows, 3);
+            E.document.cursor.cx = E.document.buffer.rows[0].size - 1;
+            E.document.selection.active = 1; E.document.selection.anchor_y = 2; E.document.selection.anchor_x = 1;
+            size_t original_length; char *original = tableAuditText(&original_length);
+            editorHandleCommandKey(SMART_TABLE_KEY);
+            check(!E.ui.statusmsg_error, "mixed UTF-8/tab columns format safely for each alignment");
+            struct smartTableRow parsed;
+            int32_t columns[2] = {0};
+            for (int32_t y = 0; y < 3; y++) {
+                erow *row = &E.document.buffer.rows[y]; smartTableParse(row, &parsed);
+                for (int32_t c = 0; c < 2; c++) {
+                    int32_t column = bufferRowCxToRx(row, parsed.cells[c].close, S.tab_stop);
+                    if (!y) columns[c] = column;
+                    check(column == columns[c], "pipe columns use visual widths after multibyte cells and tabs");
+                }
+            }
+            check(strstr(E.document.buffer.rows[0].chars, first[variant]) &&
+                strchr(E.document.buffer.rows[0].chars, '\t') && E.document.selection.active,
+                "format retains Unicode/malformed bytes, literal tab and selection");
+            size_t formatted_length; char *formatted = tableAuditText(&formatted_length);
+            editorUndo(); size_t restored_length; char *restored = tableAuditText(&restored_length);
+            check(restored_length == original_length && !memcmp(restored, original, original_length),
+                "mixed column formatting undo restores exact source"); free(restored);
+            editorRedo(); restored = tableAuditText(&restored_length);
+            check(restored_length == formatted_length && !memcmp(restored, formatted, formatted_length),
+                "mixed column formatting redo restores exact output");
+            free(restored); free(formatted); free(original);
+        }
+    }
+    erow invalid = {0}; invalid.chars = "|a|xxxx|"; invalid.size = (int32_t)strlen(invalid.chars);
+    struct smartTableRow parsed; smartTableParse(&invalid, &parsed);
+    int32_t widths[] = {3, 3}, cursor = 1, anchor = 1; uint8_t align[] = {0, 0};
+    char *result = smartTableFormat(&invalid, &parsed, widths, align, 4, &cursor, &anchor);
+    check(!result && cursor == 1 && anchor == 1, "invalid padding rejects without mutating position outputs");
+    free(result);
+    erow joined = {0}; joined.chars = "|x‍ |"; joined.size = (int32_t)strlen(joined.chars);
+    check(smartTableParse(&joined, &parsed) && parsed.cells[0].end == 5,
+        "backward scalar trimming retains a joiner before ASCII padding");
+
+    const char *seed[] = {"|x|"}; tableFixture("audit.md", seed, 1);
+    char header[2003]; header[0] = '|'; memset(header + 1, 'a', 2000); header[2001] = '|'; header[2002] = 0;
+    bufferRowDeleteRange(&E.document.buffer.rows[0], 0, E.document.buffer.rows[0].size);
+    bufferRowInsert(&E.document.buffer.rows[0], 0, header, 2002); editorUpdateRow(&E.document.buffer.rows[0]);
+    editorInsertRow(1, "|---|", 5);
+    for (int32_t y = 2; y < SMART_TABLE_ROWS; y++) editorInsertRow(y, "|x|", 3);
+    E.document.cursor.cy = 2; E.document.cursor.cx = 2;
+    E.document.selection.active = 1; E.document.selection.anchor_y = 1000; E.document.selection.anchor_x = 1;
+    size_t original_length; char *original = tableAuditText(&original_length);
+    int32_t history_count = E.document.history.undo_count;
+    editorHandleCommandKey(SMART_TABLE_KEY);
+    size_t restored_length; char *restored = tableAuditText(&restored_length);
+    check(E.ui.statusmsg_error && restored_length == original_length && !memcmp(restored, original, original_length) &&
+        E.document.cursor.cy == 2 && E.document.cursor.cx == 2 && E.document.selection.anchor_y == 1000 &&
+        E.document.history.undo_count == history_count, "aggregate output limit rejects text, position and history changes atomically");
+    struct smartTable table; check(editorTableContext(&table), "rejected table remains recognizable");
+    free(restored); free(original);
+    S.smart_table = 1; E.document.selection.active = 0;
+    bufferRowDeleteRange(&E.document.buffer.rows[2], 2, 3); editorUpdateRow(&E.document.buffer.rows[2]);
+    E.document.cursor.cy = 2; E.document.cursor.cx = 2;
+    editorHandleEditKey('|');
+    check(E.ui.statusmsg_error && !strcmp(E.document.buffer.rows[2].chars, "|x|") &&
+        !strcmp(E.document.buffer.rows[0].chars, header), "automatic budget rejection keeps typed pipe without partial formatting");
+    editorUndo(); check(!strcmp(E.document.buffer.rows[2].chars, "|x"), "rejected alignment does not break typed pipe undo");
+
+    tableFixture("audit.md", seed, 1);
+    size_t large = SMART_TABLE_BYTES / 2 - 8;
+    char *large_header = teMalloc(large + 3); large_header[0] = '|';
+    memset(large_header + 1, 'a', large); large_header[large + 1] = '|'; large_header[large + 2] = 0;
+    bufferRowDeleteRange(&E.document.buffer.rows[0], 0, 3);
+    bufferRowInsert(&E.document.buffer.rows[0], 0, large_header, large + 2);
+    editorUpdateRow(&E.document.buffer.rows[0]); editorInsertRow(1, "|---|", 5); free(large_header);
+    S.smart_table = 1; E.document.cursor.cx = E.document.buffer.rows[0].size;
+    original = tableAuditText(&original_length); editorHandleEditKey('\r'); restored = tableAuditText(&restored_length);
+    check(E.ui.statusmsg_error && original_length == restored_length && !memcmp(original, restored, original_length) &&
+        E.document.buffer.row_count == 2 && !E.document.cursor.cy,
+        "Enter includes the prospective data row in output preflight");
+    free(restored); free(original);
+    bufferRowDeleteRange(&E.document.buffer.rows[1], 0, E.document.buffer.rows[1].size);
+    bufferRowInsert(&E.document.buffer.rows[1], 0, "|x|", 3); editorUpdateRow(&E.document.buffer.rows[1]);
+    original = tableAuditText(&original_length);
+    editorHandleCommandKey(SMART_TABLE_KEY); restored = tableAuditText(&restored_length);
+    check(E.ui.statusmsg_error && E.document.buffer.row_count == 2 && original_length == restored_length &&
+        !memcmp(original, restored, original_length), "mandatory separator is included before any insertion is applied");
+    free(restored); free(original);
+
+    tableFixture("audit.md", seed, 1);
+    size_t prefix_size = SMART_TABLE_BYTES - 500;
+    char *prefix = teMalloc(prefix_size + 1); memset(prefix, 'a', prefix_size); prefix[prefix_size] = 0;
+    editorInsertRow(0, prefix, prefix_size); free(prefix);
+    char prefix_header[303]; prefix_header[0] = '|'; memset(prefix_header + 1, 'b', 300);
+    prefix_header[301] = '|'; prefix_header[302] = 0;
+    bufferRowDeleteRange(&E.document.buffer.rows[1], 0, 3);
+    bufferRowInsert(&E.document.buffer.rows[1], 0, prefix_header, 302); editorUpdateRow(&E.document.buffer.rows[1]);
+    editorInsertRow(2, "|---|", 5); E.document.cursor.cy = 1;
+    original = tableAuditText(&original_length);
+    editorHandleCommandKey(SMART_TABLE_KEY); restored = tableAuditText(&restored_length);
+    check(E.ui.statusmsg_error && original_length == restored_length && !memcmp(original, restored, original_length),
+        "output preflight includes source preceding the table");
+    free(restored); free(original);
+
+    tableFixture("audit.md", seed, 1);
+    char boundary[1022]; boundary[0] = '|'; memset(boundary + 1, 'a', 1019); boundary[1020] = '|'; boundary[1021] = 0;
+    bufferRowDeleteRange(&E.document.buffer.rows[0], 0, 3);
+    bufferRowInsert(&E.document.buffer.rows[0], 0, boundary, 1021); editorUpdateRow(&E.document.buffer.rows[0]);
+    editorInsertRow(1, "|---|", 5);
+    for (int32_t y = 2; y < SMART_TABLE_ROWS - 1; y++) editorInsertRow(y, "|x|", 3);
+    S.smart_table = 1; E.document.cursor.cx = E.document.buffer.rows[0].size;
+    editorHandleEditKey('\r'); restored = tableAuditText(&restored_length);
+    check(!E.ui.statusmsg_error && restored_length == SMART_TABLE_BYTES &&
+        E.document.buffer.row_count == SMART_TABLE_ROWS && editorTableContext(&table),
+        "exact aggregate byte and row boundaries remain supported after Enter"); free(restored);
+    editorResetDocument(); settingsDefaults(&S);
+}
+
 int main(void) {
     settingsDefaults(&S);
     E.search.search_match_y = -1;
@@ -3024,6 +3150,7 @@ int main(void) {
     testSmartTable();
     testSmartTableSeparator();
     testTableHighlightPropagation();
+    testTableAuditFixes();
     testErrorMessages();
     testAuditRegressions();
     testControlBytes();

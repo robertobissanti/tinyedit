@@ -249,6 +249,13 @@ struct editorSelection {
     uint8_t pinned;
 };
 
+struct editorTableEdit {
+    char **rows; /* Owned prepared rows; release after application or rejection. */
+    int32_t count, separator_at, next_at;
+    struct editorCursor cursor;
+    struct editorSelection selection;
+};
+
 enum historyChangeKind { HISTORY_ROW_SWAP, HISTORY_ROW_INSERT, HISTORY_ROW_DELETE };
 
 enum historyError { HISTORY_OK, HISTORY_MEMORY, HISTORY_LIMIT, HISTORY_SIZE };

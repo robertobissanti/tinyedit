@@ -200,6 +200,12 @@ runs, mandatory second-row insertion, header completion, data preservation,
 position mapping and atomic undo/redo. Syntax regressions verify structural-pipe
 and delimiter classes, code/escape exclusions, UTF-8/tab render offsets, nearby
 edit/undo propagation, disabled highlighting, independent palette persistence,
-and RGB delimiter output through the PTY renderer.
+and RGB delimiter output through the PTY renderer. Audit regressions combine
+multibyte/combining/emoji/malformed cells with tabs in later columns for all four
+alignments, reject invalid padding without changing position outputs, and cover
+aggregate output rejection (including Enter, a missing delimiter and document
+prefix), unchanged undo/selection, typed-pipe undo, and exact 1 MiB/1,024-row
+boundary acceptance. A PTY regression also confirms UTF-8/tab header
+continuation, save and single-step undo through the running editor.
 
 [Back to top](#test-fixtures)

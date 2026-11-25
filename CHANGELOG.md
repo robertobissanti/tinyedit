@@ -26,6 +26,13 @@
 
 ### Important fixes
 
+- Prevent Smart Table from crashing when a column with UTF-8 text precedes a
+  cell containing literal tabs. Track output bytes separately from display
+  columns and reject invalid padding before writing.
+- Preflight the entire Smart Table result, including header delimiter, Enter's
+  new row and preceding document text. Reject output beyond the byte/row budget
+  before changing text, cursor, selection or undo history, keeping tables usable.
+
 - Execute **Edit → Smart Table: realign** when clicked with the mouse. The
   command previously worked through keyboard menu navigation but mouse clicks
   silently discarded it, regardless of the Smart Table setting.
@@ -40,6 +47,10 @@
   retain nonblocking opens so special targets cannot stall the editor.
 
 ### Other minor fixing
+
+- Parse each Smart Table source row once while measuring widths, with a bounded
+  temporary cell-span buffer released before formatting. Use UTF-8 helpers for
+  ASCII delimiter traversal and group the module into functional sections.
 
 - Add a return-to-top link to every documentation subsection, including
   installed guides and linked project, theme, syntax and contributor pages.

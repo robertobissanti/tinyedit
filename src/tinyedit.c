@@ -28,7 +28,7 @@
  *   render.c       shared row/wrapped-text layout and presentation adapters
  *   search.c       compiled queries, text search and source-coordinate results
  *   settings.c     persistent configuration, color scheme loading and color escapes
- *   smart_table.c  conservative Markdown table parsing and source formatting
+ *   smart_table.c  bounded Markdown parsing, cached cell spans and visual-width formatting
  *   syntax.c       filetype dispatch, shared helpers and other language tokenizers
  *   terminal.c     raw terminal setup, input decoding, and terminal I/O
  *   tree.c         owned filesystem tree and lazy directory expansion
@@ -805,67 +805,139 @@ static uint8_t editorTableContext(struct smartTable *table) {
     return markdownSourceVisible(&E.document.buffer, table->first, 0);
 }
 
+/** @brief Release prepared text on either successful application or rejected preflight. */
+static void editorTableFreeEdit(struct editorTableEdit *edit) {
+    for (int32_t i = 0; i < edit->count; i++) free(edit->rows[i]);
+    free(edit->rows);
+    edit->rows = NULL;
+    edit->count = 0;
+}
+
 /**
- * @brief Format a table within the caller's undo transaction.
- * @details complete also creates the delimiter for a lone header; pipe typing
- * leaves a lone header open for additional columns until Enter confirms it.
+ * @brief Prepare all output and logical positions without changing the document.
+ * @details The source prefix, formatted rows, mandatory delimiter and optional
+ * continuation must fit the recognition budget together. Caller releases rows.
  */
-static uint8_t editorTableAlign(uint8_t complete) {
+static uint8_t editorTablePrepare(const struct smartTable *table, uint8_t complete,
+    uint8_t continuation, struct editorTableEdit *edit) {
+    memset(edit, 0, sizeof(*edit));
+    int32_t widths[SMART_TABLE_COLUMNS];
+    uint8_t align[SMART_TABLE_COLUMNS] = {0};
+    if (!smartTableWidths(&E.document.buffer, table, S.tab_stop, widths)) return 0;
+    struct smartTableRow parsed;
+    uint8_t separator = 0;
+    if (table->last > table->first) {
+        smartTableParse(&E.document.buffer.rows[table->first + 1], &parsed);
+        separator = parsed.separator;
+        if (separator) {
+            for (int32_t c = 0; c < table->columns; c++)
+                align[c] = parsed.cells[c].right ?
+                    (parsed.cells[c].left ? SMART_TABLE_CENTER : SMART_TABLE_RIGHT) : SMART_TABLE_LEFT;
+        }
+    }
+    uint8_t insert_separator = !separator && (complete || table->last > table->first);
+    int32_t count = table->last - table->first + 1 + insert_separator + continuation;
+    if (count > SMART_TABLE_ROWS || E.document.buffer.row_count > INT32_MAX - insert_separator - continuation) return 0;
+    edit->separator_at = insert_separator ? 1 : -1;
+    edit->next_at = -1;
+    if (continuation) {
+        int32_t current = E.document.cursor.cy - table->first;
+        edit->next_at = current == 0 ? 2 : current + insert_separator + 1;
+    }
+    size_t bytes = 0;
+    for (int32_t y = 0; y < table->first; y++) {
+        size_t length = teSizeAdd((size_t)E.document.buffer.rows[y].size, 1);
+        if (length > SMART_TABLE_BYTES - bytes) return 0;
+        bytes += length;
+    }
+    edit->count = count;
+    edit->rows = teMalloc(teArrayBytes((size_t)count, sizeof(*edit->rows)));
+    memset(edit->rows, 0, teArrayBytes((size_t)count, sizeof(*edit->rows)));
+    edit->cursor = E.document.cursor;
+    edit->selection = E.document.selection;
+    if (edit->selection.active && edit->selection.anchor_y > table->last)
+        edit->selection.anchor_y += insert_separator + continuation;
+    int32_t source = table->first, next_cursor = 2;
+    for (int32_t i = 0; i < count; i++) {
+        erow generated = {0};
+        char line[SMART_TABLE_COLUMNS * 4 + 2];
+        const erow *row;
+        int32_t *cursor = NULL, *anchor = NULL;
+        if (i == edit->separator_at || i == edit->next_at) {
+            int32_t at = 0;
+            line[at++] = '|';
+            for (int32_t c = 0; c < table->columns; c++) {
+                const char *cell = i == edit->separator_at ? "---|" : "   |";
+                memcpy(line + at, cell, 4); at += 4;
+            }
+            generated.chars = line; generated.size = at;
+            row = &generated;
+            smartTableParse(row, &parsed);
+            if (i == edit->next_at) cursor = &next_cursor;
+        } else {
+            row = &E.document.buffer.rows[source];
+            smartTableParse(row, &parsed);
+            parsed.separator = separator && source == table->first + 1;
+            if (E.document.cursor.cy == source) {
+                edit->cursor.cy = table->first + i;
+                cursor = &edit->cursor.cx;
+            }
+            if (edit->selection.active && E.document.selection.anchor_y == source) {
+                edit->selection.anchor_y = table->first + i;
+                anchor = &edit->selection.anchor_x;
+            }
+            source++;
+        }
+        edit->rows[i] = smartTableFormat(row, &parsed, widths, align, S.tab_stop, cursor, anchor);
+        if (!edit->rows[i]) { editorTableFreeEdit(edit); return 0; }
+        size_t length = teSizeAdd(strlen(edit->rows[i]), 1);
+        if (length > SMART_TABLE_BYTES - bytes) { editorTableFreeEdit(edit); return 0; }
+        bytes += length;
+    }
+    if (continuation) {
+        edit->cursor.cy = table->first + edit->next_at;
+        edit->cursor.cx = next_cursor;
+    }
+    return 1;
+}
+
+/**
+ * @brief Apply a preflighted table edit inside the caller's undo transaction.
+ * @details complete confirms a lone header; continuation also prepares a data
+ * row. No source or position changes occur when the output budget is rejected.
+ */
+static uint8_t editorTableAlign(uint8_t complete, uint8_t continuation) {
     struct smartTable table;
     if (!editorTableContext(&table)) return 0;
+    struct editorTableEdit edit;
+    if (!editorTablePrepare(&table, complete, continuation, &edit)) {
+        editorSetErrorMessage("Smart Table: output exceeds processing limits or invalid column widths");
+        return 0;
+    }
     if (E.document.history.pending) {
         E.document.history.pending->restore_selection = 1;
         E.document.history.pending->coalesce = 0;
         E.document.history.last_edit_type = EDIT_OTHER;
     }
-    int32_t widths[SMART_TABLE_COLUMNS];
-    uint8_t align[SMART_TABLE_COLUMNS] = {0};
-    if (!smartTableWidths(&E.document.buffer, &table, S.tab_stop, widths)) return 0;
-    struct smartTableRow parsed;
-    uint8_t separator = 0;
-    if (table.last > table.first) {
-        smartTableParse(&E.document.buffer.rows[table.first + 1], &parsed);
-        separator = parsed.separator;
-    }
-    if (!separator && (complete || table.last > table.first)) {
-        if (table.last - table.first + 1 >= SMART_TABLE_ROWS) return 0;
-        char line[SMART_TABLE_COLUMNS * 4 + 2];
-        int32_t length = 0;
-        line[length++] = '|';
-        for (int32_t c = 0; c < table.columns; c++) {
-            memcpy(line + length, "---|", 4); length += 4;
-        }
-        int32_t at = table.first + 1;
-        editorInsertRow(at, line, (size_t)length);
-        if (historyFailed(&E.document)) return 0;
-        if (E.document.cursor.cy >= at) E.document.cursor.cy++;
-        if (E.document.selection.active && E.document.selection.anchor_y >= at)
-            E.document.selection.anchor_y++;
-        table.last++;
-    }
-    if (table.last > table.first) {
-        smartTableParse(&E.document.buffer.rows[table.first + 1], &parsed);
-        if (parsed.separator) {
-            for (int32_t c = 0; c < table.columns; c++)
-                align[c] = parsed.cells[c].right ? (parsed.cells[c].left ? 3 : 2) : 0;
+    for (int32_t i = 0; i < edit.count && !historyFailed(&E.document); i++) {
+        int32_t y = table.first + i;
+        if (i == edit.separator_at || i == edit.next_at) {
+            editorInsertRow(y, edit.rows[i], strlen(edit.rows[i]));
+        } else {
+            erow *row = &E.document.buffer.rows[y];
+            if (strcmp(edit.rows[i], row->chars)) {
+                bufferRowDeleteRange(row, 0, row->size);
+                bufferRowInsert(row, 0, edit.rows[i], strlen(edit.rows[i]));
+                editorUpdateRow(row);
+                E.document.file.dirty = 1;
+            }
         }
     }
-    for (int32_t y = table.first; y <= table.last && !historyFailed(&E.document); y++) {
-        erow *row = &E.document.buffer.rows[y];
-        smartTableParse(row, &parsed);
-        parsed.separator = parsed.separator && y == table.first + 1;
-        int32_t *cursor = E.document.cursor.cy == y ? &E.document.cursor.cx : NULL;
-        int32_t *anchor = E.document.selection.active && E.document.selection.anchor_y == y ?
-            &E.document.selection.anchor_x : NULL;
-        char *text = smartTableFormat(row, &parsed, widths, align, S.tab_stop, cursor, anchor);
-        if (strcmp(text, row->chars)) {
-            bufferRowDeleteRange(row, 0, row->size);
-            bufferRowInsert(row, 0, text, strlen(text));
-            editorUpdateRow(row);
-            E.document.file.dirty = 1;
-        }
-        free(text);
+    if (!historyFailed(&E.document)) {
+        E.document.cursor = edit.cursor;
+        E.document.selection = edit.selection;
     }
+    editorTableFreeEdit(&edit);
     return 1;
 }
 
@@ -918,22 +990,7 @@ static uint8_t editorTableEnter(void) {
         E.document.file.dirty = 1;
         return 1;
     }
-    if (!editorTableAlign(1)) {
-        if (!historyFailed(&E.document)) editorSetErrorMessage("Smart Table: processing limit exceeded");
-        return 1;
-    }
-    y = E.document.cursor.cy;
-    if (y == table.first) y++;
-    char next[SMART_TABLE_COLUMNS * 3 + 2];
-    int32_t at = 0;
-    next[at++] = '|';
-    for (int32_t c = 0; c < table.columns; c++) {
-        next[at++] = ' '; next[at++] = ' '; next[at++] = '|';
-    }
-    editorInsertRow(y + 1, next, (size_t)at);
-    E.document.cursor.cy = y + 1;
-    E.document.cursor.cx = 2;
-    editorTableAlign(0);
+    editorTableAlign(1, 1);
     return 1;
 }
 
@@ -6538,7 +6595,7 @@ static uint8_t editorHandleCommandKey(int32_t c) {
             if (E.document.file.read_only) { editorReadOnly(); break; }
             editorBeginEdit();
             editorPushUndo(EDIT_OTHER);
-            uint8_t aligned = editorTableAlign(1);
+            uint8_t aligned = editorTableAlign(1, 0);
             editorEndEdit();
             if (!aligned && edit_last_error == HISTORY_OK)
                 editorSetErrorMessage("Smart Table: no unambiguous table, or processing limit exceeded");
@@ -6816,7 +6873,7 @@ static void editorHandleEditKey(int32_t c) {
                     had_sel_y1, had_sel_x1);
             }
             E.document.selection.active = 0;
-            if (c == '|' && S.smart_table && editorTableSeparatorTyped()) editorTableAlign(0);
+            if (c == '|' && S.smart_table && editorTableSeparatorTyped()) editorTableAlign(0, 0);
             break;
         }
     }
