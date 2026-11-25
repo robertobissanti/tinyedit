@@ -35,7 +35,7 @@ selection, and optional mouse support for clicking and scrolling.
 
 <div align="center">
 
-![tinyedit demo: Markdown with a Smart Table and a $$ equation, then the menus and settings](imgs/demo.gif)
+![tinyedit demo: Markdown with a Smart Table and a $$ equation, then the menus, settings and color themes](imgs/demo.gif)
 
 </div>
 
