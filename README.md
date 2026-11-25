@@ -10,11 +10,20 @@
 [![GitHub release](https://img.shields.io/github/v/release/robertobissanti/tinyedit?sort=semver)](https://github.com/robertobissanti/tinyedit/releases)
 [![License](https://img.shields.io/github/license/robertobissanti/tinyedit)](LICENSE)
 [![C99](https://img.shields.io/badge/standard-C99-blue)](#build)
-[![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](#build)
+[![GitHub downloads](https://img.shields.io/github/downloads/robertobissanti/tinyedit/total)](https://github.com/robertobissanti/tinyedit/releases)
+[![Platforms](https://img.shields.io/badge/platform-macOS%20%7C%20Linux%20%7C%20WSL-lightgrey)](#build)
 [![No runtime dependencies](https://img.shields.io/badge/runtime%20dependencies-none-brightgreen)](#build)
 [![Written in C](https://img.shields.io/github/languages/top/robertobissanti/tinyedit)](https://github.com/robertobissanti/tinyedit)
 [![Repository size](https://img.shields.io/github/repo-size/robertobissanti/tinyedit)](https://github.com/robertobissanti/tinyedit)
 [![Ask DeepWiki](https://img.shields.io/badge/Ask-DeepWiki-blue)](https://deepwiki.com/robertobissanti/tinyedit)
+
+</div>
+
+<div align="center">
+
+![tinyedit: typing a Markdown title, a table aligned by Smart Table and a $$ equation](imgs/demo-typing.gif)
+
+![tinyedit: browsing the menus and the settings screen](imgs/demo-menus-settings.gif)
 
 </div>
 

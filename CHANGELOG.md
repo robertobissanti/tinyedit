@@ -11,6 +11,10 @@
 - Expand Smart Table documentation with a guided example, manual versus automatic
   editing, settings and three screenshots captured from the running editor.
 
+- Add two animated demos (typing Markdown with a Smart Table and a `$$` equation,
+  then browsing the menus and settings) plus GitHub downloads and WSL badges to
+  the README.
+
 ## 0.3.10 — 2026-11-25
 
 ### New features
