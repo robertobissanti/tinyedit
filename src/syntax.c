@@ -1282,6 +1282,7 @@ void syntaxHighlightRow(erow *row, const char *filename,
         markdownHighlightRow(row, prev_open_comment, prev_open_math,
             prev_open_frontmatter, row_index, prev_open_emphasis);
         markdownHighlightAnchors(row);
+        markdownHighlightTable(row, row_index);
         return;
     }
     if (ext && isXmlExtension(ext)) {
@@ -1351,6 +1352,7 @@ const char *syntaxColorFor(enum syntaxHighlight hl, const struct editorSettings 
         case HL_PREPROCESSOR: return ansiColorCode(settingsColor(s, color_syntax_preprocessor));
         case HL_EMPHASIS_STRONG: return ansiColorCode(settingsColor(s, color_syntax_emphasis_strong));
         case HL_MATH:          return ansiColorCode(settingsColor(s, color_syntax_math));
+        case HL_TABLE_DELIMITER: return ansiColorCode(settingsColor(s, color_syntax_table_delimiter));
         case HL_FUNCTION:      return ansiColorCode(settingsColor(s, color_syntax_function));
         default:              return NULL;
     }

@@ -295,6 +295,12 @@ and configuration.
 
 ## Markdown editing and navigation
 
+**Smart Table**, off by default in F2 (`smart_table = true` in `~/.tinyeditrc`),
+aligns Markdown tables while typing pipes or completing rows with Enter. Tab and
+Shift-Tab move between cells; Enter on an empty table row exits.
+**Edit → Smart Table: realign** formats an existing table, even with the setting
+off. See [Smart Table recognition and limits](docs/usage.md#smart-table).
+
 Enable **View → Markdown live preview**, or the same option in F2, to hide
 paired bold/italic markers and display inline links as underlined labels.
 Bold and italic reveal their source at the cursor; links enter source editing

@@ -115,7 +115,8 @@ enum editorKey {
     MOUSE_EVENT_KEY,
     TREE_TOGGLE_KEY,
     OPEN_LINK_KEY,
-    DOCUMENTATION_KEY
+    DOCUMENTATION_KEY,
+    SMART_TABLE_KEY
 };
 
 enum undoEditType { EDIT_NONE, EDIT_INSERT, EDIT_DELETE, EDIT_OTHER };
@@ -264,8 +265,9 @@ struct historyAction {
     struct historyAction *previous, *next;
     struct historyChange *first, *last;
     struct editorCursor before, after;
-    struct editorSelection selection;
+    struct editorSelection selection, selection_after;
     size_t bytes;
+    uint8_t restore_selection;
     uint8_t dirty;
     uint8_t final_newline;
     uint8_t coalesce;

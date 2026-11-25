@@ -65,6 +65,13 @@ int main(void) {
     if (settings.color_syntax_italic != COLOR_GREEN_DARK || settings.rgb_color_syntax_italic != 0x112233)
         fail("legacy italic colors do not follow customized keywords");
     if (settings.markdown_live_preview) fail("live preview defaults off for old configurations");
+    if (settings.color_syntax_table_delimiter != settings.color_syntax_function ||
+        settings.rgb_color_syntax_table_delimiter != settings.rgb_color_syntax_function)
+        fail("legacy table delimiter palette fallback");
+    settings.color_syntax_table_delimiter = COLOR_CYAN_DARK;
+    settings.rgb_color_syntax_table_delimiter = 0x123456;
+    if (settings.smart_table) fail("Smart Table defaults off for old configurations");
+    settings.smart_table = 1;
     settings.markdown_live_preview = 1;
     settings.color_link_hover = COLOR_MAGENTA_DARK;
     settings.rgb_color_link_hover = 0x123456;
@@ -74,6 +81,9 @@ int main(void) {
     settingsLoad(&settings);
     if (settings.color_syntax_italic != COLOR_RED_DARK || settings.rgb_color_syntax_italic != 0xd19a67)
         fail("independent italic palette persistence");
+    if (settings.color_syntax_table_delimiter != COLOR_CYAN_DARK ||
+        settings.rgb_color_syntax_table_delimiter != 0x123456) fail("table delimiter palette persistence");
+    if (!settings.smart_table) fail("Smart Table persistence");
     if (!settings.markdown_live_preview) fail("live preview persistence");
     if (settings.color_link_hover != COLOR_MAGENTA_DARK || settings.rgb_color_link_hover != 0x123456)
         fail("independent link hover palette persistence");

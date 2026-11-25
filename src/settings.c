@@ -121,6 +121,7 @@ const struct settingDescriptor settingDescriptors[] = {
     { "rgb_syntax_number", "Syntax: number color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_number), 0, 0, NULL, 0 },
     { "rgb_syntax_preprocessor", "Syntax: preprocessor color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_preprocessor), 0, 0, NULL, 0 },
     { "rgb_syntax_function", "Syntax: function name color (C/C++)", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_function), 0, 0, NULL, 0 },
+    { "rgb_syntax_table_delimiter", "Syntax: Markdown table delimiters", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_table_delimiter), 0, 0, NULL, 0 },
     { "rgb_syntax_emphasis_strong", "Markdown: bold text color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_emphasis_strong), 0, 0, NULL, 0 },
     { "rgb_syntax_italic", "Markdown: italic text color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_italic), 0, 0, NULL, 0 },
     { "rgb_syntax_math", "Markdown: LaTeX math color", SETTING_RGB, offsetof(struct editorSettings, rgb_color_syntax_math), 0, 0, NULL, 0 },
@@ -178,6 +179,8 @@ const struct settingDescriptor settingDescriptors[] = {
       offsetof(struct editorSettings, home_end_visual_line), 0, 0, NULL, 0 },
     { "backup_interval", "Backup interval s (0=off, min 5)", SETTING_INT,
       offsetof(struct editorSettings, backup_interval), 0, 3600, NULL, 0 },
+    { "smart_table", "Smart Table", SETTING_BOOL,
+      offsetof(struct editorSettings, smart_table), 0, 0, NULL, 0 },
     { "auto_indent", "Auto-indent new lines", SETTING_BOOL,
       offsetof(struct editorSettings, auto_indent), 0, 0, NULL, 0 },
     { "auto_close_pairs", "Auto-close brackets/quotes/tags", SETTING_BOOL,
@@ -214,6 +217,8 @@ const struct settingDescriptor settingDescriptors[] = {
 
     { "color_syntax_function", "Syntax: function name color (C/C++)", SETTING_ENUM,
       offsetof(struct editorSettings, color_syntax_function), 0, 0, colorNames, SETTING_COLOR_COUNT },
+    { "color_syntax_table_delimiter", "Syntax: Markdown table delimiters", SETTING_ENUM,
+      offsetof(struct editorSettings, color_syntax_table_delimiter), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "color_background", "Editor background color (off=terminal default)", SETTING_ENUM,
       offsetof(struct editorSettings, color_background), 0, 0, colorNames, SETTING_COLOR_COUNT },
     { "markdown_live_preview", "Markdown live preview", SETTING_BOOL,
@@ -322,6 +327,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->home_end_visual_line = 1;
     out->backup_interval = 0;
     out->auto_indent = 1;
+    out->smart_table = 0;
     out->auto_close_pairs = 1;
     out->auto_close_single_quote = 0;
     out->insert_spaces_for_tab = 1;
@@ -348,6 +354,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->color_syntax_italic = out->color_syntax_keyword;
     out->color_syntax_math = COLOR_CYAN_LIGHT;
     out->color_syntax_function = COLOR_YELLOW_LIGHT;
+    out->color_syntax_table_delimiter = COLOR_BLUE_LIGHT;
     out->color_background = COLOR_TERMINAL_DEFAULT;
     out->rgb_color_gutter = out->color_gutter == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_gutter];
     out->rgb_color_link_hover = rgbPalette[out->color_link_hover];
@@ -367,6 +374,7 @@ void settingsDefaults(struct editorSettings *out) {
     out->rgb_color_syntax_italic = out->rgb_color_syntax_keyword;
     out->rgb_color_syntax_math = out->color_syntax_math == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_math];
     out->rgb_color_syntax_function = out->color_syntax_function == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_syntax_function];
+    out->rgb_color_syntax_table_delimiter = 0x61afef;
     out->rgb_color_background = out->color_background == COLOR_TERMINAL_DEFAULT ? RGB_TERMINAL_DEFAULT : rgbPalette[out->color_background];
     out->mouse_enabled = 0;
 #ifdef __APPLE__
@@ -534,6 +542,7 @@ void settingsLoad(struct editorSettings *out) {
     }
 
     uint8_t has_italic = 0, has_rgb_italic = 0;
+    uint8_t has_table = 0, has_rgb_table = 0;
     char line[256];
     while (fgets(line, sizeof(line), fp)) {
         char *key_start = line;
@@ -574,6 +583,8 @@ void settingsLoad(struct editorSettings *out) {
             const struct settingDescriptor *d = &settingDescriptors[i];
             if (strcmp(d->key, key) != 0) continue;
 
+            if (!strcmp(key, "color_syntax_table_delimiter")) has_table = 1;
+            if (!strcmp(key, "rgb_syntax_table_delimiter")) has_rgb_table = 1;
             if (strcmp(key, "color_syntax_italic") == 0) has_italic = 1;
             if (strcmp(key, "rgb_syntax_italic") == 0) has_rgb_italic = 1;
             int32_t *slot = settingSlot(out, d);
@@ -603,6 +614,8 @@ void settingsLoad(struct editorSettings *out) {
         }
     }
     fclose(fp);
+    if (!has_table) out->color_syntax_table_delimiter = out->color_syntax_function;
+    if (!has_rgb_table) out->rgb_color_syntax_table_delimiter = out->rgb_color_syntax_function;
     if (!has_italic) out->color_syntax_italic = out->color_syntax_keyword;
     if (!has_rgb_italic) out->rgb_color_syntax_italic = out->rgb_color_syntax_keyword;
 }
@@ -676,6 +689,10 @@ uint8_t settingsLoadColorScheme(const char *path, struct editorSettings *draft,
             candidate.rgb_color_syntax_italic = candidate.rgb_color_syntax_keyword;
         } else if (required && !seen[i] && strcmp(d->key, "color_syntax_italic") == 0) {
             candidate.color_syntax_italic = candidate.color_syntax_keyword;
+        } else if (required && !seen[i] && !strcmp(d->key, "rgb_syntax_table_delimiter")) {
+            candidate.rgb_color_syntax_table_delimiter = candidate.rgb_color_syntax_function;
+        } else if (required && !seen[i] && !strcmp(d->key, "color_syntax_table_delimiter")) {
+            candidate.color_syntax_table_delimiter = candidate.color_syntax_function;
         } else if (required && !seen[i]) valid = 0;
     }
     free(seen);

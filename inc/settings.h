@@ -126,6 +126,7 @@ struct editorSettings {
     int32_t rgb_color_syntax_italic;
     int32_t rgb_color_syntax_math;
     int32_t rgb_color_syntax_function;
+    int32_t rgb_color_syntax_table_delimiter;
     int32_t rgb_color_background;
     int32_t rgb_markdown_heading_background;
     /* Terminal-default entries inherit the preprocessor foreground. */
@@ -170,6 +171,7 @@ struct editorSettings {
     /* Enter copies the leading whitespace (spaces/tabs) of the
      * current line onto the new one. */
     int32_t auto_indent;
+    int32_t smart_table;
     /* Typing an opening bracket/quote inserts its matching close
      * right after the cursor (or wraps the active selection); typing
      * the close manually while the cursor sits right before an
@@ -232,6 +234,7 @@ struct editorSettings {
      * identifier immediately followed by '(' -- see HL_FUNCTION in
      * syntax.h. */
     int32_t color_syntax_function;
+    int32_t color_syntax_table_delimiter;
     /* Background color for the whole editor (behind every row, the
      * gutter, status/message bars). COLOR_TERMINAL_DEFAULT (the
      * default) emits no background escape at all, leaving the

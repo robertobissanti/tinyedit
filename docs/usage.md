@@ -16,6 +16,7 @@
 - [Markdown images](#markdown-images)
 - [Markdown heading, attribute and block targets](#markdown-heading-attribute-and-block-targets)
 - [Menus](#menus)
+- [Smart Table](#smart-table)
 - [Indentation and tabs](#indentation-and-tabs)
 - [Automatic pair and tag closing](#automatic-pair-and-tag-closing)
 - [Soft wrapping and navigation](#soft-wrapping-and-navigation)
@@ -733,5 +734,73 @@ When tinyedit receives SIGTERM or SIGHUP, it restores the terminal and exits
 with status 128 plus the signal number. It does not save unsaved edits on signal;
 a backup exists only when the configured interval has produced one for a named
 document. SIGKILL cannot be handled.
+
+[Back to top](#user-guide)
+
+## Smart Table
+
+With syntax highlighting enabled, structural table pipes and the second row's
+alignment dashes/colons have a separate color, even when Smart Table is off.
+Cell text, escaped pipes and inline/fenced code retain their syntax colors.
+Choose **Syntax: Markdown table delimiters** in **F2 → Colors** to change it.
+
+Enable **Smart Table** in F2, or set `smart_table = true` in `~/.tinyeditrc`.
+It is off by default. In Markdown files, typing a real pipe separator or
+pressing Enter at the end of a table row aligns the contiguous table. Start
+with an outer pipe, separate cells with pipes, and close the row with a pipe.
+The first row remains an editable header while its columns are being built.
+Enter confirms it, creates the mandatory second delimiter row and prepares the
+first data row below it. **Edit → Smart Table: realign** also creates a missing
+delimiter, including for a lone header. Existing second-row text moves down;
+no data is overwritten. Automatic alignment of multiple completed rows likewise
+inserts the missing delimiter. Only the second row controls column alignment.
+
+Delimiter cells are normalized as `| ----- |` (default left), `|:----- |`
+(explicit left), `| -----:|` (right), or `|:-----:|` (center). Colons replace
+the boundary padding spaces so the pipes remain aligned. The dash count follows
+the displayed content width, grows or shrinks with it, and is at least three.
+Existing short delimiters such as `:-:` are accepted and expanded. Excess dashes
+do not force a column to stay wide. This follows the header/delimiter/body
+structure of [GFM tables](https://github.github.com/gfm/#tables-extension-);
+Smart Table retains its conservative recognition limits below.
+
+Enter on a completed data row prepares the next row with the same number of cells. Enter again on an
+empty row removes its pipes and leaves a normal blank line. Splitting within
+cell content retains ordinary Enter behavior. Once the delimiter exists, Tab
+and Shift-Tab move to the
+next or previous cell and cross existing row boundaries; at the table ends
+they stay in the current cell. A selection retains ordinary indent/outdent
+behavior. Elsewhere Tab and Enter retain their existing meanings.
+
+Use **Edit → Smart Table: realign** to format the table at the cursor even
+with Smart Table disabled. This preserves selection and the cursor's byte
+offset within cell content. Padding positions map to the nearest content
+boundary. Each edit and its automatic formatting share one undo/redo action.
+The command respects read-only documentation and reports errors in red.
+
+Recognition is deliberately conservative: rows must begin and end with an
+outer pipe, have equal cell counts, and contain balanced inline backtick
+spans. Indented rows, fenced code, incomplete rows, mismatched cell counts and
+unmatched backticks are left alone. Escape-protected pipes and pipes inside
+inline code remain cell content. Links, UTF-8, malformed bytes and literal
+tabs retain their bytes; formatting adjusts padding and the second delimiter
+row, inserting that row when needed.
+Widths use the editor's Unicode helpers and tab stops; fonts may differ.
+Tabs can constrain exact centering or right alignment.
+
+Processing is limited to 128 cells per row, 1,024 contiguous rows, and 1 MiB of
+source through the table's last row; formatted display width is also bounded
+by 1 MiB. Automatic assistance leaves unsupported text untouched; the explicit
+command reports an ambiguous table or processing limit in red. No data is
+truncated. Scanning happens on separator/Enter/navigation actions, not every
+ordinary character. Tables wider than 80 columns keep the existing soft-wrap
+rendering: aligning source does not guarantee that a wide table fits or is
+readable in the terminal. No dedicated wide-table renderer is provided.
+
+Smart Table is implemented independently, with no dependency on
+[vim-table-mode](https://github.com/dhruvasagar/vim-table-mode), whose interactive
+creation and realignment behavior served as a functional reference. Tests
+exercise decoded Tab/Shift-Tab events; they do not certify physical modified
+keys in every terminal.
 
 [Back to top](#user-guide)

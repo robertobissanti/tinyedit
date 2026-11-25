@@ -42,6 +42,9 @@ not by itself handle termination signals; SIGTERM/SIGHUP cleanup remains pending
 
 ## Code layout
 
+- `smart_table.c` / `smart_table.h`: bounded source parsing, Unicode/tab widths
+  and Markdown table formatting. The core owns edit transactions, context
+  checks, cursor/selection mapping and menu dispatch.
 - `src/`, `inc/`: C source files and corresponding public/internal headers.
   `Makefile` supplies `-Iinc` to every compilation.
 - `src/tinyedit.c`, `inc/tinyedit.h`: Application flow, editing commands,
@@ -81,7 +84,8 @@ not by itself handle termination signals; SIGTERM/SIGHUP cleanup remains pending
   application dispatch.
 - `src/markdown.c`, `inc/markdown.h`: Markdown highlighting and row-owned source
   spans, compact-preview projection/edit state, heading slugs, explicit Pandoc
-  and Obsidian anchor resolution, and local `@id` reference recognition.
+  and Obsidian anchor resolution, local `@id` reference recognition, and table
+  punctuation highlighting through the shared Smart Table parser.
   Fenced-code state records its opener and embedded comment/math state;
   declared languages reuse the standalone syntax tokenizers without per-row
   language allocations. Edits propagate through the closing fence so language

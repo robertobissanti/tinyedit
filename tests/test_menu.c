@@ -63,6 +63,8 @@ int main(void) {
     check(menuHandleKey(&menu, ARROW_DOWN) == CMD_NONE && menu.selected_item == 1,
         "Help navigates to Documentation");
     check(menuHandleKey(&menu, '\r') == CMD_DOCUMENTATION, "Help opens Documentation");
+    menu.open = 1; menu.selected_menu = 2; menu.selected_item = 9;
+    check(menuHandleKey(&menu, '\r') == CMD_SMART_TABLE, "Edit accepts Smart Table realign");
     puts("menu tests: ok");
     return 0;
 }

@@ -183,3 +183,23 @@ Link tests reject disguised image files and SVG, and check that declining an
 external opener keeps the desktop launcher closed.
 
 [Back to top](#test-fixtures)
+
+## Smart Table regressions
+
+`test_core` exercises actual editor dispatch for pipe formatting, continuation,
+empty-row exit, decoded Tab/Shift-Tab, atomic undo/redo, cursor/selection mapping,
+UTF-8 display widths, literal tabs, escaped pipes, inline code, links, malformed
+bytes, disabled settings, non-Markdown documents, fenced code with highlighting
+off, ambiguity and read-only documents. Settings persistence and the explicit
+Edit menu command are covered by their existing test binaries. These automated
+checks do not certify physical modified keys in a real terminal.
+`test_pty.py` also verifies Smart Table menu realignment and atomic undo through
+both mouse clicks and keyboard menu navigation, with the setting on and off.
+Delimiter regressions cover all four alignment forms, short and oversized dash
+runs, mandatory second-row insertion, header completion, data preservation,
+position mapping and atomic undo/redo. Syntax regressions verify structural-pipe
+and delimiter classes, code/escape exclusions, UTF-8/tab render offsets, nearby
+edit/undo propagation, disabled highlighting, independent palette persistence,
+and RGB delimiter output through the PTY renderer.
+
+[Back to top](#test-fixtures)

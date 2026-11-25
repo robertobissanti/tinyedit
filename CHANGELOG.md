@@ -4,6 +4,22 @@
 
 ### New features
 
+- Highlight Markdown table pipes and second-row dashes/colons with a dedicated
+  configurable syntax color, independent of Smart Table. One Dark uses its blue
+  `#61AFEF`; shipped themes include matching colors and older palettes retain
+  compatibility. Preserve cell text, escaped pipes and code colors.
+
+- Require Smart Table's second row to delimit the header. Header completion and
+  explicit realignment create a missing separator without overwriting data.
+  Normalize default, left, right and centered delimiters, preserving colons and
+  sizing their dashes to the current Unicode display widths in both directions.
+
+- Add **Smart Table**, off by default in F2/configuration: conservative Markdown
+  table alignment on pipes and Enter, cell navigation with Tab/Shift-Tab,
+  empty-row exit and an explicit Edit menu realignment command. Preserve literal
+  content, Unicode widths, cursor/selection and atomic undo. Keep existing
+  wrapping for wide tables; document recognition and processing limits.
+
 - Recognize direct `[label][#anchor]` and `![label][#anchor]` navigation;
   image links with fragment-only destinations now jump within the document.
   Keep escaped opening parentheses literal.
@@ -14,6 +30,10 @@
   after long blank gaps or without a preceding block. A link previously could
   jump back to itself instead of reaching the visible marker. Bare `(#^id)`
   references now navigate to the same destination as `[label](#^id)`.
+
+- Execute **Edit → Smart Table: realign** when clicked with the mouse. The
+  command previously worked through keyboard menu navigation but mouse clicks
+  silently discarded it, regardless of the Smart Table setting.
 
 - Protect installed documentation from editing, paste, replacement, undo and
   saving, including guides reached through links or Open. Keep search and copy

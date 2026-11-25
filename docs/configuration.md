@@ -13,7 +13,7 @@
 ## Settings and appearance
 
 Line numbers (gutter), tab width, interface colors, soft-wrap, the top bar,
-cursor shape and blinking, auto-indent, auto-close pairs, tabs-as-spaces,
+cursor shape and blinking, Smart Table (off by default), auto-indent, auto-close pairs, tabs-as-spaces,
 and invisible characters are configurable from the `F2` panel and saved to
 `~/.tinyeditrc`. See the file itself, created automatically on first launch,
 for configuration details. If `~/.tinyeditrc` is a resolvable symbolic link,
@@ -110,6 +110,10 @@ brackets. Link labels and destinations share the navigation color and are underl
 when Markdown text styles or live preview is enabled.
 Brackets inside strings, comments or literal code spans retain those token colors;
 selection, search and hovered link content keep their normal precedence.
+Markdown table punctuation uses **Syntax: Markdown table delimiters** independently
+of Smart Table: `color_syntax_table_delimiter` for ANSI and
+`rgb_syntax_table_delimiter` for RGB. One Dark uses Blue `#61AFEF`. Older configs
+and themes without these keys inherit their function-name color until customized.
 
 Select **Mode: rgb** to see every Catppuccin flavor. All four presets use colors
 from the official [Catppuccin palette](https://catppuccin.com/palette/), version
@@ -298,3 +302,12 @@ is preserved. Experimental Ghostty binding updates also preserve symlinks and
 long lines, and reject binary configuration without changing it.
 
 [Back to top](#settings-colors-and-themes)
+
+## Smart Table setting
+
+`smart_table = false` is the default. Set it to `true`, or toggle **Smart Table**
+in F2, to enable Markdown table alignment and cell navigation. Save the F2
+settings draft as usual. The [Smart Table guide](usage.md#smart-table) describes
+recognition, exiting a table, the explicit menu command and wide-table limits.
+
+[Back to top](#settings-and-appearance)

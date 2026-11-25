@@ -3,6 +3,7 @@
 #include "alloc.h"
 #include "links.h"
 #include "syntax.h"
+#include "smart_table.h"
 #include "tinyedit.h"
 #include "utf8.h"
 
@@ -899,6 +900,39 @@ static uint8_t markdownAnchorEligible(const erow *row, int32_t at) {
 static void markdownHighlightAttribute(erow *row, int32_t start, const struct markdownAttributes *attr) {
     row->hl[start] = row->hl[attr->end - 1] = HL_LINK_MARKER;
     memset(row->hl + attr->id_start - 1, HL_LINK_MARKER, (size_t)(attr->id_end - attr->id_start + 1));
+}
+
+/** @brief Match the cell count of a neighboring source row without scanning the document. */
+static uint8_t markdownTableColumns(const erow *row, int32_t columns) {
+    struct smartTableRow parsed;
+    return smartTableParse(row, &parsed) && parsed.count == columns;
+}
+
+/**
+ * @brief Color structural table pipes and second-row alignment markers.
+ * @details Parse rendered bytes for direct highlight offsets, including expanded
+ * tabs. Escaped and inline-code pipes remain content. At most two neighboring
+ * source rows distinguish the delimiter from later dash-only data rows.
+ */
+void markdownHighlightTable(erow *row, int32_t row_index) {
+    if (!row->hl || !row->rsize || row->markdown_code.marker || row->hl_open_frontmatter ||
+        row->hl_open_math || row->hl[0] == HL_STRING || row->hl[0] == HL_MATH ||
+        row->hl[0] == HL_COMMENT) return;
+    erow rendered = {0}; rendered.chars = row->render; rendered.size = row->rsize;
+    struct smartTableRow parsed;
+    if (!smartTableParse(&rendered, &parsed)) return;
+    uint8_t delimiter = parsed.separator;
+    if (row->owner) {
+        delimiter = delimiter && row_index > 0 && row_index < row->owner->row_count &&
+            markdownTableColumns(&row->owner->rows[row_index - 1], parsed.count) &&
+            (row_index < 2 || !markdownTableColumns(&row->owner->rows[row_index - 2], parsed.count));
+    }
+    row->hl[0] = HL_TABLE_DELIMITER;
+    for (int32_t c = 0; c < parsed.count; c++) {
+        const struct smartTableCell *cell = &parsed.cells[c];
+        row->hl[cell->close] = HL_TABLE_DELIMITER;
+        if (delimiter) memset(row->hl + cell->start, HL_TABLE_DELIMITER, (size_t)(cell->end - cell->start));
+    }
 }
 
 void markdownHighlightAnchors(erow *row) {
